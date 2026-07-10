@@ -1,39 +1,51 @@
-# Sub2API 视频模型预置
+# Sub2API 视频模型快速接入
 
-这个分支内置了面向 Sub2API 的视频模型预置。客户部署 `newapi-cc` 后，只需要提供一个可访问 Sub2API 的上游地址和 API key，系统启动时会自动创建视频渠道、分组和模型预填组。
+这个仓库不改 New API 的启动流程，也不要求额外环境变量。最快接入方式是：先按 New API 原方式部署，然后运行一次导入脚本，把 Sub2API 作为上游视频渠道写入 New API 数据库。
 
-## 启用方式
-
-在 `.env` 或部署平台环境变量中设置：
+## 一条命令导入
 
 ```bash
-SUB2API_VIDEO_PRESET_ENABLED=true
-SUB2API_BASE_URL=https://your-sub2api.example
-SUB2API_API_KEY=sk-your-sub2api-upstream-key
+tools/sub2api-video-preset.sh \
+  --container postgres \
+  --dsn "postgresql://root:123456@localhost:5432/new-api?sslmode=disable" \
+  --base-url "https://your-sub2api.example" \
+  --api-key "sk-your-sub2api-key"
 ```
 
-如果使用仓库自带 `docker-compose.yml`，它会从当前源码构建 `newapi-cc:latest`，不会拉取官方 `new-api` 镜像。
+如果 PostgreSQL 已经暴露到宿主机，或在有 `psql` 的运维机器上执行，也可以不走容器：
 
 ```bash
-docker compose up -d --build
+tools/sub2api-video-preset.sh \
+  --dsn "postgresql://root:123456@127.0.0.1:5432/new-api?sslmode=disable" \
+  --base-url "https://your-sub2api.example" \
+  --api-key "sk-your-sub2api-key"
 ```
 
-## 自动创建的分组
+## 导入内容
 
-启动后会创建以下用户可选分组，并加入自动分组：
+脚本只写 New API 数据库，不改服务代码、不改启动参数。它会幂等创建或更新：
+
+| 类型 | 内容 |
+| --- | --- |
+| 分组 | `sub2api-jimeng-video`, `sub2api-grok-video`, `sub2api-grok-video-per-request`, `sub2api-jimeng-nsfw-video` |
+| 模型组 | `sub2api-video-models` |
+| 渠道 | 4 个带 `sub2api-video-preset` 标签的 OpenAI/Sora 视频兼容渠道 |
+| 能力 | 每个分组对应的视频模型 abilities |
+
+模型清单：
 
 | 分组 | 模型 |
 | --- | --- |
-| `sub2api-jimeng-video` | `video-ds-2.0`, `video-ds-2.0-fast`, `as-sd2.0-fast` |
+| `sub2api-jimeng-video` | `video-ds-2.0`, `video-ds-2.0-fast`, `sd2.0-fast`, `as-sd2.0-fast` |
 | `sub2api-grok-video` | `grok-imagine-video`, `grok-imagine-video-1.5-preview` |
 | `sub2api-grok-video-per-request` | `grok-image-video`, `grok-video-1.5` |
 | `sub2api-jimeng-nsfw-video` | `dreamina-seedance-2-0-hc`, `dreamina-seedance-2-0-fast-hc` |
 
-每个分组都会对应一个启用状态的 Sora/OpenAI 视频兼容渠道，统一转发到 `SUB2API_BASE_URL` 的 `/v1/videos`、`/v1/videos/{task_id}`、`/v1/videos/{task_id}/content` 兼容接口。
+导入后如果 New API 开启了渠道缓存，重启一次 New API，让新渠道立即进入缓存。
 
-## 对用户开放
+## 用户调用
 
-管理员可以给用户发放 New API token。用户调用时按 New API/OpenAI 兼容方式请求：
+管理员给用户发放 New API token 后，用户按 OpenAI 视频兼容接口调用：
 
 ```bash
 curl "$NEWAPI_BASE_URL/v1/videos" \
@@ -42,4 +54,4 @@ curl "$NEWAPI_BASE_URL/v1/videos" \
   -d '{"model":"video-ds-2.0-fast","prompt":"A cinematic city night video"}'
 ```
 
-预置逻辑是幂等的：重复启动会更新带有 `sub2api-video-preset` 标签的预置渠道，不会删除客户自己新增的其他渠道。
+脚本可重复运行。它只更新带 `sub2api-video-preset` 标签的预置渠道和相关分组，不删除客户自己新增的渠道。
