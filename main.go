@@ -102,6 +102,10 @@ func main() {
 		go model.SyncChannelCache(common.SyncFrequency)
 	}
 
+	if err := model.InitDeploymentPresets(); err != nil {
+		common.FatalLog("failed to initialize deployment presets: " + err.Error())
+	}
+
 	// 热更新配置
 	go model.SyncOptions(common.SyncFrequency)
 

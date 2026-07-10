@@ -104,6 +104,10 @@ func CheckSetup() {
 	}
 }
 
+func InitDeploymentPresets() error {
+	return InitSub2APIVideoPresetFromEnv()
+}
+
 func isClickHouseDSN(dsn string) bool {
 	return strings.HasPrefix(dsn, "clickhouse://") ||
 		strings.HasPrefix(dsn, "tcp://") ||
