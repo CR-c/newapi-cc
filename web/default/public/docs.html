@@ -33,7 +33,12 @@
         margin: 0;
         background: var(--background);
         color: var(--text);
-        font: 15px/1.7 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font:
+          15px/1.7 system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          sans-serif;
       }
 
       a {
@@ -141,7 +146,12 @@
         border-radius: 6px;
         background: var(--code);
         color: var(--code-text);
-        font: 13px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font:
+          13px/1.65 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          Consolas,
+          monospace;
       }
 
       pre code {
@@ -244,7 +254,8 @@
       <div>
         <h1>VP API 调用文档</h1>
         <p class="lede">
-          图片与异步视频生成接口。无论视频模型由哪个服务提供，调用方都只使用 VP 的统一接口提交、轮询和下载。
+          图片与异步视频生成接口。无论视频模型由哪个服务提供，调用方都只使用 VP
+          的统一接口提交、轮询和下载。
         </p>
       </div>
     </header>
@@ -262,13 +273,17 @@
     <main>
       <section id="start">
         <h2>接入准备</h2>
-        <p>在控制台创建 API Key，并将 Key 绑定到需要使用的分组。不同分组开放的模型和计费方式不同。</p>
+        <p>
+          在控制台创建 API Key，并将 Key
+          绑定到需要使用的分组。不同分组开放的模型和计费方式不同。
+        </p>
         <pre><code>export BASE_URL="https://vp.735678.xyz"
 read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
         <p>所有 API 请求使用 Bearer 鉴权：</p>
         <pre><code>Authorization: Bearer $API_KEY</code></pre>
         <div class="note">
-          请求中的 <code>model</code> 必须属于当前 API Key 可使用的分组。可在控制台的游乐场中先确认分组和模型是否可见。
+          请求中的 <code>model</code> 必须属于当前 API Key
+          可使用的分组。可在控制台的游乐场中先确认分组和模型是否可见。
         </div>
       </section>
 
@@ -278,13 +293,33 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>模型</th><th>单张价格</th><th>说明</th></tr>
+              <tr>
+                <th>模型</th>
+                <th>单张价格</th>
+                <th>说明</th>
+              </tr>
             </thead>
             <tbody>
-              <tr><td><code>gemini-3-pro-image</code></td><td>$0.30</td><td>按实际输出张数计费</td></tr>
-              <tr><td><code>gemini-3.1-flash-image</code></td><td>$0.15</td><td>按实际输出张数计费</td></tr>
-              <tr><td><code>gpt-image-2</code></td><td>$0.20</td><td>支持 2K、4K</td></tr>
-              <tr><td><code>gpt-image-2-all</code></td><td>$0.10</td><td>仅 1K</td></tr>
+              <tr>
+                <td><code>gemini-3-pro-image</code></td>
+                <td>$0.30</td>
+                <td>按实际输出张数计费</td>
+              </tr>
+              <tr>
+                <td><code>gemini-3.1-flash-image</code></td>
+                <td>$0.15</td>
+                <td>按实际输出张数计费</td>
+              </tr>
+              <tr>
+                <td><code>gpt-image-2</code></td>
+                <td>$0.20</td>
+                <td>支持 2K、4K</td>
+              </tr>
+              <tr>
+                <td><code>gpt-image-2-all</code></td>
+                <td>$0.10</td>
+                <td>仅 1K</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -302,7 +337,10 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
   }'</code></pre>
 
         <h3>编辑图片</h3>
-        <p>支持图片编辑的模型可调用 <code>POST /v1/images/edits</code>，使用 <code>multipart/form-data</code> 上传图片。</p>
+        <p>
+          支持图片编辑的模型可调用 <code>POST /v1/images/edits</code>，使用
+          <code>multipart/form-data</code> 上传图片。
+        </p>
         <pre><code>curl "$BASE_URL/v1/images/edits" \
   -H "Authorization: Bearer $API_KEY" \
   -F "model=gpt-image-2" \
@@ -313,29 +351,89 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
       <section id="videos">
         <h2>视频通用流程</h2>
         <div class="note">
-          <strong>统一规则：</strong>所有视频分组和模型都使用以下三个本站接口。不要根据模型切换 URL，也不要调用任何服务方专用端点。
+          <strong>统一规则：</strong
+          >所有视频分组和模型都使用以下三个本站接口。不要根据模型切换
+          URL，也不要调用任何服务方专用端点。
         </div>
         <ol class="steps">
           <li>调用 <code>POST /v1/videos</code> 创建任务。</li>
           <li>保存响应中的 <code>id</code>。</li>
           <li>调用 <code>GET /v1/videos/{task_id}</code> 轮询状态。</li>
-          <li>状态为 <code>completed</code> 后，通过 <code>GET /v1/videos/{task_id}/content</code> 预览或下载。</li>
+          <li>
+            状态为 <code>completed</code> 后，通过
+            <code>GET /v1/videos/{task_id}/content</code> 预览或下载。
+          </li>
         </ol>
 
         <h3>创建任务</h3>
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>字段</th><th>类型</th><th>说明</th></tr>
+              <tr>
+                <th>字段</th>
+                <th>类型</th>
+                <th>说明</th>
+              </tr>
             </thead>
             <tbody>
-              <tr><td><code>model</code></td><td>string</td><td>必填，分组内可用的视频模型</td></tr>
-              <tr><td><code>prompt</code></td><td>string</td><td>必填，视频描述</td></tr>
-              <tr><td><code>duration</code></td><td>integer</td><td>视频时长，推荐使用整数秒；兼容 <code>seconds</code></td></tr>
-              <tr><td><code>size</code></td><td>string</td><td>画面尺寸，例如 <code>1280x720</code>、<code>720x1280</code></td></tr>
-              <tr><td><code>images</code></td><td>string[]</td><td>可选，公网可访问的参考图 URL</td></tr>
-              <tr><td><code>metadata.resolution</code></td><td>string</td><td>部分模型可选，清晰度例如 <code>480p</code>、<code>720p</code>、<code>1080p</code>、<code>4k</code></td></tr>
-              <tr><td><code>metadata.ratio</code></td><td>string</td><td>部分模型可选，画面比例例如 <code>16:9</code>、<code>9:16</code>、<code>1:1</code></td></tr>
+              <tr>
+                <td><code>model</code></td>
+                <td>string</td>
+                <td>必填，分组内可用的视频模型</td>
+              </tr>
+              <tr>
+                <td><code>prompt</code></td>
+                <td>string</td>
+                <td>必填，视频描述</td>
+              </tr>
+              <tr>
+                <td><code>seconds</code></td>
+                <td>string / integer</td>
+                <td>视频时长；本站兼容数字和字符串，并按上游要求转换</td>
+              </tr>
+              <tr>
+                <td><code>aspect_ratio</code></td>
+                <td>string</td>
+                <td>
+                  画面比例，例如 <code>16:9</code>、<code>9:16</code>、<code
+                    >1:1</code
+                  >
+                </td>
+              </tr>
+              <tr>
+                <td><code>resolution</code></td>
+                <td>string</td>
+                <td>
+                  清晰度，例如
+                  <code>480p</code
+                  >、<code>720p</code>、<code>1080p</code>、<code>4k</code>
+                </td>
+              </tr>
+              <tr>
+                <td><code>images</code></td>
+                <td>string[]</td>
+                <td>可选，公网可访问的参考图 URL</td>
+              </tr>
+              <tr>
+                <td><code>videos</code></td>
+                <td>string[]</td>
+                <td>可选，模型支持时传参考视频 URL</td>
+              </tr>
+              <tr>
+                <td><code>audios</code></td>
+                <td>string[]</td>
+                <td>可选，模型支持时传参考音频 URL</td>
+              </tr>
+              <tr>
+                <td><code>generate_audio</code></td>
+                <td>boolean</td>
+                <td>部分模型支持，是否同时生成音频</td>
+              </tr>
+              <tr>
+                <td><code>watermark</code></td>
+                <td>boolean</td>
+                <td>部分模型支持，是否添加水印</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -357,14 +455,38 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>状态</th><th>含义</th><th>建议</th></tr>
+              <tr>
+                <th>状态</th>
+                <th>含义</th>
+                <th>建议</th>
+              </tr>
             </thead>
             <tbody>
-              <tr><td><code>unknown</code></td><td>任务刚提交，尚未首次同步生成状态</td><td>继续轮询</td></tr>
-              <tr><td><code>queued</code></td><td>已进入队列</td><td>继续轮询</td></tr>
-              <tr><td><code>in_progress</code></td><td>正在生成</td><td>继续轮询</td></tr>
-              <tr><td><code>completed</code></td><td>生成完成</td><td>读取内容接口</td></tr>
-              <tr><td><code>failed</code></td><td>生成失败</td><td>读取 <code>error.message</code></td></tr>
+              <tr>
+                <td><code>unknown</code></td>
+                <td>任务刚提交，尚未首次同步生成状态</td>
+                <td>继续轮询</td>
+              </tr>
+              <tr>
+                <td><code>queued</code></td>
+                <td>已进入队列</td>
+                <td>继续轮询</td>
+              </tr>
+              <tr>
+                <td><code>in_progress</code></td>
+                <td>正在生成</td>
+                <td>继续轮询</td>
+              </tr>
+              <tr>
+                <td><code>completed</code></td>
+                <td>生成完成</td>
+                <td>读取内容接口</td>
+              </tr>
+              <tr>
+                <td><code>failed</code></td>
+                <td>生成失败</td>
+                <td>读取 <code>error.message</code></td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -374,12 +496,18 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
         <pre><code>curl -L "$BASE_URL/v1/videos/$TASK_ID/content" \
   -H "Authorization: Bearer $API_KEY" \
   -o generated-video.mp4</code></pre>
-        <p>内容接口支持浏览器视频预览和 Range 请求。即使任务响应包含 <code>metadata.url</code>，也建议统一使用本站内容接口。</p>
+        <p>
+          内容接口支持浏览器视频预览和 Range 请求。即使任务响应包含
+          <code>metadata.url</code>，也建议统一使用本站内容接口。
+        </p>
       </section>
 
       <section id="video-parameters">
         <h2>视频模型参数差异</h2>
-        <p>接口、鉴权、任务状态和下载方式完全一致。调用时只需要根据 API Key 所属分组和模型调整下表参数。</p>
+        <p>
+          接口、鉴权、任务状态和下载方式完全一致。调用时只需要根据 API Key
+          所属分组和模型调整下表参数。
+        </p>
 
         <div class="table-wrap">
           <table>
@@ -388,34 +516,64 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
                 <th>分组</th>
                 <th>模型</th>
                 <th>时长</th>
-                <th>尺寸与清晰度</th>
-                <th>参考图</th>
+                <th>比例与清晰度</th>
+                <th>参考素材与专属参数</th>
                 <th>计费</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td>grok按次</td>
-                <td><code>grok-image-video</code><br /><code>grok-video-1.5</code></td>
-                <td>通过 <code>duration</code> 传整数秒，范围以模型校验结果为准</td>
-                <td>通过 <code>size</code> 传横竖屏尺寸</td>
-                <td><code>grok-image-video</code> 支持多图；<code>grok-video-1.5</code> 仅单图</td>
+                <td>
+                  <code>grok-image-video</code><br /><code>grok-video-1.5</code>
+                </td>
+                <td><code>4/6/8/10/12/15</code> 秒；多图最长 10 秒</td>
+                <td>
+                  <code>aspect_ratio</code> 支持常见横竖屏比例；<code
+                    >resolution</code
+                  >
+                  为 <code>720p/480p</code>
+                </td>
+                <td>
+                  <code>grok-image-video</code> 最多 7 图；<code
+                    >grok-video-1.5</code
+                  >
+                  必须且只能 1 图
+                </td>
                 <td>按次</td>
               </tr>
               <tr>
                 <td>即梦视频按次</td>
-                <td><code>video-ds-2.0</code><br /><code>video-ds-2.0-fast</code><br /><code>as-sd2.0-fast</code></td>
-                <td>通过 <code>duration</code> 传整数秒，范围以模型校验结果为准</td>
-                <td>通过 <code>size</code> 传横竖屏尺寸</td>
-                <td>通过 <code>images</code> 传模型支持的参考图</td>
+                <td>
+                  <code>video-ds-2.0</code><br /><code>video-ds-2.0-fast</code
+                  ><br /><code>as-sd2.0-fast</code>
+                </td>
+                <td>常用 <code>5/10/15</code> 秒</td>
+                <td>
+                  通过 <code>aspect_ratio</code> 传 <code>16:9/9:16/1:1</code>
+                </td>
+                <td>
+                  <code>images</code> 最多 4 个、<code>videos</code> 最多 3
+                  个、<code>audios</code> 最多 1 个
+                </td>
                 <td>按次</td>
               </tr>
               <tr>
                 <td>即梦dddd</td>
-                <td><code>dreamina-seedance-2-0-fast-hc</code><br /><code>dreamina-seedance-2-0-hc</code><br /><code>dreamina-seedance-2-0-mini-hc</code></td>
-                <td><code>duration</code> 必须为 4–15 秒</td>
-                <td><code>size</code>，可附加 <code>metadata.resolution</code> 和 <code>metadata.ratio</code></td>
-                <td>通过 <code>images</code> 传一个或多个公网 HTTPS 图片 URL</td>
+                <td>
+                  <code>dreamina-seedance-2-0-fast-hc</code><br /><code
+                    >dreamina-seedance-2-0-hc</code
+                  ><br /><code>dreamina-seedance-2-0-mini-hc</code>
+                </td>
+                <td><code>seconds</code> 必须为 4–15 秒</td>
+                <td>
+                  <code>aspect_ratio</code> 与
+                  <code>resolution</code>；高配模型支持到 4K
+                </td>
+                <td>
+                  最多 4 张参考图；支持 <code>generate_audio</code> 和
+                  <code>watermark</code>
+                </td>
                 <td>按实际 token</td>
               </tr>
             </tbody>
@@ -423,7 +581,8 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
         </div>
 
         <div class="warning">
-          <strong>即梦dddd 时长限制：</strong><code>duration</code> 必须为 4–15 秒。3 秒请求会返回 <code>400 invalid_duration</code>。
+          <strong>即梦dddd 时长限制：</strong><code>seconds</code> 必须为 4–15
+          秒。3 秒请求会返回 <code>400 invalid_duration</code>。
         </div>
 
         <h3>统一的基础请求</h3>
@@ -434,12 +593,30 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
   -d '{
     "model": "grok-image-video",
     "prompt": "海边日落，镜头缓慢向前推进",
-    "duration": 8,
-    "size": "1280x720"
+    "seconds": 8,
+    "aspect_ratio": "16:9",
+    "resolution": "720p"
+  }'</code></pre>
+
+        <h3>章鱼即梦多媒体参考请求</h3>
+        <pre><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "video-ds-2.0",
+    "prompt": "参考人物、动作和音乐生成自然流畅的短片",
+    "seconds": "15",
+    "aspect_ratio": "9:16",
+    "images": ["https://example.com/person.jpg"],
+    "videos": ["https://example.com/motion.mp4"],
+    "audios": ["https://example.com/music.mp3"]
   }'</code></pre>
 
         <h3>即梦dddd 价格参数</h3>
-        <p>该分组在任务完成后按实际 token 用量结算。参考图和清晰度会影响计费档位。</p>
+        <p>
+          该分组在任务完成后按实际 token
+          用量结算。参考图和清晰度会影响计费档位。
+        </p>
 
         <div class="table-wrap">
           <table>
@@ -455,15 +632,24 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
             <tbody>
               <tr>
                 <td><code>dreamina-seedance-2-0-fast-hc</code></td>
-                <td>$5.60 / 1M token</td><td>$3.30 / 1M token</td><td>不支持</td><td>不支持</td>
+                <td>$5.60 / 1M token</td>
+                <td>$3.30 / 1M token</td>
+                <td>不支持</td>
+                <td>不支持</td>
               </tr>
               <tr>
                 <td><code>dreamina-seedance-2-0-hc</code></td>
-                <td>$7.00 / 1M token</td><td>$4.30 / 1M token</td><td>$7.70 / $4.70</td><td>$4.00 / $2.40</td>
+                <td>$7.00 / 1M token</td>
+                <td>$4.30 / 1M token</td>
+                <td>$7.70 / $4.70</td>
+                <td>$4.00 / $2.40</td>
               </tr>
               <tr>
                 <td><code>dreamina-seedance-2-0-mini-hc</code></td>
-                <td>$3.50 / 1M token</td><td>$2.10 / 1M token</td><td>不支持</td><td>不支持</td>
+                <td>$3.50 / 1M token</td>
+                <td>$2.10 / 1M token</td>
+                <td>不支持</td>
+                <td>不支持</td>
               </tr>
             </tbody>
           </table>
@@ -476,12 +662,11 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
   -d '{
     "model": "dreamina-seedance-2-0-mini-hc",
     "prompt": "一只纸飞机在清晨天空中缓慢飞行，固定镜头",
-    "duration": 4,
-    "size": "720x1280",
-    "metadata": {
-      "resolution": "720p",
-      "ratio": "9:16"
-    }
+    "seconds": 4,
+    "aspect_ratio": "9:16",
+    "resolution": "720p",
+    "generate_audio": false,
+    "watermark": false
   }'</code></pre>
 
         <h3>即梦dddd 参考图参数</h3>
@@ -491,21 +676,38 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
   -d '{
     "model": "dreamina-seedance-2-0-hc",
     "prompt": "人物转身看向镜头，背景灯光缓慢变化",
-    "duration": 5,
+    "seconds": 5,
+    "aspect_ratio": "16:9",
+    "resolution": "720p",
     "images": [
       "https://example.com/reference.jpg"
     ],
-    "metadata": {
-      "resolution": "720p",
-      "ratio": "16:9"
-    }
+    "generate_audio": false,
+    "watermark": false
   }'</code></pre>
 
-        <h3>参考图统一规则</h3>
-        <p>所有视频模型都通过 <code>images</code> 传参考图。图片必须是本站可以访问的公网 HTTPS URL；不同模型支持的图片数量见参数差异表。</p>
+        <h3>上传本地参考素材</h3>
+        <p>
+          本地图片、视频和音频先上传到本站临时素材接口，返回 URL 有效期为 24
+          小时，再放入视频请求的对应数组。
+        </p>
+        <pre><code>curl "$BASE_URL/pg/assets" \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "kind=image" \
+  -F "file=@./reference.png"</code></pre>
+        <p>
+          <code>kind</code> 可为 <code>image</code>、<code>video</code> 或
+          <code>audio</code>。响应中的 <code>data.url</code> 可直接填入
+          <code>images</code>、<code>videos</code> 或
+          <code>audios</code>。本站会在内部继续转换成各上游需要的素材协议。
+        </p>
 
         <h3>计费说明</h3>
-        <p>任务提交时会预扣额度；任务完成后根据 <code>usage.total_tokens</code>、模型倍率、分组倍率和参考图档位重新结算，多扣部分自动退回，少扣部分自动补扣。任务失败会退回预扣额度。</p>
+        <p>
+          任务提交时会预扣额度；任务完成后根据
+          <code>usage.total_tokens</code
+          >、模型倍率、分组倍率和参考图档位重新结算，多扣部分自动退回，少扣部分自动补扣。任务失败会退回预扣额度。
+        </p>
       </section>
 
       <section id="errors">
@@ -513,14 +715,38 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>HTTP 状态</th><th>常见原因</th><th>处理方式</th></tr>
+              <tr>
+                <th>HTTP 状态</th>
+                <th>常见原因</th>
+                <th>处理方式</th>
+              </tr>
             </thead>
             <tbody>
-              <tr><td>400</td><td>参数错误、时长或尺寸不受支持</td><td>读取响应中的 <code>code</code> 和 <code>message</code></td></tr>
-              <tr><td>401</td><td>API Key 缺失、无效或已禁用</td><td>检查 Authorization 请求头</td></tr>
-              <tr><td>403</td><td>Key 无权使用目标分组或模型</td><td>检查 API Key 的分组和模型权限</td></tr>
-              <tr><td>429</td><td>请求频率超过限制</td><td>退避后重试</td></tr>
-              <tr><td>5xx</td><td>视频服务或网关暂时不可用</td><td>记录请求 ID，稍后重试</td></tr>
+              <tr>
+                <td>400</td>
+                <td>参数错误、时长或尺寸不受支持</td>
+                <td>读取响应中的 <code>code</code> 和 <code>message</code></td>
+              </tr>
+              <tr>
+                <td>401</td>
+                <td>API Key 缺失、无效或已禁用</td>
+                <td>检查 Authorization 请求头</td>
+              </tr>
+              <tr>
+                <td>403</td>
+                <td>Key 无权使用目标分组或模型</td>
+                <td>检查 API Key 的分组和模型权限</td>
+              </tr>
+              <tr>
+                <td>429</td>
+                <td>请求频率超过限制</td>
+                <td>退避后重试</td>
+              </tr>
+              <tr>
+                <td>5xx</td>
+                <td>视频服务或网关暂时不可用</td>
+                <td>记录请求 ID，稍后重试</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -534,7 +760,9 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
     </main>
 
     <footer>
-      <div>公开入口：<a href="https://vp.735678.xyz">https://vp.735678.xyz</a></div>
+      <div>
+        公开入口：<a href="https://vp.735678.xyz">https://vp.735678.xyz</a>
+      </div>
     </footer>
   </body>
 </html>

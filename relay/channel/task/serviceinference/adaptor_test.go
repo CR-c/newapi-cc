@@ -2,17 +2,66 @@ package serviceinference
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestBuildRequestBodyUploadsImagesAndPreservesOptionalParameters(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	assetRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/sd/assets" {
+			http.NotFound(writer, request)
+			return
+		}
+		assetRequests++
+		assert.Equal(t, "Bearer test-key", request.Header.Get("Authorization"))
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"success":true,"data":{"Id":"asset-created","base_resp":{"status_code":0,"status_msg":"success"}}}`))
+	}))
+	defer server.Close()
+
+	generateAudio := false
+	watermark := false
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Set("task_request", relaycommon.TaskSubmitReq{
+		Model: "dreamina-seedance-2-0-hc", Prompt: "animate", Duration: 5,
+		AspectRatio: "1:1", Resolution: "480p",
+		Images:        []string{"https://example.com/reference.png"},
+		GenerateAudio: &generateAudio, Watermark: &watermark,
+	})
+	adaptor := &TaskAdaptor{baseURL: server.URL, apiKey: "test-key"}
+	body, err := adaptor.BuildRequestBody(context, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "dreamina-seedance-2-0-hc"},
+	})
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload requestPayload
+	require.NoError(t, common.Unmarshal(data, &payload))
+
+	assert.Equal(t, 1, assetRequests)
+	assert.Equal(t, "480p", payload.Resolution)
+	assert.Equal(t, "1:1", payload.Ratio)
+	require.NotNil(t, payload.GenerateAudio)
+	assert.False(t, *payload.GenerateAudio)
+	require.NotNil(t, payload.Watermark)
+	assert.False(t, *payload.Watermark)
+	require.Len(t, payload.Content, 2)
+	require.NotNil(t, payload.Content[1].ImageURL)
+	assert.Equal(t, "asset://asset-created", payload.Content[1].ImageURL.URL)
+	assert.Equal(t, "reference_image", payload.Content[1].Role)
+}
 
 func TestBillingRatio(t *testing.T) {
 	tests := []struct {
@@ -36,6 +85,24 @@ func TestBillingRatio(t *testing.T) {
 			assert.InDelta(t, tt.want, ratio, 0.0000001)
 		})
 	}
+}
+
+func TestEstimateBillingUsesMappedUpstreamModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Set("task_request", relaycommon.TaskSubmitReq{
+		Resolution: "720p",
+		Images:     []string{"https://example.com/reference.png"},
+	})
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "public-video-alias",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "dreamina-seedance-2-0-mini-hc",
+		},
+	}
+
+	ratios := (&TaskAdaptor{}).EstimateBilling(context, info)
+	assert.InDelta(t, 2.1/3.5, ratios["reference_image"], 0.0000001)
 }
 
 func TestTaskResolutionMapsPlaygroundVideoSizes(t *testing.T) {
@@ -100,5 +167,24 @@ func TestValidateRequestEnforcesServiceInferenceDuration(t *testing.T) {
 			}
 			require.Nil(t, taskErr)
 		})
+	}
+}
+
+func TestValidateRequestRejectsInvalidSecondsAndUnsupportedAssetReferences(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, body := range []string{
+		`{"model":"dreamina-seedance-2-0-mini-hc","prompt":"test","seconds":"invalid"}`,
+		`{"model":"dreamina-seedance-2-0-mini-hc","prompt":"test","seconds":"4","images":["asset://foreign-asset"]}`,
+		`{"model":"dreamina-seedance-2-0-mini-hc","prompt":"test","seconds":"4","videos":["https://example.com/ref.mp4"]}`,
+	} {
+		context, _ := gin.CreateTestContext(httptest.NewRecorder())
+		context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+		context.Request.Header.Set("Content-Type", "application/json")
+
+		taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(context, &relaycommon.RelayInfo{
+			TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+		})
+		require.NotNil(t, taskErr, body)
+		assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
 	}
 }

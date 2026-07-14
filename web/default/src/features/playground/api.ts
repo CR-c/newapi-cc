@@ -29,6 +29,10 @@ import type {
   ImageGenerationResponse,
   VideoGenerationRequest,
   VideoTaskResponse,
+  PlaygroundMediaHistoryItem,
+  PlaygroundMediaHistoryResponse,
+  PlaygroundAssetKind,
+  PlaygroundAssetUploadResult,
 } from './types'
 
 /**
@@ -98,6 +102,40 @@ export async function getVideoTask(
     skipErrorHandler: true,
   } as Record<string, unknown>)
   return res.data
+}
+
+export async function getPlaygroundMediaHistory(
+  mediaType: Exclude<PlaygroundMode, 'chat'>,
+  signal?: AbortSignal
+): Promise<PlaygroundMediaHistoryItem[]> {
+  const res = await api.get<PlaygroundMediaHistoryResponse>(
+    API_ENDPOINTS.MEDIA_HISTORY,
+    {
+      params: { media_type: mediaType, limit: 50 },
+      signal,
+    }
+  )
+  if (!res.data.success || !Array.isArray(res.data.data)) return []
+  return res.data.data
+}
+
+export async function uploadPlaygroundAsset(
+  file: File,
+  kind: PlaygroundAssetKind,
+  signal?: AbortSignal
+): Promise<PlaygroundAssetUploadResult> {
+  const formData = new FormData()
+  formData.append('kind', kind)
+  formData.append('file', file)
+  const res = await api.post<{
+    success: boolean
+    message: string
+    data: PlaygroundAssetUploadResult
+  }>(API_ENDPOINTS.PLAYGROUND_ASSETS, formData, {
+    signal,
+    skipErrorHandler: true,
+  })
+  return res.data.data
 }
 
 /**

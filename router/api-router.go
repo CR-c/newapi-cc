@@ -328,6 +328,12 @@ func SetApiRouter(router *gin.Engine) {
 			taskRoute.GET("/", middleware.AdminAuth(), controller.GetAllTask)
 		}
 
+		playgroundRoute := apiRouter.Group("/playground")
+		playgroundRoute.Use(middleware.UserAuth(), middleware.DisableCache())
+		{
+			playgroundRoute.GET("/media-history", controller.GetPlaygroundMediaHistory)
+		}
+
 		vendorRoute := apiRouter.Group("/vendors")
 		vendorRoute.Use(middleware.AdminAuth())
 		{

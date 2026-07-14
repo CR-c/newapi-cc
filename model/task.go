@@ -78,6 +78,7 @@ type Properties struct {
 	Input             string `json:"input"`
 	UpstreamModelName string `json:"upstream_model_name,omitempty"`
 	OriginModelName   string `json:"origin_model_name,omitempty"`
+	IsPlayground      bool   `json:"is_playground,omitempty"`
 }
 
 func (m *Properties) Scan(val interface{}) error {
@@ -184,6 +185,9 @@ func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) 
 		if relayInfo.OriginModelName != "" {
 			properties.OriginModelName = relayInfo.OriginModelName
 		}
+	}
+	if relayInfo != nil {
+		properties.IsPlayground = relayInfo.IsPlayground
 	}
 
 	// 使用预生成的公开 ID（如果有），否则新生成

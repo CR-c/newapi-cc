@@ -36,6 +36,8 @@ func TestMain(m *testing.M) {
 
 	if err := db.AutoMigrate(
 		&Task{},
+		&PlaygroundMediaHistory{},
+		&PlaygroundAsset{},
 		&User{},
 		&Token{},
 		&Log{},
@@ -62,6 +64,8 @@ func truncateTables(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
 		DB.Exec("DELETE FROM tasks")
+		DB.Exec("DELETE FROM playground_media_histories")
+		DB.Exec("DELETE FROM playground_assets")
 		DB.Exec("DELETE FROM users")
 		DB.Exec("DELETE FROM tokens")
 		DB.Exec("DELETE FROM logs")

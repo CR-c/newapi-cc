@@ -105,7 +105,138 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if info.Action == constant.TaskActionRemix {
 		return validateRemixRequest(c)
 	}
-	return relaycommon.ValidateMultipartDirect(c, info)
+	if taskErr = relaycommon.ValidateMultipartDirect(c, info); taskErr != nil {
+		return taskErr
+	}
+	effectiveModel := info.UpstreamModelName
+	if effectiveModel == "" {
+		effectiveModel = info.OriginModelName
+	}
+	if !a.legacyOpenAIVideoAPI {
+		req, err := relaycommon.GetTaskRequest(c)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		if err = validateSub2APIVideoRequest(req, effectiveModel); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		return nil
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	if err = validateGrokVideoRequest(&req, effectiveModel); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	c.Set("task_request", req)
+	return nil
+}
+
+func validateSub2APIVideoRequest(req relaycommon.TaskSubmitReq, modelName string) error {
+	if !isSub2APIVideoModel(modelName) {
+		return nil
+	}
+	if req.Seconds != "" {
+		seconds, err := strconv.Atoi(req.Seconds)
+		if err != nil || (seconds != 5 && seconds != 10 && seconds != 15) {
+			return fmt.Errorf("seconds must be one of 5, 10, 15")
+		}
+	}
+	if req.AspectRatio != "" && req.AspectRatio != "16:9" && req.AspectRatio != "9:16" && req.AspectRatio != "1:1" {
+		return fmt.Errorf("aspect_ratio must be 16:9, 9:16, or 1:1")
+	}
+	if len(req.Images) > 4 {
+		return fmt.Errorf("this model supports at most 4 reference images")
+	}
+	if len(req.Videos) > 3 {
+		return fmt.Errorf("this model supports at most 3 reference videos")
+	}
+	if len(req.Audios) > 1 {
+		return fmt.Errorf("this model supports at most 1 reference audio")
+	}
+	for _, imageURL := range req.Images {
+		if err := taskcommon.ValidateMediaURL(imageURL, false); err != nil {
+			return fmt.Errorf("invalid reference image: %w", err)
+		}
+	}
+	for _, videoURL := range req.Videos {
+		if err := taskcommon.ValidateMediaURL(videoURL, false); err != nil {
+			return fmt.Errorf("invalid reference video: %w", err)
+		}
+	}
+	for _, audioURL := range req.Audios {
+		if err := taskcommon.ValidateMediaURL(audioURL, false); err != nil {
+			return fmt.Errorf("invalid reference audio: %w", err)
+		}
+	}
+	return nil
+}
+
+func isSub2APIVideoModel(modelName string) bool {
+	return strings.HasPrefix(modelName, "video-ds-2.0") || modelName == "as-sd2.0-fast"
+}
+
+func validateGrokVideoRequest(req *relaycommon.TaskSubmitReq, modelName string) error {
+	seconds := 0
+	if req.Seconds != "" {
+		var err error
+		seconds, err = strconv.Atoi(req.Seconds)
+		if err != nil {
+			return fmt.Errorf("seconds must be one of 4, 6, 8, 10, 12, 15")
+		}
+	}
+	if seconds == 0 {
+		seconds = req.Duration
+	}
+	if seconds == 0 {
+		seconds = 4
+	}
+	allowedSeconds := map[int]bool{4: true, 6: true, 8: true, 10: true, 12: true, 15: true}
+	if !allowedSeconds[seconds] {
+		return fmt.Errorf("seconds must be one of 4, 6, 8, 10, 12, 15")
+	}
+	if req.AspectRatio == "" {
+		req.AspectRatio = "16:9"
+	}
+	if req.Resolution == "" {
+		req.Resolution = "720p"
+	}
+	if req.Resolution != "720p" && req.Resolution != "480p" {
+		return fmt.Errorf("resolution must be 720p or 480p")
+	}
+	if len(req.Videos) > 0 || len(req.Audios) > 0 {
+		return fmt.Errorf("Grok video models only support reference images")
+	}
+
+	switch modelName {
+	case "grok-video-1.5":
+		if len(req.Images) != 1 {
+			return fmt.Errorf("grok-video-1.5 requires exactly one reference image")
+		}
+		if req.AspectRatio != "16:9" && req.AspectRatio != "9:16" {
+			return fmt.Errorf("grok-video-1.5 aspect_ratio must be 16:9 or 9:16")
+		}
+	case "grok-image-video":
+		if len(req.Images) > 7 {
+			return fmt.Errorf("grok-image-video supports at most 7 reference images")
+		}
+		allowedRatios := map[string]bool{"1:1": true, "16:9": true, "9:16": true, "4:3": true, "3:4": true, "3:2": true, "2:3": true}
+		if !allowedRatios[req.AspectRatio] {
+			return fmt.Errorf("unsupported aspect_ratio for grok-image-video")
+		}
+		if len(req.Images) > 1 && seconds > 10 {
+			seconds = 10
+		}
+	}
+	for _, imageURL := range req.Images {
+		if err := taskcommon.ValidateMediaURL(imageURL, true); err != nil {
+			return fmt.Errorf("invalid reference image: %w", err)
+		}
+	}
+	req.Seconds = strconv.Itoa(seconds)
+	req.Duration = 0
+	return nil
 }
 
 // EstimateBilling 根据用户请求的 seconds 和 size 计算 OtherRatios。
@@ -172,6 +303,58 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	contentType := c.GetHeader("Content-Type")
 
 	if strings.HasPrefix(contentType, "application/json") {
+		if a.legacyOpenAIVideoAPI {
+			req, requestErr := relaycommon.GetTaskRequest(c)
+			if requestErr != nil {
+				return nil, requestErr
+			}
+			seconds, _ := strconv.Atoi(req.Seconds)
+			payload := map[string]any{
+				"model":        info.UpstreamModelName,
+				"prompt":       req.Prompt,
+				"seconds":      seconds,
+				"aspect_ratio": req.AspectRatio,
+				"resolution":   req.Resolution,
+			}
+			if len(req.Images) > 0 {
+				payload["image_urls"] = req.Images
+			}
+			data, marshalErr := common.Marshal(payload)
+			if marshalErr != nil {
+				return nil, marshalErr
+			}
+			return bytes.NewReader(data), nil
+		}
+		if isSub2APIVideoModel(info.UpstreamModelName) {
+			req, requestErr := relaycommon.GetTaskRequest(c)
+			if requestErr != nil {
+				return nil, requestErr
+			}
+			payload := map[string]any{
+				"model":  info.UpstreamModelName,
+				"prompt": req.Prompt,
+			}
+			if req.Seconds != "" {
+				payload["seconds"] = req.Seconds
+			}
+			if req.AspectRatio != "" {
+				payload["aspect_ratio"] = req.AspectRatio
+			}
+			if len(req.Images) > 0 {
+				payload["images"] = req.Images
+			}
+			if len(req.Videos) > 0 {
+				payload["videos"] = req.Videos
+			}
+			if len(req.Audios) > 0 {
+				payload["audios"] = req.Audios
+			}
+			data, marshalErr := common.Marshal(payload)
+			if marshalErr != nil {
+				return nil, marshalErr
+			}
+			return bytes.NewReader(data), nil
+		}
 		var bodyMap map[string]interface{}
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
 			bodyMap["model"] = info.UpstreamModelName
@@ -252,6 +435,21 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	_ = resp.Body.Close()
 
 	if a.legacyOpenAIVideoAPI {
+		var directTask responseTask
+		if err := common.Unmarshal(responseBody, &directTask); err == nil && (directTask.TaskID != "" || directTask.ID != "") {
+			upstreamTaskID := directTask.TaskID
+			if upstreamTaskID == "" {
+				upstreamTaskID = directTask.ID
+			}
+			directTask.ID = info.PublicTaskID
+			directTask.TaskID = info.PublicTaskID
+			directTask.Model = info.OriginModelName
+			if directTask.Object == "" {
+				directTask.Object = "video"
+			}
+			c.JSON(http.StatusOK, directTask)
+			return upstreamTaskID, responseBody, nil
+		}
 		var legacyTask legacyResponseTask
 		if err := common.Unmarshal(responseBody, &legacyTask); err != nil {
 			taskErr = service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)

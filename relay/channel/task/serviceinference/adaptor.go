@@ -2,6 +2,7 @@ package serviceinference
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -51,6 +52,17 @@ type taskEnvelope struct {
 	} `json:"task"`
 }
 
+type assetResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		ID       string `json:"Id"`
+		BaseResp struct {
+			StatusCode int    `json:"status_code"`
+			StatusMsg  string `json:"status_msg"`
+		} `json:"base_resp"`
+	} `json:"data"`
+}
+
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
 	apiKey  string
@@ -77,10 +89,24 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	}
 	duration := req.Duration
 	if duration == 0 && req.Seconds != "" {
-		duration, _ = strconv.Atoi(req.Seconds)
+		duration, err = strconv.Atoi(req.Seconds)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("duration must be an integer"), "invalid_duration", http.StatusBadRequest)
+		}
 	}
 	if duration == 0 {
 		duration = defaultDurationSeconds
+	}
+	if len(req.Images) > 4 {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("at most 4 reference images are supported"), "invalid_images", http.StatusBadRequest)
+	}
+	if len(req.Videos) > 0 || len(req.Audios) > 0 {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("this model only supports reference images"), "invalid_media", http.StatusBadRequest)
+	}
+	for _, imageURL := range req.Images {
+		if err = taskcommon.ValidateMediaURL(imageURL, false); err != nil {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("invalid reference image: %w", err), "invalid_images", http.StatusBadRequest)
+		}
 	}
 	if duration < minDurationSeconds || duration > maxDurationSeconds {
 		return service.TaskErrorWrapperLocal(
@@ -109,7 +135,11 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		return nil
 	}
 	resolution := taskResolution(req)
-	ratio, ok := billingRatio(info.OriginModelName, resolution, req.HasImage())
+	billingModel := info.UpstreamModelName
+	if billingModel == "" {
+		billingModel = info.OriginModelName
+	}
+	ratio, ok := billingRatio(billingModel, resolution, req.HasImage())
 	if !ok || ratio == 1 {
 		return nil
 	}
@@ -117,6 +147,9 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func taskResolution(req relaycommon.TaskSubmitReq) string {
+	if req.Resolution != "" {
+		return req.Resolution
+	}
 	if resolution, _ := req.Metadata["resolution"].(string); resolution != "" {
 		return resolution
 	}
@@ -182,29 +215,86 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
-	body := requestPayload{Model: info.UpstreamModelName, Content: []contentItem{{Type: "text", Text: req.Prompt}}, Duration: req.Duration}
+	body := requestPayload{
+		Model: info.UpstreamModelName, Content: []contentItem{{Type: "text", Text: req.Prompt}}, Duration: req.Duration,
+		Resolution: taskResolution(req), Ratio: req.AspectRatio, GenerateAudio: req.GenerateAudio, Watermark: req.Watermark,
+	}
 	if body.Model == "" {
 		body.Model = req.Model
 	}
 	if seconds := req.Seconds; seconds != "" {
 		_, _ = fmt.Sscan(seconds, &body.Duration)
 	}
-	if resolution := taskResolution(req); resolution != "" {
-		body.Resolution = resolution
-	}
-	if ratio, ok := req.Metadata["ratio"].(string); ok {
-		body.Ratio = ratio
+	if body.Ratio == "" {
+		if ratio, ok := req.Metadata["ratio"].(string); ok {
+			body.Ratio = ratio
+		}
 	}
 	for _, imageURL := range req.Images {
+		assetID, uploadErr := a.createImageAsset(c, info, imageURL)
+		if uploadErr != nil {
+			return nil, uploadErr
+		}
 		body.Content = append(body.Content, contentItem{Type: "image_url", ImageURL: &struct {
 			URL string `json:"url"`
-		}{URL: imageURL}, Role: "reference_image"})
+		}{URL: "asset://" + assetID}, Role: "reference_image"})
 	}
 	data, err := common.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	return bytes.NewReader(data), nil
+}
+
+func (a *TaskAdaptor) createImageAsset(c *gin.Context, info *relaycommon.RelayInfo, imageURL string) (string, error) {
+	payload := map[string]string{
+		"URL": imageURL, "Name": "playground-reference", "AssetType": "Image",
+	}
+	body, err := common.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	requestContext := context.Background()
+	if c != nil && c.Request != nil {
+		requestContext = c.Request.Context()
+	}
+	req, err := http.NewRequestWithContext(requestContext, http.MethodPost, a.baseURL+"/v1/sd/assets", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+a.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	proxy := ""
+	if info != nil && info.ChannelMeta != nil {
+		proxy = info.ChannelSetting.Proxy
+	}
+	client, err := service.GetHttpClientWithProxy(proxy)
+	if err != nil {
+		return "", err
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("asset upload failed with status %d", resp.StatusCode)
+	}
+	var result assetResponse
+	if err = common.Unmarshal(responseBody, &result); err != nil {
+		return "", err
+	}
+	if !result.Success || result.Data.BaseResp.StatusCode != 0 || result.Data.ID == "" {
+		return "", fmt.Errorf("asset upload failed: %s", result.Data.BaseResp.StatusMsg)
+	}
+	return result.Data.ID, nil
 }
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, body io.Reader) (*http.Response, error) {
 	return channel.DoTaskApiRequest(a, c, info, body)

@@ -479,6 +479,18 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		taskResult.Progress = t.Progress
 		taskResult.Reason = t.FailReason
 		task.Data = t.Data
+		// Some upstream New API instances include result_url beside the wrapped
+		// task data instead of nesting it in Task.PrivateData. Let the provider
+		// adaptor recover those provider-specific fields without discarding the
+		// normalized status parsed above.
+		if providerResult, parseErr := adaptor.ParseTaskResult(responseBody); parseErr == nil && providerResult != nil {
+			if taskResult.Url == "" {
+				taskResult.Url = providerResult.Url
+			}
+			if taskResult.Reason == "" {
+				taskResult.Reason = providerResult.Reason
+			}
+		}
 	} else if taskResult, err = adaptor.ParseTaskResult(responseBody); err != nil {
 		return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
 	}

@@ -30,6 +30,28 @@ type taskPollingFetchAdaptor struct {
 	blockOnce    sync.Once
 }
 
+type taskPollingWrappedResultAdaptor struct {
+	responseBody []byte
+	result       *relaycommon.TaskInfo
+}
+
+func (a *taskPollingWrappedResultAdaptor) Init(*relaycommon.RelayInfo) {}
+
+func (a *taskPollingWrappedResultAdaptor) FetchTask(string, string, map[string]any, string) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(bytes.NewReader(a.responseBody)),
+	}, nil
+}
+
+func (a *taskPollingWrappedResultAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) {
+	return a.result, nil
+}
+
+func (a *taskPollingWrappedResultAdaptor) AdjustBillingOnComplete(*model.Task, *relaycommon.TaskInfo) int {
+	return 0
+}
+
 func (a *taskPollingFetchAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -93,6 +115,38 @@ func (a *taskPollingFetchAdaptor) fetchedTaskIDs() []string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return append([]string(nil), a.taskIDs...)
+}
+
+func TestUpdateVideoSingleTaskPreservesProviderResultURLFromWrappedResponse(t *testing.T) {
+	channelID := 91001
+	seedTaskPollingChannel(t, channelID, true)
+	task := seedPollingTask(t, channelID, "task_public_result", "task_upstream_result")
+	responseBody := []byte(`{
+		"code":"success",
+		"data":{"task_id":"task_upstream_result","status":"SUCCESS","progress":"100%","result_url":"https://cdn.example/result.mp4"},
+		"task_id":"task_upstream_result","status":"completed","progress":100,
+		"result_url":"https://cdn.example/result.mp4"
+	}`)
+	adaptor := &taskPollingWrappedResultAdaptor{
+		responseBody: responseBody,
+		result: &relaycommon.TaskInfo{
+			TaskID: "task_upstream_result", Status: model.TaskStatusSuccess,
+			Progress: "100%", Url: "https://cdn.example/result.mp4",
+		},
+	}
+	channel, err := model.CacheGetChannel(channelID)
+	require.NoError(t, err)
+
+	err = updateVideoSingleTask(context.Background(), adaptor, channel, task.GetUpstreamTaskID(), map[string]*model.Task{
+		task.GetUpstreamTaskID(): task,
+	})
+	require.NoError(t, err)
+
+	updated, exists, err := model.GetByTaskId(task.UserId, task.TaskID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusSuccess), updated.Status)
+	assert.Equal(t, "https://cdn.example/result.mp4", updated.GetResultURL())
 }
 
 func seedTaskPollingChannel(t *testing.T, id int, disableSleep bool) {

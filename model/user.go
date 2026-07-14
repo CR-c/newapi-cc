@@ -427,6 +427,12 @@ func HardDeleteUserById(id int) error {
 		if err := deleteUserOAuthBindingsByUserId(tx, id); err != nil {
 			return err
 		}
+		if err := tx.Where("user_id = ?", id).Delete(&PlaygroundMediaHistory{}).Error; err != nil {
+			return err
+		}
+		if err := DeletePlaygroundAssetsByUser(tx, id); err != nil {
+			return err
+		}
 		return tx.Unscoped().Delete(&User{}, "id = ?", id).Error
 	})
 }

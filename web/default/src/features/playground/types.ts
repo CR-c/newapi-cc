@@ -179,6 +179,25 @@ export interface VideoGenerationRequest {
   prompt: string
   seconds?: string
   size?: string
+  aspect_ratio?: string
+  resolution?: string
+  images?: string[]
+  videos?: string[]
+  audios?: string[]
+  generate_audio?: boolean
+  watermark?: boolean
+}
+
+export type PlaygroundAssetKind = 'image' | 'video' | 'audio'
+
+export interface PlaygroundAssetUploadResult {
+  id: string
+  kind: PlaygroundAssetKind
+  url: string
+  filename: string
+  content_type: string
+  size: number
+  expires_at: number
 }
 
 export interface VideoTaskResponse {
@@ -193,4 +212,25 @@ export interface VideoTaskResponse {
     code?: string
     message?: string
   }
+}
+
+export interface PlaygroundMediaHistoryItem {
+  id: string
+  media_type: Exclude<PlaygroundMode, 'chat'>
+  model: string
+  prompt?: string
+  task_id?: string
+  status: string
+  progress: number
+  result_url?: string
+  images?: ImageGenerationResult[]
+  error?: string
+  created_at: number
+  completed_at?: number
+}
+
+export interface PlaygroundMediaHistoryResponse {
+  success: boolean
+  message: string
+  data: PlaygroundMediaHistoryItem[]
 }
