@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,12 +57,42 @@ type TaskAdaptor struct {
 	baseURL string
 }
 
+const (
+	minDurationSeconds     = 4
+	maxDurationSeconds     = 15
+	defaultDurationSeconds = 4
+)
+
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.baseURL = strings.TrimRight(info.ChannelBaseUrl, "/")
 	a.apiKey = info.ApiKey
 }
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
-	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+	if taskErr := relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate); taskErr != nil {
+		return taskErr
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	duration := req.Duration
+	if duration == 0 && req.Seconds != "" {
+		duration, _ = strconv.Atoi(req.Seconds)
+	}
+	if duration == 0 {
+		duration = defaultDurationSeconds
+	}
+	if duration < minDurationSeconds || duration > maxDurationSeconds {
+		return service.TaskErrorWrapperLocal(
+			fmt.Errorf("duration must be between %d and %d seconds", minDurationSeconds, maxDurationSeconds),
+			"invalid_duration",
+			http.StatusBadRequest,
+		)
+	}
+	req.Duration = duration
+	req.Seconds = ""
+	c.Set("task_request", req)
+	return nil
 }
 func (a *TaskAdaptor) BuildRequestURL(_ *relaycommon.RelayInfo) (string, error) {
 	return a.baseURL + "/v1/video/generate", nil

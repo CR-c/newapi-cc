@@ -49,6 +49,7 @@ import type {
 
 const VIDEO_POLL_INTERVAL_MS = 2000
 const TERMINAL_VIDEO_STATUSES = new Set(['completed', 'failed', 'cancelled'])
+const SERVICE_INFERENCE_MODEL_PREFIX = 'dreamina-seedance-2-0-'
 
 type MediaConfig = Pick<PlaygroundConfig, 'group' | 'model'>
 
@@ -92,6 +93,16 @@ export function PlaygroundMedia(props: PlaygroundMediaProps) {
   const [task, setTask] = useState<VideoTaskResponse | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const isServiceInferenceModel = config.model.startsWith(
+    SERVICE_INFERENCE_MODEL_PREFIX
+  )
+  const minimumVideoDuration = isServiceInferenceModel ? 4 : 1
+  const maximumVideoDuration = isServiceInferenceModel ? 15 : 60
+  const videoDuration = Number(seconds)
+  const isVideoDurationValid =
+    Number.isInteger(videoDuration) &&
+    videoDuration >= minimumVideoDuration &&
+    videoDuration <= maximumVideoDuration
 
   const updateConfig = useCallback(
     <K extends keyof MediaConfig>(key: K, value: MediaConfig[K]) => {
@@ -155,8 +166,26 @@ export function PlaygroundMedia(props: PlaygroundMediaProps) {
     []
   )
 
+  useEffect(() => {
+    if (!isServiceInferenceModel) return
+    setSeconds((current) => {
+      const duration = Number(current)
+      if (!Number.isFinite(duration) || duration < minimumVideoDuration) {
+        return String(minimumVideoDuration)
+      }
+      if (duration > maximumVideoDuration) {
+        return String(maximumVideoDuration)
+      }
+      return current
+    })
+  }, [isServiceInferenceModel, maximumVideoDuration, minimumVideoDuration])
+
   const canSubmit =
-    !isSubmitting && !isLoadingModels && config.model !== '' && prompt.trim() !== ''
+    !isSubmitting &&
+    !isLoadingModels &&
+    config.model !== '' &&
+    prompt.trim() !== '' &&
+    (props.mode === PLAYGROUND_MODES.IMAGE || isVideoDurationValid)
 
   const handleSubmit = async () => {
     if (!canSubmit) return
@@ -354,8 +383,8 @@ export function PlaygroundMedia(props: PlaygroundMediaProps) {
               ) : (
                 <Input
                   type='number'
-                  min={1}
-                  max={60}
+                  min={minimumVideoDuration}
+                  max={maximumVideoDuration}
                   value={seconds}
                   onChange={(event) => setSeconds(event.target.value)}
                   aria-label={t('Duration in seconds')}
