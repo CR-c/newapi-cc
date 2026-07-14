@@ -53,6 +53,7 @@ export interface CommonLogFilters extends CommonFilters {
   username?: string
   requestId?: string
   upstreamRequestId?: string
+  mediaType?: 'image' | 'video'
 }
 
 /**
@@ -140,6 +141,7 @@ export interface LogOtherData {
   login_method?: string
   user_agent?: string
   request_path?: string
+  media_type?: 'image' | 'video'
   request_conversion?: string[]
   ws?: boolean
   audio?: boolean
@@ -275,6 +277,7 @@ export interface TaskLog {
   progress_message_en?: string
   data?: string // JSON string
   fail_reason?: string
+  result_url?: string
   status: string // NOT_START, SUBMITTED, IN_PROGRESS, SUCCESS, FAILURE, QUEUED, UNKNOWN
   other?: string
   created_at?: number
@@ -298,6 +301,7 @@ export interface GetLogsParams {
   group?: string
   request_id?: string
   upstream_request_id?: string
+  media_type?: 'image' | 'video'
 }
 
 export interface GetLogsResponse {

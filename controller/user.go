@@ -617,6 +617,18 @@ func GetUserModels(c *gin.Context) {
 	}
 	groups := service.GetUserUsableGroups(user.Group)
 	group := c.Query("group")
+	capabilityValue := c.Query("capability")
+	if capabilityValue == "" {
+		capabilityValue = c.Query("media_type")
+	}
+	capability, validCapability := model.ParseModelCapability(capabilityValue)
+	if !validCapability {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "invalid capability",
+		})
+		return
+	}
 	if group != "" {
 		if _, ok := groups[group]; !ok {
 			c.JSON(http.StatusOK, gin.H{
@@ -630,14 +642,14 @@ func GetUserModels(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": "",
-			"data":    model.GetGroupEnabledModels(group),
+			"data":    model.GetGroupEnabledCapabilityModels(group, capability),
 		})
 		return
 	}
 
 	var models []string
 	for group := range groups {
-		for _, g := range model.GetGroupEnabledModels(group) {
+		for _, g := range model.GetGroupEnabledCapabilityModels(group, capability) {
 			if !common.StringsContains(models, g) {
 				models = append(models, g)
 			}

@@ -182,7 +182,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		Ctx:         c,
 		TokenGroup:  relayInfo.TokenGroup,
 		ModelName:   relayInfo.OriginModelName,
-		RequestPath: c.Request.URL.Path,
+		RequestPath: relayRequestPath(c.Request.URL.Path),
 		Retry:       common.GetPointer(0),
 	}
 	relayInfo.RetryIndex = 0
@@ -246,6 +246,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			perfmetrics.RecordRelaySample(relayInfo, false, 0)
 		})
 	}
+}
+
+func relayRequestPath(path string) string {
+	if strings.HasPrefix(path, "/pg/") {
+		return "/v1/" + strings.TrimPrefix(path, "/pg/")
+	}
+	return path
 }
 
 var upgrader = websocket.Upgrader{
@@ -382,6 +389,16 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		other["channel_id"] = channelId
 		other["channel_name"] = c.GetString("channel_name")
 		other["channel_type"] = c.GetInt("channel_type")
+		relayMode := relayconstant.Path2RelayMode(c.Request.URL.Path)
+		if relayMode == relayconstant.RelayModeImagesGenerations || relayMode == relayconstant.RelayModeImagesEdits {
+			other["media_type"] = string(model.MediaTypeImage)
+		}
+		if strings.Contains(c.Request.URL.Path, "/videos") || strings.Contains(c.Request.URL.Path, "/video/generations") {
+			other["media_type"] = string(model.MediaTypeVideo)
+			if taskID := common.GetContextKeyString(c, constant.ContextKeyPublicTaskId); taskID != "" {
+				other["task_id"] = taskID
+			}
+		}
 		adminInfo := make(map[string]interface{})
 		adminInfo["use_channel"] = c.GetStringSlice("use_channel")
 		isMultiKey := common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey)
@@ -511,7 +528,7 @@ func RelayTask(c *gin.Context) {
 		Ctx:         c,
 		TokenGroup:  relayInfo.TokenGroup,
 		ModelName:   relayInfo.OriginModelName,
-		RequestPath: c.Request.URL.Path,
+		RequestPath: relayRequestPath(c.Request.URL.Path),
 		Retry:       common.GetPointer(0),
 	}
 

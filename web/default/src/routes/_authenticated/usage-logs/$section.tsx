@@ -45,6 +45,7 @@ const usageLogsSearchSchema = z.object({
   username: z.string().optional().catch(''),
   requestId: z.string().optional().catch(''),
   upstreamRequestId: z.string().optional().catch(''),
+  mediaType: z.enum(['image', 'video']).optional().catch(undefined),
   startTime: z.number().optional(),
   endTime: z.number().optional(),
 })

@@ -88,6 +88,7 @@ function buildSearchSourceKey(values: {
   username?: unknown
   requestId?: unknown
   upstreamRequestId?: unknown
+  mediaType?: unknown
   type?: unknown
 }) {
   return [
@@ -100,6 +101,7 @@ function buildSearchSourceKey(values: {
     values.username,
     values.requestId,
     values.upstreamRequestId,
+    values.mediaType,
     Array.isArray(values.type) ? values.type.join(',') : values.type,
   ]
     .map((value) => String(value ?? ''))
@@ -133,6 +135,7 @@ export function CommonLogsFilterBar<TData>(
       username: searchParams.username,
       requestId: searchParams.requestId,
       upstreamRequestId: searchParams.upstreamRequestId,
+      mediaType: searchParams.mediaType,
       type: searchParams.type,
     }
     const filters: CommonLogFilters = {
@@ -147,6 +150,7 @@ export function CommonLogsFilterBar<TData>(
       username: searchParams.username || undefined,
       requestId: searchParams.requestId || undefined,
       upstreamRequestId: searchParams.upstreamRequestId || undefined,
+      mediaType: searchParams.mediaType || undefined,
     }
     return {
       sourceKey: buildSearchSourceKey(sourceValues),
@@ -163,6 +167,7 @@ export function CommonLogsFilterBar<TData>(
     searchParams.username,
     searchParams.requestId,
     searchParams.upstreamRequestId,
+    searchParams.mediaType,
     searchParams.type,
   ])
   const [draft, setDraft] = useState<CommonLogDraft>(() => searchState)
@@ -241,9 +246,15 @@ export function CommonLogsFilterBar<TData>(
     !!filters.requestId ||
     !!filters.upstreamRequestId
 
+  const hasMediaTypeFilter = Boolean(filters.mediaType)
+
   const hasTypeFilter = logType !== LOG_TYPE_ALL_VALUE
   const hasAdditionalFilters =
-    !!filters.model || !!filters.group || hasTypeFilter || hasExpandedFilters
+    !!filters.model ||
+    !!filters.group ||
+    hasTypeFilter ||
+    hasMediaTypeFilter ||
+    hasExpandedFilters
 
   const expandedFilterCount = [
     filters.token,
@@ -359,6 +370,33 @@ export function CommonLogsFilterBar<TData>(
       </Select>
     </LogsFilterField>
   )
+  const mediaTypeFilter = (
+    <LogsFilterField>
+      <Select
+        value={filters.mediaType ?? ''}
+        onValueChange={(value) =>
+          handleChange(
+            'mediaType',
+            value === 'image' || value === 'video' ? value : undefined
+          )
+        }
+      >
+        <SelectTrigger>
+          <SelectValue>
+            {filters.mediaType
+              ? t(filters.mediaType === 'image' ? 'Image' : 'Video')
+              : t('All media')}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent alignItemWithTrigger={false}>
+          <SelectGroup>
+            <SelectItem value='image'>{t('Image')}</SelectItem>
+            <SelectItem value='video'>{t('Video')}</SelectItem>
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </LogsFilterField>
+  )
   const advancedFilters = (
     <>
       <LogsFilterField>
@@ -421,6 +459,7 @@ export function CommonLogsFilterBar<TData>(
           {modelFilter}
           {groupFilter}
           {typeFilter}
+          {mediaTypeFilter}
         </>
       }
       advancedFilters={advancedFilters}
@@ -430,11 +469,12 @@ export function CommonLogsFilterBar<TData>(
           {modelFilter}
           {groupFilter}
           {typeFilter}
+          {mediaTypeFilter}
           {advancedFilters}
         </>
       }
       mobileFilterCount={
-        [filters.model, filters.group, hasTypeFilter].filter(Boolean).length +
+        [filters.model, filters.group, hasTypeFilter, hasMediaTypeFilter].filter(Boolean).length +
         expandedFilterCount
       }
       hasAdvancedActiveFilters={hasExpandedFilters}

@@ -5,14 +5,17 @@ import (
 	"encoding/json"
 	"math"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
+	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
@@ -214,6 +217,41 @@ func TestTaskBillingOtherFiltersHistoricalOtherRatios(t *testing.T) {
 	assert.NotContains(t, other, "negative")
 	assert.NotContains(t, other, "nan")
 	assert.NotContains(t, other, "inf")
+	assert.Equal(t, "video", other["media_type"])
+	assert.Equal(t, task.TaskID, other["task_id"])
+}
+
+func TestLogTaskConsumptionRecordsVideoMetadata(t *testing.T) {
+	truncate(t)
+	seedUser(t, 1, 1000)
+	seedChannel(t, 1)
+
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/pg/videos", nil)
+	context.Set("token_name", "playground-default")
+
+	info := &relaycommon.RelayInfo{
+		UserId:          1,
+		OriginModelName: "sora-2",
+		UsingGroup:      "default",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId: 1,
+		},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{
+			PublicTaskID: "task_media_log",
+			Action:       constant.TaskActionTextGenerate,
+		},
+	}
+
+	LogTaskConsumption(context, info)
+
+	var log model.Log
+	require.NoError(t, model.DB.Where("user_id = ?", 1).First(&log).Error)
+	var other map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
+	assert.Equal(t, "video", other["media_type"])
+	assert.Equal(t, "task_media_log", other["task_id"])
 }
 
 func TestTaskBillingContextPriceDataFiltersMultiplier(t *testing.T) {

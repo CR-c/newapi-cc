@@ -22,6 +22,7 @@ import (
 type taskPollingFetchAdaptor struct {
 	mu           sync.Mutex
 	taskIDs      []string
+	initInfo     *relaycommon.RelayInfo
 	fetched      chan string
 	blockTaskID  string
 	blockStarted chan struct{}
@@ -29,7 +30,11 @@ type taskPollingFetchAdaptor struct {
 	blockOnce    sync.Once
 }
 
-func (a *taskPollingFetchAdaptor) Init(_ *relaycommon.RelayInfo) {}
+func (a *taskPollingFetchAdaptor) Init(info *relaycommon.RelayInfo) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.initInfo = info
+}
 
 func (a *taskPollingFetchAdaptor) FetchTask(_ string, _ string, body map[string]any, _ string) (*http.Response, error) {
 	taskID, _ := body["task_id"].(string)
@@ -183,6 +188,34 @@ func TestUpdateVideoTasksCanSkipPollingSleepPerChannel(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, 2, adaptor.fetchCount())
+}
+
+func TestUpdateVideoTasksPassesChannelOtherSettingsToAdaptor(t *testing.T) {
+	truncate(t)
+
+	channel := &model.Channel{
+		Id:     103,
+		Type:   constant.ChannelTypeSora,
+		Name:   "legacy-video",
+		Key:    "sk-test",
+		Status: common.ChannelStatusEnabled,
+	}
+	channel.SetOtherSettings(dto.ChannelOtherSettings{LegacyOpenAIVideoAPI: true})
+	require.NoError(t, model.DB.Create(channel).Error)
+	task := seedPollingTask(t, channel.Id, "task_public_legacy", "upstream_legacy")
+
+	adaptor := &taskPollingFetchAdaptor{}
+	previousFactory := GetTaskAdaptorFunc
+	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return adaptor }
+	t.Cleanup(func() { GetTaskAdaptorFunc = previousFactory })
+
+	err := UpdateVideoTasks(context.Background(), constant.TaskPlatform("sora"), map[int][]string{
+		channel.Id: {task.GetUpstreamTaskID()},
+	}, map[string]*model.Task{task.GetUpstreamTaskID(): task})
+	require.NoError(t, err)
+	require.NotNil(t, adaptor.initInfo)
+	require.NotNil(t, adaptor.initInfo.ChannelMeta)
+	assert.True(t, adaptor.initInfo.ChannelOtherSettings.LegacyOpenAIVideoAPI)
 }
 
 func TestUpdateVideoTasksDefaultSleepDoesNotBlockOtherChannels(t *testing.T) {

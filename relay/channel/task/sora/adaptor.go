@@ -57,21 +57,35 @@ type responseTask struct {
 	} `json:"error,omitempty"`
 }
 
+type legacyResponseTask struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Data    struct {
+		TaskID     string `json:"task_id"`
+		Status     string `json:"status"`
+		Progress   string `json:"progress"`
+		ResultURL  string `json:"result_url"`
+		FailReason string `json:"fail_reason"`
+	} `json:"data"`
+}
+
 // ============================
 // Adaptor implementation
 // ============================
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
-	ChannelType int
-	apiKey      string
-	baseURL     string
+	ChannelType          int
+	apiKey               string
+	baseURL              string
+	legacyOpenAIVideoAPI bool
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.ChannelType = info.ChannelType
 	a.baseURL = info.ChannelBaseUrl
 	a.apiKey = info.ApiKey
+	a.legacyOpenAIVideoAPI = info.ChannelOtherSettings.LegacyOpenAIVideoAPI
 }
 
 func validateRemixRequest(c *gin.Context) *dto.TaskError {
@@ -133,6 +147,9 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 	if info.Action == constant.TaskActionRemix {
 		return fmt.Sprintf("%s/v1/videos/%s/remix", a.baseURL, info.OriginTaskID), nil
 	}
+	if a.legacyOpenAIVideoAPI {
+		return fmt.Sprintf("%s/v1/video/generations", a.baseURL), nil
+	}
 	return fmt.Sprintf("%s/v1/videos", a.baseURL), nil
 }
 
@@ -158,6 +175,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		var bodyMap map[string]interface{}
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
 			bodyMap["model"] = info.UpstreamModelName
+			delete(bodyMap, "group")
 			if newBody, err := common.Marshal(bodyMap); err == nil {
 				return bytes.NewReader(newBody), nil
 			}
@@ -174,7 +192,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		writer := multipart.NewWriter(&buf)
 		writer.WriteField("model", info.UpstreamModelName)
 		for key, values := range formData.Value {
-			if key == "model" {
+			if key == "model" || key == "group" {
 				continue
 			}
 			for _, v := range values {
@@ -233,6 +251,29 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	}
 	_ = resp.Body.Close()
 
+	if a.legacyOpenAIVideoAPI {
+		var legacyTask legacyResponseTask
+		if err := common.Unmarshal(responseBody, &legacyTask); err != nil {
+			taskErr = service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
+			return
+		}
+		if legacyTask.Data.TaskID == "" {
+			taskErr = service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
+			return
+		}
+		progress, _ := strconv.Atoi(strings.TrimSuffix(legacyTask.Data.Progress, "%"))
+		clientResponse := responseTask{
+			ID:       info.PublicTaskID,
+			TaskID:   info.PublicTaskID,
+			Object:   "video",
+			Model:    info.OriginModelName,
+			Status:   legacyOpenAIStatus(legacyTask.Data.Status),
+			Progress: progress,
+		}
+		c.JSON(http.StatusOK, clientResponse)
+		return legacyTask.Data.TaskID, responseBody, nil
+	}
+
 	// Parse Sora response
 	var dResp responseTask
 	if err := common.Unmarshal(responseBody, &dResp); err != nil {
@@ -256,6 +297,19 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	return upstreamID, responseBody, nil
 }
 
+func legacyOpenAIStatus(status string) string {
+	switch strings.ToUpper(status) {
+	case "SUCCESS", "COMPLETED":
+		return dto.VideoStatusCompleted
+	case "FAILURE", "FAILED", "CANCELLED":
+		return dto.VideoStatusFailed
+	case "PROCESSING", "IN_PROGRESS":
+		return dto.VideoStatusInProgress
+	default:
+		return dto.VideoStatusQueued
+	}
+}
+
 // FetchTask fetch task status
 func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error) {
 	taskID, ok := body["task_id"].(string)
@@ -264,6 +318,9 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	}
 
 	uri := fmt.Sprintf("%s/v1/videos/%s", baseUrl, taskID)
+	if a.legacyOpenAIVideoAPI {
+		uri = fmt.Sprintf("%s/v1/video/generations/%s", baseUrl, taskID)
+	}
 
 	req, err := http.NewRequest(http.MethodGet, uri, nil)
 	if err != nil {
@@ -288,6 +345,35 @@ func (a *TaskAdaptor) GetChannelName() string {
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+	if a.legacyOpenAIVideoAPI {
+		var legacyTask legacyResponseTask
+		if err := common.Unmarshal(respBody, &legacyTask); err != nil {
+			return nil, errors.Wrap(err, "unmarshal legacy video task result failed")
+		}
+
+		result := &relaycommon.TaskInfo{
+			Code:     0,
+			TaskID:   legacyTask.Data.TaskID,
+			Progress: legacyTask.Data.Progress,
+		}
+		switch strings.ToUpper(legacyTask.Data.Status) {
+		case "QUEUED", "PENDING":
+			result.Status = model.TaskStatusQueued
+		case "PROCESSING", "IN_PROGRESS":
+			result.Status = model.TaskStatusInProgress
+		case "SUCCESS", "COMPLETED":
+			result.Status = model.TaskStatusSuccess
+			result.Url = legacyTask.Data.ResultURL
+		case "FAILURE", "FAILED", "CANCELLED":
+			result.Status = model.TaskStatusFailure
+			result.Reason = legacyTask.Data.FailReason
+			if result.Reason == "" {
+				result.Reason = legacyTask.Message
+			}
+		}
+		return result, nil
+	}
+
 	resTask := responseTask{}
 	if err := common.Unmarshal(respBody, &resTask); err != nil {
 		return nil, errors.Wrap(err, "unmarshal task result failed")
@@ -322,10 +408,19 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
-	data := task.Data
-	var err error
-	if data, err = sjson.SetBytes(data, "id", task.TaskID); err != nil {
-		return nil, errors.Wrap(err, "set id failed")
+	var standardEnvelope map[string]any
+	if err := common.Unmarshal(task.Data, &standardEnvelope); err == nil {
+		if _, hasStatus := standardEnvelope["status"]; hasStatus {
+			data, err := sjson.SetBytes(task.Data, "id", task.TaskID)
+			if err != nil {
+				return nil, errors.Wrap(err, "set id failed")
+			}
+			data, err = sjson.SetBytes(data, "task_id", task.TaskID)
+			if err != nil {
+				return nil, errors.Wrap(err, "set task_id failed")
+			}
+			return data, nil
+		}
 	}
-	return data, nil
+	return common.Marshal(task.ToOpenAIVideo())
 }

@@ -112,8 +112,12 @@ func VideoProxy(c *gin.Context) {
 			return
 		}
 	case constant.ChannelTypeOpenAI, constant.ChannelTypeSora:
-		videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
-		req.Header.Set("Authorization", "Bearer "+channel.Key)
+		if channel.GetOtherSettings().LegacyOpenAIVideoAPI {
+			videoURL = task.GetResultURL()
+		} else {
+			videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
+			req.Header.Set("Authorization", "Bearer "+channel.Key)
+		}
 	default:
 		// Video URL is stored in PrivateData.ResultURL (fallback to FailReason for old data)
 		videoURL = task.GetResultURL()
@@ -169,12 +173,22 @@ func VideoProxy(c *gin.Context) {
 		return
 	}
 
-	for key, values := range resp.Header {
-		for _, value := range values {
-			c.Writer.Header().Add(key, value)
+	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+	mediaType := strings.ToLower(strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0]))
+	if !strings.HasPrefix(mediaType, "video/") && mediaType != "application/octet-stream" {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Upstream returned unsupported content type %q for %s", contentType, videoURL))
+		videoProxyError(c, http.StatusBadGateway, "server_error", "Upstream did not return video content")
+		return
+	}
+
+	for _, header := range []string{"Content-Length", "Accept-Ranges", "Content-Range", "ETag", "Last-Modified"} {
+		if value := resp.Header.Get(header); value != "" {
+			c.Writer.Header().Set(header, value)
 		}
 	}
 
+	c.Writer.Header().Set("Content-Type", contentType)
+	c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
 	c.Writer.Header().Set("Cache-Control", "public, max-age=86400")
 	c.Writer.WriteHeader(resp.StatusCode)
 	if _, err = io.Copy(c.Writer, resp.Body); err != nil {
@@ -199,6 +213,10 @@ func writeVideoDataURL(c *gin.Context, dataURL string) error {
 	if mimeType == "" {
 		mimeType = "video/mp4"
 	}
+	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
+	if !strings.HasPrefix(mimeType, "video/") && mimeType != "application/octet-stream" {
+		return fmt.Errorf("unsupported video data url content type: %s", mimeType)
+	}
 
 	videoBytes, err := base64.StdEncoding.DecodeString(payload)
 	if err != nil {
@@ -209,6 +227,7 @@ func writeVideoDataURL(c *gin.Context, dataURL string) error {
 	}
 
 	c.Writer.Header().Set("Content-Type", mimeType)
+	c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
 	c.Writer.Header().Set("Cache-Control", "public, max-age=86400")
 	c.Writer.WriteHeader(http.StatusOK)
 	_, err = c.Writer.Write(videoBytes)

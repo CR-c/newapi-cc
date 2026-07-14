@@ -149,3 +149,48 @@ export interface GroupOption {
   ratio: number
   desc?: string
 }
+
+export type PlaygroundMode = 'chat' | 'image' | 'video'
+
+export interface ImageGenerationRequest {
+  model: string
+  group: string
+  prompt: string
+  size?: string
+  quality?: string
+  n?: number
+  response_format: 'url' | 'b64_json'
+}
+
+export interface ImageGenerationResult {
+  url?: string
+  b64_json?: string
+  revised_prompt?: string
+}
+
+export interface ImageGenerationResponse {
+  created?: number
+  data: ImageGenerationResult[]
+}
+
+export interface VideoGenerationRequest {
+  model: string
+  group: string
+  prompt: string
+  seconds?: string
+  size?: string
+}
+
+export interface VideoTaskResponse {
+  id?: string
+  task_id?: string
+  status: string
+  progress?: number
+  metadata?: {
+    url?: string
+  }
+  error?: {
+    code?: string
+    message?: string
+  }
+}

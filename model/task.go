@@ -533,7 +533,17 @@ func (t *Task) ToOpenAIVideo() *dto.OpenAIVideo {
 	openAIVideo.Model = t.Properties.OriginModelName
 	openAIVideo.SetProgressStr(t.Progress)
 	openAIVideo.CreatedAt = t.CreatedAt
-	openAIVideo.CompletedAt = t.UpdatedAt
-	openAIVideo.SetMetadata("url", t.GetResultURL())
+	if t.Status == TaskStatusSuccess || t.Status == TaskStatusFailure {
+		openAIVideo.CompletedAt = t.UpdatedAt
+	}
+	if t.Status == TaskStatusSuccess && t.GetResultURL() != "" {
+		openAIVideo.SetMetadata("url", t.GetResultURL())
+	}
+	if t.Status == TaskStatusFailure && t.FailReason != "" {
+		openAIVideo.Error = &dto.OpenAIVideoError{
+			Code:    "task_failed",
+			Message: t.FailReason,
+		}
+	}
 	return openAIVideo
 }

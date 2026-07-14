@@ -27,6 +27,7 @@ func TestConvertImageEditRequestMultipart(t *testing.T) {
 		var body bytes.Buffer
 		writer := multipart.NewWriter(&body)
 		require.NoError(t, writer.WriteField("model", "gpt-image-1"))
+		require.NoError(t, writer.WriteField("group", "vip"))
 		require.NoError(t, writer.WriteField("prompt", prompt))
 		require.NoError(t, writer.WriteField("stream", "true"))
 		require.NoError(t, writer.WriteField("partial_images", "3"))
@@ -62,6 +63,7 @@ func TestConvertImageEditRequestMultipart(t *testing.T) {
 		require.NoError(t, replayedRequest.ParseMultipartForm(32<<20))
 
 		require.Equal(t, "gpt-image-1", replayedRequest.PostForm.Get("model"))
+		require.Empty(t, replayedRequest.PostForm.Get("group"))
 		require.Equal(t, prompt, replayedRequest.PostForm.Get("prompt"))
 		require.Equal(t, "true", replayedRequest.PostForm.Get("stream"))
 		require.Equal(t, "3", replayedRequest.PostForm.Get("partial_images"))

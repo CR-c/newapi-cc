@@ -58,6 +58,7 @@ export function buildSearchParams(
         ...(commonFilters.upstreamRequestId && {
           upstreamRequestId: commonFilters.upstreamRequestId,
         }),
+        ...(commonFilters.mediaType && { mediaType: commonFilters.mediaType }),
       }
     }
     case 'drawing': {

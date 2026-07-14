@@ -24,6 +24,11 @@ import type {
   ChatCompletionResponse,
   ModelOption,
   GroupOption,
+  PlaygroundMode,
+  ImageGenerationRequest,
+  ImageGenerationResponse,
+  VideoGenerationRequest,
+  VideoTaskResponse,
 } from './types'
 
 /**
@@ -43,9 +48,12 @@ export async function sendChatCompletion(
 /**
  * Get user available models
  */
-export async function getUserModels(group: string): Promise<ModelOption[]> {
+export async function getUserModels(
+  group: string,
+  capability: PlaygroundMode
+): Promise<ModelOption[]> {
   const res = await api.get(API_ENDPOINTS.USER_MODELS, {
-    params: { group },
+    params: { group, capability },
   })
   const { data } = res
 
@@ -57,6 +65,39 @@ export async function getUserModels(group: string): Promise<ModelOption[]> {
     label: model,
     value: model,
   }))
+}
+
+export async function generateImages(
+  payload: ImageGenerationRequest,
+  signal?: AbortSignal
+): Promise<ImageGenerationResponse> {
+  const res = await api.post(API_ENDPOINTS.IMAGE_GENERATIONS, payload, {
+    signal,
+    skipErrorHandler: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
+export async function createVideo(
+  payload: VideoGenerationRequest,
+  signal?: AbortSignal
+): Promise<VideoTaskResponse> {
+  const res = await api.post(API_ENDPOINTS.VIDEOS, payload, {
+    signal,
+    skipErrorHandler: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
+export async function getVideoTask(
+  taskId: string,
+  signal?: AbortSignal
+): Promise<VideoTaskResponse> {
+  const res = await api.get(`${API_ENDPOINTS.VIDEOS}/${taskId}`, {
+    signal,
+    skipErrorHandler: true,
+  } as Record<string, unknown>)
+  return res.data
 }
 
 /**

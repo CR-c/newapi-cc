@@ -199,6 +199,93 @@ func TestGetUserModelsFiltersByRequestedGroup(t *testing.T) {
 	require.Empty(t, decodeUserModelsResponse(t, vipRecorder))
 }
 
+func TestGetUserModelsFiltersByMediaCapability(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       1003,
+		Username: "media-model-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 11, Name: "image-channel", Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled},
+		{Id: 12, Name: "video-channel", Type: constant.ChannelTypeSora, Status: common.ChannelStatusEnabled},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: "zz-image-capability-model", ChannelId: 11, Enabled: true},
+		{Group: "default", Model: "zz-video-capability-model", ChannelId: 12, Enabled: true},
+		{Group: "default", Model: "zz-chat-capability-model", ChannelId: 11, Enabled: true},
+	}).Error)
+	require.NoError(t, db.Create(&model.Model{
+		ModelName: "zz-image-capability-model",
+		Endpoints: `{"image-generation":{}}`,
+	}).Error)
+
+	model.InvalidatePricingCache()
+	t.Cleanup(model.InvalidatePricingCache)
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/user/models?group=default&media_type=image", nil)
+	context.Set("id", 1003)
+
+	GetUserModels(context)
+
+	assert.ElementsMatch(t, []string{"zz-image-capability-model"}, decodeUserModelsResponse(t, recorder))
+}
+
+func TestGetUserModelsFiltersChatCapability(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       1004,
+		Username: "chat-model-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 21, Name: "chat-channel", Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled},
+		{Id: 22, Name: "video-channel", Type: constant.ChannelTypeSora, Status: common.ChannelStatusEnabled},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: "zz-chat-capability-model", ChannelId: 21, Enabled: true},
+		{Group: "default", Model: "zz-video-capability-model", ChannelId: 22, Enabled: true},
+	}).Error)
+
+	model.InvalidatePricingCache()
+	t.Cleanup(model.InvalidatePricingCache)
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/user/models?group=default&capability=chat", nil)
+	context.Set("id", 1004)
+
+	GetUserModels(context)
+
+	assert.ElementsMatch(t, []string{"zz-chat-capability-model"}, decodeUserModelsResponse(t, recorder))
+}
+
+func TestGetUserModelsRejectsInvalidCapability(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       1005,
+		Username: "invalid-capability-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/user/models?capability=audio", nil)
+	context.Set("id", 1005)
+
+	GetUserModels(context)
+
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+}
+
 func TestListModelsIncludesTieredBillingModel(t *testing.T) {
 	withSelfUseModeDisabled(t)
 	withTieredBillingConfig(t, map[string]string{
