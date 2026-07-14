@@ -1,8 +1,503 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>API 调用文档</title><style>body{max-width:960px;margin:32px auto;padding:0 20px;font:15px/1.65 system-ui;color:#18212f}h1,h2{margin-top:32px}code,pre{background:#f3f5f7;border-radius:5px}code{padding:2px 5px}pre{padding:14px;overflow:auto}table{border-collapse:collapse;width:100%}td,th{border:1px solid #d9dee5;padding:8px;text-align:left}th{background:#f3f5f7}</style></head><body>
-<h1>VP API 调用文档</h1><p>Base URL：<code>https://vp.735678.xyz/v1</code>。所有请求使用 <code>Authorization: Bearer YOUR_API_KEY</code>。</p>
-<h2>图片生成：生图（香蕉和 Gemini）</h2><table><tr><th>模型</th><th>单张价格</th><th>说明</th></tr><tr><td>gemini-3-pro-image</td><td>$0.30</td><td>按请求</td></tr><tr><td>gemini-3.1-flash-image</td><td>$0.15</td><td>按请求</td></tr><tr><td>gpt-image-2</td><td>$0.20</td><td>支持 2K、4K</td></tr><tr><td>gpt-image-2-all</td><td>$0.10</td><td>仅 1K</td></tr></table><pre>curl https://vp.735678.xyz/v1/images/generations -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d '{"model":"gemini-3-pro-image","prompt":"一只猫"}'</pre>
-<h2>Grok 视频：grok按次</h2><p><code>grok-image-video</code> 支持文生、单图和多参考图视频；<code>grok-video-1.5</code> 仅支持单图。使用 <code>POST /v1/videos</code> 创建任务，再用 <code>GET /v1/videos/{task_id}</code> 查询。</p><pre>curl https://vp.735678.xyz/v1/videos -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d '{"model":"grok-image-video","prompt":"海边日落","seconds":"8","size":"1280x720"}'</pre>
-<h2>即梦视频：即梦视频按次</h2><p>模型：<code>video-ds-2.0</code>、<code>video-ds-2.0-fast</code>、<code>as-sd2.0-fast</code>。按次计费，调用方式同视频接口。</p>
-<h2>TM 即梦：即梦dddd</h2><p>按完成任务实际返回的 token 数计费；<code>metadata</code> 可传 <code>resolution</code>（480p/720p/1080p/4k）和 <code>ratio</code>。带参考图会自动应用对应参考图价格档位。</p><table><tr><th>模型</th><th>480p/720p 无参考图</th><th>480p/720p 有参考图</th><th>1080p 无/有参考图</th><th>4K 无/有参考图</th></tr><tr><td>dreamina-seedance-2-0-fast-hc</td><td>$5.60 / 1M token</td><td>$3.30 / 1M token</td><td>不支持</td><td>不支持</td></tr><tr><td>dreamina-seedance-2-0-hc</td><td>$7.00 / 1M token</td><td>$4.30 / 1M token</td><td>$7.70 / $4.70</td><td>$4.00 / $2.40</td></tr><tr><td>dreamina-seedance-2-0-mini-hc</td><td>$3.50 / 1M token</td><td>$2.10 / 1M token</td><td>不支持</td><td>不支持</td></tr></table><pre>curl https://vp.735678.xyz/v1/videos -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d '{"model":"dreamina-seedance-2-0-hc","prompt":"城市夜景延时摄影","duration":5,"metadata":{"resolution":"720p","ratio":"16:9"}}'</pre><p>参考图请通过 <code>images</code> 传入可公开访问的素材 URL。</p>
-</body></html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>VP API 调用文档</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --background: #f8fafc;
+        --surface: #ffffff;
+        --text: #172033;
+        --muted: #5f6b7c;
+        --border: #d8dee9;
+        --accent: #166534;
+        --accent-soft: #eaf6ee;
+        --warning: #8a4b08;
+        --warning-soft: #fff5e6;
+        --code: #111827;
+        --code-text: #e5edf7;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background: var(--background);
+        color: var(--text);
+        font: 15px/1.7 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      a {
+        color: var(--accent);
+      }
+
+      header {
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+      }
+
+      header > div,
+      nav > div,
+      main,
+      footer > div {
+        width: min(1080px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      header > div {
+        padding: 40px 0 32px;
+      }
+
+      h1,
+      h2,
+      h3 {
+        line-height: 1.3;
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: 32px;
+      }
+
+      h2 {
+        margin: 0 0 18px;
+        font-size: 24px;
+      }
+
+      h3 {
+        margin: 28px 0 12px;
+        font-size: 18px;
+      }
+
+      p {
+        margin: 10px 0;
+      }
+
+      .lede {
+        max-width: 760px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 16px;
+      }
+
+      nav {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        overflow-x: auto;
+        border-bottom: 1px solid var(--border);
+        background: color-mix(in srgb, var(--surface) 94%, transparent);
+        backdrop-filter: blur(8px);
+      }
+
+      nav > div {
+        display: flex;
+        gap: 24px;
+        padding: 12px 0;
+        white-space: nowrap;
+      }
+
+      nav a {
+        color: var(--muted);
+        text-decoration: none;
+      }
+
+      nav a:hover {
+        color: var(--text);
+      }
+
+      main {
+        background: var(--surface);
+      }
+
+      section {
+        padding: 36px 0;
+        border-bottom: 1px solid var(--border);
+      }
+
+      code {
+        padding: 2px 5px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--background);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        overflow-wrap: anywhere;
+      }
+
+      pre {
+        max-width: 100%;
+        margin: 14px 0 20px;
+        padding: 16px;
+        overflow: auto;
+        border-radius: 6px;
+        background: var(--code);
+        color: var(--code-text);
+        font: 13px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      pre code {
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+      }
+
+      table {
+        width: 100%;
+        margin: 14px 0 22px;
+        border-collapse: collapse;
+      }
+
+      th,
+      td {
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        background: var(--background);
+        font-weight: 650;
+      }
+
+      .table-wrap {
+        max-width: 100%;
+        overflow-x: auto;
+      }
+
+      .note,
+      .warning {
+        margin: 18px 0;
+        padding: 12px 14px;
+        border-left: 4px solid var(--accent);
+        background: var(--accent-soft);
+      }
+
+      .warning {
+        border-left-color: var(--warning);
+        background: var(--warning-soft);
+      }
+
+      .steps {
+        padding-left: 22px;
+      }
+
+      footer {
+        color: var(--muted);
+      }
+
+      footer > div {
+        padding: 24px 0 40px;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color-scheme: dark;
+          --background: #10151d;
+          --surface: #161d27;
+          --text: #e6edf7;
+          --muted: #a8b3c2;
+          --border: #344052;
+          --accent: #71d391;
+          --accent-soft: #173224;
+          --warning: #f1b665;
+          --warning-soft: #3b2a16;
+          --code: #090d13;
+          --code-text: #e5edf7;
+        }
+      }
+
+      @media (max-width: 640px) {
+        header > div,
+        nav > div,
+        main,
+        footer > div {
+          width: min(100% - 24px, 1080px);
+        }
+
+        header > div {
+          padding: 28px 0 24px;
+        }
+
+        h1 {
+          font-size: 27px;
+        }
+
+        section {
+          padding: 30px 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>VP API 调用文档</h1>
+        <p class="lede">
+          图片与异步视频生成接口。视频统一通过 VP 的 OpenAI 兼容入口提交、轮询和下载，不需要直接访问上游服务。
+        </p>
+      </div>
+    </header>
+
+    <nav aria-label="文档目录">
+      <div>
+        <a href="#start">接入准备</a>
+        <a href="#images">图片生成</a>
+        <a href="#videos">视频通用流程</a>
+        <a href="#service-inference">即梦dddd</a>
+        <a href="#other-video-groups">其他视频分组</a>
+        <a href="#errors">错误处理</a>
+      </div>
+    </nav>
+
+    <main>
+      <section id="start">
+        <h2>接入准备</h2>
+        <p>在控制台创建 API Key，并将 Key 绑定到需要使用的分组。不同分组开放的模型和计费方式不同。</p>
+        <pre><code>export BASE_URL="https://vp.735678.xyz"
+read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
+        <p>所有 API 请求使用 Bearer 鉴权：</p>
+        <pre><code>Authorization: Bearer $API_KEY</code></pre>
+        <div class="note">
+          请求中的 <code>model</code> 必须属于当前 API Key 可使用的分组。可在控制台的游乐场中先确认分组和模型是否可见。
+        </div>
+      </section>
+
+      <section id="images">
+        <h2>图片生成</h2>
+        <p>适用分组：<strong>生图（香蕉和 Gemini）</strong>。</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>模型</th><th>单张价格</th><th>说明</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>gemini-3-pro-image</code></td><td>$0.30</td><td>按实际输出张数计费</td></tr>
+              <tr><td><code>gemini-3.1-flash-image</code></td><td>$0.15</td><td>按实际输出张数计费</td></tr>
+              <tr><td><code>gpt-image-2</code></td><td>$0.20</td><td>支持 2K、4K</td></tr>
+              <tr><td><code>gpt-image-2-all</code></td><td>$0.10</td><td>仅 1K</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>生成图片</h3>
+        <pre><code>curl "$BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-3-pro-image",
+    "prompt": "一只坐在窗边的橘猫，柔和自然光",
+    "size": "1024x1024",
+    "n": 1,
+    "response_format": "url"
+  }'</code></pre>
+
+        <h3>编辑图片</h3>
+        <p>支持图片编辑的模型可调用 <code>POST /v1/images/edits</code>，使用 <code>multipart/form-data</code> 上传图片。</p>
+        <pre><code>curl "$BASE_URL/v1/images/edits" \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "model=gpt-image-2" \
+  -F "prompt=将背景替换为海边日落" \
+  -F "image=@./input.png"</code></pre>
+      </section>
+
+      <section id="videos">
+        <h2>视频通用流程</h2>
+        <ol class="steps">
+          <li>调用 <code>POST /v1/videos</code> 创建任务。</li>
+          <li>保存响应中的 <code>id</code>。</li>
+          <li>调用 <code>GET /v1/videos/{task_id}</code> 轮询状态。</li>
+          <li>状态为 <code>completed</code> 后，通过 <code>GET /v1/videos/{task_id}/content</code> 预览或下载。</li>
+        </ol>
+
+        <h3>创建任务</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>字段</th><th>类型</th><th>说明</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>model</code></td><td>string</td><td>必填，分组内可用的视频模型</td></tr>
+              <tr><td><code>prompt</code></td><td>string</td><td>必填，视频描述</td></tr>
+              <tr><td><code>duration</code></td><td>integer</td><td>视频时长，推荐使用整数秒；兼容 <code>seconds</code></td></tr>
+              <tr><td><code>size</code></td><td>string</td><td>画面尺寸，例如 <code>1280x720</code>、<code>720x1280</code></td></tr>
+              <tr><td><code>images</code></td><td>string[]</td><td>可选，公网可访问的参考图 URL</td></tr>
+              <tr><td><code>metadata.resolution</code></td><td>string</td><td>可选，上游清晰度，例如 <code>480p</code>、<code>720p</code>、<code>1080p</code>、<code>4k</code></td></tr>
+              <tr><td><code>metadata.ratio</code></td><td>string</td><td>可选，画面比例，例如 <code>16:9</code>、<code>9:16</code>、<code>1:1</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>创建成功后立即返回公开任务 ID：</p>
+        <pre><code>{
+  "id": "task_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "task_id": "task_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "object": "video",
+  "model": "dreamina-seedance-2-0-mini-hc",
+  "status": "queued",
+  "progress": 0,
+  "created_at": 1784003067
+}</code></pre>
+
+        <h3>查询任务</h3>
+        <pre><code>curl "$BASE_URL/v1/videos/$TASK_ID" \
+  -H "Authorization: Bearer $API_KEY"</code></pre>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>状态</th><th>含义</th><th>建议</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>unknown</code></td><td>任务刚提交，尚未首次同步上游状态</td><td>继续轮询</td></tr>
+              <tr><td><code>queued</code></td><td>已进入队列</td><td>继续轮询</td></tr>
+              <tr><td><code>in_progress</code></td><td>正在生成</td><td>继续轮询</td></tr>
+              <tr><td><code>completed</code></td><td>生成完成</td><td>读取内容接口</td></tr>
+              <tr><td><code>failed</code></td><td>生成失败</td><td>读取 <code>error.message</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>建议每 5 秒查询一次。服务端也会周期性同步上游状态。</p>
+
+        <h3>下载视频</h3>
+        <pre><code>curl -L "$BASE_URL/v1/videos/$TASK_ID/content" \
+  -H "Authorization: Bearer $API_KEY" \
+  -o generated-video.mp4</code></pre>
+        <p>内容接口支持浏览器视频预览和 Range 请求。不要直接依赖任务响应中的上游地址，统一使用 VP 内容接口。</p>
+      </section>
+
+      <section id="service-inference">
+        <h2>即梦dddd</h2>
+        <p>该分组使用异步视频协议，并在任务完成后按上游返回的实际 token 数结算。</p>
+
+        <div class="warning">
+          <strong>时长限制：</strong><code>duration</code> 必须为 4–15 秒。3 秒请求会返回 <code>400 invalid_duration</code>。
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>模型</th>
+                <th>480p/720p 无参考图</th>
+                <th>480p/720p 有参考图</th>
+                <th>1080p 无/有参考图</th>
+                <th>4K 无/有参考图</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>dreamina-seedance-2-0-fast-hc</code></td>
+                <td>$5.60 / 1M token</td><td>$3.30 / 1M token</td><td>不支持</td><td>不支持</td>
+              </tr>
+              <tr>
+                <td><code>dreamina-seedance-2-0-hc</code></td>
+                <td>$7.00 / 1M token</td><td>$4.30 / 1M token</td><td>$7.70 / $4.70</td><td>$4.00 / $2.40</td>
+              </tr>
+              <tr>
+                <td><code>dreamina-seedance-2-0-mini-hc</code></td>
+                <td>$3.50 / 1M token</td><td>$2.10 / 1M token</td><td>不支持</td><td>不支持</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>文生视频</h3>
+        <pre><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "dreamina-seedance-2-0-mini-hc",
+    "prompt": "一只纸飞机在清晨天空中缓慢飞行，固定镜头",
+    "duration": 4,
+    "size": "720x1280",
+    "metadata": {
+      "resolution": "720p",
+      "ratio": "9:16"
+    }
+  }'</code></pre>
+
+        <h3>参考图生视频</h3>
+        <pre><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "dreamina-seedance-2-0-hc",
+    "prompt": "人物转身看向镜头，背景灯光缓慢变化",
+    "duration": 5,
+    "images": [
+      "https://example.com/reference.jpg"
+    ],
+    "metadata": {
+      "resolution": "720p",
+      "ratio": "16:9"
+    }
+  }'</code></pre>
+
+        <h3>素材输入说明</h3>
+        <p>
+          上游原生协议提供 <code>/v1/sd/assets</code> 和 <code>asset://</code> 素材 ID，但这些接口不是 VP 当前公开 API 的组成部分。
+          通过 VP 调用时，请在 <code>images</code> 中直接传入公网 HTTPS 图片 URL；不要把 <code>asset://...</code> 作为 VP 请求参数。
+        </p>
+
+        <h3>计费说明</h3>
+        <p>任务提交时会预扣额度；任务完成后根据 <code>usage.total_tokens</code>、模型倍率、分组倍率和参考图档位重新结算，多扣部分自动退回，少扣部分自动补扣。任务失败会退回预扣额度。</p>
+      </section>
+
+      <section id="other-video-groups">
+        <h2>其他视频分组</h2>
+        <h3>grok按次</h3>
+        <p><code>grok-image-video</code> 支持文生、单图和多参考图视频；<code>grok-video-1.5</code> 仅支持单图。按次计费。</p>
+        <pre><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "grok-image-video",
+    "prompt": "海边日落，镜头缓慢向前推进",
+    "duration": 8,
+    "size": "1280x720"
+  }'</code></pre>
+
+        <h3>即梦视频按次</h3>
+        <p>模型：<code>video-ds-2.0</code>、<code>video-ds-2.0-fast</code>、<code>as-sd2.0-fast</code>。按次计费，提交和轮询方式与视频通用流程一致。</p>
+      </section>
+
+      <section id="errors">
+        <h2>错误处理</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>HTTP 状态</th><th>常见原因</th><th>处理方式</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>400</td><td>参数错误、时长或尺寸不受支持</td><td>读取响应中的 <code>code</code> 和 <code>message</code></td></tr>
+              <tr><td>401</td><td>API Key 缺失、无效或已禁用</td><td>检查 Authorization 请求头</td></tr>
+              <tr><td>403</td><td>Key 无权使用目标分组或模型</td><td>检查 API Key 的分组和模型权限</td></tr>
+              <tr><td>429</td><td>请求频率超过限制</td><td>退避后重试</td></tr>
+              <tr><td>5xx</td><td>上游或网关暂时不可用</td><td>记录请求 ID，稍后重试</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>时长错误示例：</p>
+        <pre><code>{
+  "code": "invalid_duration",
+  "message": "duration must be between 4 and 15 seconds",
+  "data": null
+}</code></pre>
+      </section>
+    </main>
+
+    <footer>
+      <div>公开入口：<a href="https://vp.735678.xyz">https://vp.735678.xyz</a></div>
+    </footer>
+  </body>
+</html>
