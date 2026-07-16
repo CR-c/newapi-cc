@@ -338,6 +338,13 @@ func InitResources() error {
 	if err != nil {
 		return err
 	}
+	if common.IsMasterNode {
+		go func() {
+			if backfillErr := model.BackfillProfitRecords(); backfillErr != nil {
+				common.SysError("profit backfill failed: " + backfillErr.Error())
+			}
+		}()
+	}
 
 	// Initialize Redis
 	err = common.InitRedisClient()

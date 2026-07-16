@@ -99,8 +99,49 @@ func ensureLogRequestId(log *Log) {
 }
 
 func createLog(log *Log) error {
+	profitEpochMutex.RLock()
+	defer profitEpochMutex.RUnlock()
+	generation, generationErr := GetProfitAnalysisGeneration()
 	ensureLogRequestId(log)
-	return LOG_DB.Create(log).Error
+	if generationErr == nil {
+		if err := attachProfitGeneration(log, generation); err != nil {
+			common.SysError("failed to attach profit generation: " + err.Error())
+		}
+	}
+	if err := LOG_DB.Create(log).Error; err != nil {
+		return err
+	}
+	if generationErr != nil {
+		common.SysError("failed to load profit generation: " + generationErr.Error())
+		return nil
+	}
+	if err := recordProfitForLog(log, false, generation); err != nil {
+		common.SysError("failed to record profit: " + err.Error())
+	}
+	return nil
+}
+
+func createBillingLog(log *Log) error {
+	if log.Type != LogTypeConsume || common.LogConsumeEnabled {
+		return createLog(log)
+	}
+	profitEpochMutex.RLock()
+	defer profitEpochMutex.RUnlock()
+	generation, generationErr := GetProfitAnalysisGeneration()
+	ensureLogRequestId(log)
+	if generationErr == nil {
+		if err := attachProfitGeneration(log, generation); err != nil {
+			common.SysError("failed to attach profit generation: " + err.Error())
+		}
+	}
+	if generationErr != nil {
+		common.SysError("failed to load profit generation: " + generationErr.Error())
+		return nil
+	}
+	if err := recordProfitForLog(log, false, generation); err != nil {
+		common.SysError("failed to record profit: " + err.Error())
+	}
+	return nil
 }
 
 func clickHouseLogOrder(prefix string) string {
@@ -341,9 +382,6 @@ type RecordConsumeLogParams struct {
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
-	if !common.LogConsumeEnabled {
-		return
-	}
 	logger.LogInfo(c, fmt.Sprintf("record consume log: userId=%d, params=%s", userId, common.GetJsonString(params)))
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
@@ -383,7 +421,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		UpstreamRequestId: upstreamRequestId,
 		Other:             otherStr,
 	}
-	err := createLog(log)
+	err := createBillingLog(log)
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
 	}
@@ -417,9 +455,6 @@ type RecordTaskBillingLogParams struct {
 }
 
 func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
-	if params.LogType == LogTypeConsume && !common.LogConsumeEnabled {
-		return
-	}
 	username, _ := GetUsernameById(params.UserId, false)
 	tokenName := ""
 	if params.TokenId > 0 {
@@ -442,7 +477,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 		Group:     params.Group,
 		Other:     common.MapToJsonStr(params.Other),
 	}
-	err := createLog(log)
+	err := createBillingLog(log)
 	if err != nil {
 		common.SysLog("failed to record task billing log: " + err.Error())
 	}

@@ -31,6 +31,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import {
+  formatProfitMoney,
+  formatProfitPercent,
+  getProfitTone,
+} from '@/features/profit/lib'
 import { formatQuota, formatTimestamp } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -228,6 +233,53 @@ export function useUsersColumns(): ColumnDef<User>[] {
       },
       size: 170,
       meta: { mobileOrder: 40 },
+    },
+    {
+      id: 'profit',
+      header: t('Profit'),
+      cell: ({ row }) => {
+        const summary = row.original.profit_summary
+        if (!summary || summary.record_count === 0) {
+          return <span className='text-muted-foreground'>--</span>
+        }
+        const isUnpriced =
+          summary.unpriced_record_count === summary.record_count
+        return (
+          <Tooltip>
+            <TooltipTrigger render={<div className='cursor-help' />}>
+              <span
+                className={cn(
+                  'font-medium tabular-nums',
+                  getProfitTone(summary.profit_micros)
+                )}
+              >
+                {isUnpriced ? '--' : formatProfitMoney(summary.profit_micros)}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <div className='space-y-1 text-xs tabular-nums'>
+                <div>
+                  {t('Sales revenue')}:{' '}
+                  {formatProfitMoney(summary.revenue_micros)}
+                </div>
+                <div>
+                  {t('Purchase cost')}: {formatProfitMoney(summary.cost_micros)}
+                </div>
+                <div>
+                  {t('Profit margin')}:{' '}
+                  {formatProfitPercent(summary.profit_margin)}
+                </div>
+                <div>
+                  {t('Cost coverage')}:{' '}
+                  {formatProfitPercent(summary.cost_coverage)}
+                </div>
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        )
+      },
+      size: 130,
+      meta: { mobileHidden: true },
     },
     {
       accessorKey: 'group',

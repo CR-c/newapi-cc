@@ -299,10 +299,17 @@ func migrateDB() error {
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},
+		&ModelCostRule{},
+		&ProfitRecord{},
+		&ProfitAnalysisState{},
+		&ProfitResetLogKey{},
 		&CasbinRule{},
 		&AuthzRole{},
 	)
 	if err != nil {
+		return err
+	}
+	if err := migrateProfitRecordIndexes(); err != nil {
 		return err
 	}
 	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
@@ -355,6 +362,10 @@ func migrateDBFast() error {
 		{&SystemInstance{}, "SystemInstance"},
 		{&SystemTask{}, "SystemTask"},
 		{&SystemTaskLock{}, "SystemTaskLock"},
+		{&ModelCostRule{}, "ModelCostRule"},
+		{&ProfitRecord{}, "ProfitRecord"},
+		{&ProfitAnalysisState{}, "ProfitAnalysisState"},
+		{&ProfitResetLogKey{}, "ProfitResetLogKey"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))
@@ -379,6 +390,9 @@ func migrateDBFast() error {
 			return err
 		}
 	}
+	if err := migrateProfitRecordIndexes(); err != nil {
+		return err
+	}
 	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
 		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
 			return err
@@ -389,6 +403,17 @@ func migrateDBFast() error {
 		}
 	}
 	common.SysLog("database migrated")
+	return nil
+}
+
+func migrateProfitRecordIndexes() error {
+	if err := DB.Model(&ProfitRecord{}).Where("generation IS NULL").UpdateColumn("generation", 0).Error; err != nil {
+		return err
+	}
+	const legacySourceLogKeyIndex = "idx_profit_records_source_log_key"
+	if DB.Migrator().HasIndex(&ProfitRecord{}, legacySourceLogKeyIndex) {
+		return DB.Migrator().DropIndex(&ProfitRecord{}, legacySourceLogKeyIndex)
+	}
 	return nil
 }
 

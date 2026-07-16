@@ -1,0 +1,534 @@
+package model
+
+import (
+	"fmt"
+	"math"
+	"testing"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/glebarez/sqlite"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+)
+
+type clickHouseProfitLogFixture struct {
+	LogID     int    `gorm:"column:id;default:0"`
+	CreatedAt int64  `gorm:"column:created_at"`
+	Type      int    `gorm:"column:type"`
+	UserId    int    `gorm:"column:user_id"`
+	RequestId string `gorm:"column:request_id"`
+	ModelName string `gorm:"column:model_name"`
+	Quota     int    `gorm:"column:quota"`
+	ChannelId int    `gorm:"column:channel_id"`
+	TokenId   int    `gorm:"column:token_id"`
+	Group     string `gorm:"column:group"`
+	Other     string `gorm:"column:other"`
+}
+
+func (clickHouseProfitLogFixture) TableName() string { return "logs" }
+
+type legacyProfitRecordFixture struct {
+	Id           int64  `gorm:"primaryKey"`
+	SourceLogKey string `gorm:"type:varchar(128);uniqueIndex"`
+}
+
+func (legacyProfitRecordFixture) TableName() string { return "profit_records" }
+
+type legacyProfitAnalysisStateFixture struct {
+	Id      int   `gorm:"primaryKey"`
+	ResetAt int64 `gorm:"index"`
+}
+
+func (legacyProfitAnalysisStateFixture) TableName() string { return "profit_analysis_states" }
+
+func TestCalculateProfitRecordForFixedPriceConsume(t *testing.T) {
+	log := &Log{
+		RequestId: "req-fixed",
+		CreatedAt: 100,
+		Type:      LogTypeConsume,
+		UserId:    7,
+		ModelName: "image-model",
+		Quota:     50000,
+		Other:     `{"model_price":0.1,"group_ratio":1}`,
+	}
+	rule := &ModelCostRule{
+		Id:               3,
+		ModelName:        "image-model",
+		PurchasePriceCNY: 0.06,
+		Version:          2,
+	}
+
+	record, err := calculateProfitRecord(log, rule, false)
+	require.NoError(t, err)
+	assert.Equal(t, int64(100000), record.RevenueMicros)
+	assert.Equal(t, int64(60000), record.CostMicros)
+	assert.True(t, record.CostKnown)
+	assert.Equal(t, int64(40000), record.ProfitMicros())
+	assert.Equal(t, int64(3), record.CostRuleId)
+	assert.Equal(t, 2, record.CostRuleVersion)
+}
+
+func TestGetProfitAggregateNetsRefundsAndExcludesUnpricedRevenueFromMargin(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&ProfitRecord{}, &ProfitAnalysisState{}))
+	DB = db
+	t.Cleanup(func() { DB = originalDB })
+
+	require.NoError(t, db.Create([]*ProfitRecord{
+		{SourceLogKey: "consume", SourceRequestId: "consume", UserId: 7, ModelName: "priced", RevenueMicros: 1_000_000, CostMicros: 600_000, CostKnown: true},
+		{SourceLogKey: "refund", SourceRequestId: "refund", UserId: 7, ModelName: "priced", RevenueMicros: -200_000, CostMicros: -120_000, CostKnown: true},
+		{SourceLogKey: "unknown", SourceRequestId: "unknown", UserId: 7, ModelName: "unknown", RevenueMicros: 500_000, CostKnown: false},
+	}).Error)
+
+	summary, err := GetProfitAggregate(ProfitQuery{UserId: 7})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1_300_000), summary.RevenueMicros)
+	assert.Equal(t, int64(800_000), summary.KnownRevenueMicros)
+	assert.Equal(t, int64(480_000), summary.CostMicros)
+	assert.Equal(t, int64(320_000), summary.ProfitMicros)
+	require.NotNil(t, summary.ProfitMargin)
+	assert.InDelta(t, 0.4, *summary.ProfitMargin, 0.000001)
+	assert.InDelta(t, 2.0/3.0, summary.CostCoverage, 0.000001)
+	assert.Equal(t, int64(1), summary.UnpricedRecordCount)
+}
+
+func TestProfitSourceLogKeyDistinguishesBillingEventsWithSameRequestId(t *testing.T) {
+	consume := &Log{RequestId: "same-request", CreatedAt: 100, Type: LogTypeConsume, Quota: 500}
+	refund := &Log{RequestId: "same-request", CreatedAt: 100, Type: LogTypeRefund, Quota: 200}
+
+	assert.NotEqual(t, profitSourceLogKey(consume), profitSourceLogKey(refund))
+}
+
+func TestUniqueProfitSourceLogKeysDeduplicatesClickHouseRows(t *testing.T) {
+	duplicate := &Log{RequestId: "same", CreatedAt: 100, Type: LogTypeConsume, Quota: 500}
+	different := &Log{RequestId: "different", CreatedAt: 100, Type: LogTypeConsume, Quota: 500}
+
+	keys := uniqueProfitSourceLogKeys([]*Log{duplicate, duplicate, different})
+	assert.Len(t, keys, 2)
+	assert.Less(t, keys[0], keys[1])
+}
+
+func TestGetActiveModelCostRuleFindsHistoricalDisabledVersion(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&ModelCostRule{}))
+	DB = db
+	t.Cleanup(func() { DB = originalDB })
+
+	require.NoError(t, db.Create([]*ModelCostRule{
+		{ModelName: "video", Version: 1, Enabled: false, EffectiveFrom: 100, EffectiveTo: 200},
+		{ModelName: "video", Version: 2, Enabled: true, EffectiveFrom: 200},
+	}).Error)
+
+	v1, err := GetActiveModelCostRule("video", 150)
+	require.NoError(t, err)
+	assert.Equal(t, 1, v1.Version)
+	v2, err := GetActiveModelCostRule("video", 250)
+	require.NoError(t, err)
+	assert.Equal(t, 2, v2.Version)
+}
+
+func TestCalculateProfitRecordUsesMappedUpstreamModel(t *testing.T) {
+	log := &Log{
+		RequestId: "alias-request", Type: LogTypeConsume, ModelName: "public-alias", Quota: 50000,
+		Other: `{"model_price":0.1,"group_ratio":1,"upstream_model_name":"dreamina-seedance-2-0-hc"}`,
+	}
+	rule := &ModelCostRule{ModelName: "dreamina-seedance-2-0-hc", PurchasePriceCNY: 0.06}
+
+	record, err := calculateProfitRecord(log, rule, false)
+	require.NoError(t, err)
+	assert.Equal(t, "public-alias", record.ModelName)
+	assert.Equal(t, "dreamina-seedance-2-0-hc", record.CostModelName)
+	assert.True(t, record.CostKnown)
+}
+
+func TestCreateBillingLogRecordsProfitWhenConsumeLogsAreDisabled(t *testing.T) {
+	originalDB, originalLogDB := DB, LOG_DB
+	originalLogConsumeEnabled := common.LogConsumeEnabled
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&ModelCostRule{}, &ProfitRecord{}, &ProfitAnalysisState{}, &ProfitResetLogKey{}))
+	logDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, logDB.Exec(`CREATE TABLE logs (
+		id INTEGER DEFAULT 0, created_at INTEGER, type INTEGER, user_id INTEGER,
+		request_id TEXT, model_name TEXT, quota INTEGER, channel_id INTEGER,
+		token_id INTEGER, "group" TEXT, other TEXT
+	)`).Error)
+	DB, LOG_DB = db, logDB
+	common.LogConsumeEnabled = false
+	t.Cleanup(func() {
+		DB, LOG_DB = originalDB, originalLogDB
+		common.LogConsumeEnabled = originalLogConsumeEnabled
+	})
+
+	require.NoError(t, createBillingLog(&Log{
+		CreatedAt: 100, Type: LogTypeConsume, UserId: 9, ModelName: "unpriced", Quota: 100,
+	}))
+
+	var logCount, profitCount int64
+	require.NoError(t, logDB.Model(&Log{}).Count(&logCount).Error)
+	require.NoError(t, db.Model(&ProfitRecord{}).Count(&profitCount).Error)
+	assert.Zero(t, logCount)
+	assert.Equal(t, int64(1), profitCount)
+}
+
+func TestCreateLogPersistsProfitGenerationForBackfill(t *testing.T) {
+	originalDB, originalLogDB := DB, LOG_DB
+	originalLogConsumeEnabled := common.LogConsumeEnabled
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&ModelCostRule{}, &ProfitRecord{}, &ProfitAnalysisState{}))
+	require.NoError(t, db.Create(&ProfitAnalysisState{Id: 1, Generation: 3}).Error)
+	logDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, logDB.AutoMigrate(&Log{}))
+	DB, LOG_DB = db, logDB
+	common.LogConsumeEnabled = true
+	t.Cleanup(func() {
+		DB, LOG_DB = originalDB, originalLogDB
+		common.LogConsumeEnabled = originalLogConsumeEnabled
+	})
+
+	require.NoError(t, createBillingLog(&Log{
+		CreatedAt: 100, Type: LogTypeConsume, UserId: 1, ModelName: "video", Quota: 100,
+		Other: `{"model_price":1,"group_ratio":1}`,
+	}))
+
+	var storedLog Log
+	require.NoError(t, logDB.First(&storedLog).Error)
+	var snapshot profitBillingSnapshot
+	require.NoError(t, common.UnmarshalJsonStr(storedLog.Other, &snapshot))
+	require.NotNil(t, snapshot.ProfitGeneration)
+	assert.Equal(t, int64(3), *snapshot.ProfitGeneration)
+	var record ProfitRecord
+	require.NoError(t, db.First(&record).Error)
+	assert.Equal(t, int64(3), record.Generation)
+}
+
+func TestBackfillProfitRecordsClickHouseModeUsesOffsetAndIsIdempotent(t *testing.T) {
+	originalDB, originalLogDB := DB, LOG_DB
+	originalLogDatabaseType := common.LogDatabaseType()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&ModelCostRule{}, &ProfitRecord{}, &ProfitAnalysisState{}, &ProfitResetLogKey{}))
+	logDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, logDB.Exec(`CREATE TABLE logs (
+		id INTEGER DEFAULT 0, created_at INTEGER, type INTEGER, user_id INTEGER,
+		request_id TEXT, model_name TEXT, quota INTEGER, channel_id INTEGER,
+		token_id INTEGER, "group" TEXT, other TEXT
+	)`).Error)
+	DB, LOG_DB = db, logDB
+	common.SetLogDatabaseType(common.DatabaseTypeClickHouse)
+	t.Cleanup(func() {
+		DB, LOG_DB = originalDB, originalLogDB
+		common.SetLogDatabaseType(originalLogDatabaseType)
+	})
+
+	logs := make([]*clickHouseProfitLogFixture, 0, 501)
+	for i := 0; i < 501; i++ {
+		logs = append(logs, &clickHouseProfitLogFixture{
+			CreatedAt: 100, Type: LogTypeConsume, UserId: 1, RequestId: "shared-request",
+			ModelName: "unpriced", Quota: i + 1, Other: fmt.Sprintf(`{"sequence":%d}`, i),
+		})
+	}
+	require.NoError(t, logDB.CreateInBatches(logs, 100).Error)
+
+	require.NoError(t, BackfillProfitRecords())
+	require.NoError(t, BackfillProfitRecords())
+	var count int64
+	require.NoError(t, db.Model(&ProfitRecord{}).Count(&count).Error)
+	assert.Equal(t, int64(501), count)
+}
+
+func TestBackfillProfitRecordsRestartsWhenGenerationChanges(t *testing.T) {
+	originalDB, originalLogDB := DB, LOG_DB
+	originalLogDatabaseType := common.LogDatabaseType()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&ModelCostRule{}, &ProfitRecord{}, &ProfitAnalysisState{}, &ProfitResetLogKey{}))
+	require.NoError(t, db.Create(&ProfitAnalysisState{Id: 1}).Error)
+	logDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, logDB.Exec(`CREATE TABLE logs (
+		id INTEGER PRIMARY KEY, created_at INTEGER, type INTEGER, user_id INTEGER,
+		request_id TEXT, model_name TEXT, quota INTEGER, channel_id INTEGER,
+		token_id INTEGER, "group" TEXT, other TEXT
+	)`).Error)
+	DB, LOG_DB = db, logDB
+	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
+	t.Cleanup(func() {
+		DB, LOG_DB = originalDB, originalLogDB
+		common.SetLogDatabaseType(originalLogDatabaseType)
+	})
+
+	logs := make([]*clickHouseProfitLogFixture, 0, 501)
+	for i := 1; i <= 501; i++ {
+		logs = append(logs, &clickHouseProfitLogFixture{
+			LogID: i, CreatedAt: 100, Type: LogTypeConsume, UserId: 1,
+			RequestId: fmt.Sprintf("generation-one-%d", i), ModelName: "unpriced",
+			Quota: i, Other: `{"profit_generation":1}`,
+		})
+	}
+	require.NoError(t, logDB.CreateInBatches(logs, 100).Error)
+
+	advancedGeneration := false
+	var advanceErr error
+	require.NoError(t, logDB.Callback().Query().Before("gorm:query").Register("test:advance_profit_generation", func(*gorm.DB) {
+		if advancedGeneration {
+			return
+		}
+		advancedGeneration = true
+		advanceErr = db.Model(&ProfitAnalysisState{}).Where("id = ?", 1).Update("generation", 1).Error
+	}))
+	t.Cleanup(func() {
+		require.NoError(t, logDB.Callback().Query().Remove("test:advance_profit_generation"))
+	})
+
+	require.NoError(t, BackfillProfitRecords())
+	require.NoError(t, advanceErr)
+	var count int64
+	require.NoError(t, db.Model(&ProfitRecord{}).Where("generation = ?", 1).Count(&count).Error)
+	assert.Equal(t, int64(501), count)
+}
+
+func TestCalculateProfitRecordRefundReversesRevenueAndCost(t *testing.T) {
+	log := &Log{
+		RequestId: "req-refund",
+		Type:      LogTypeRefund,
+		ModelName: "image-model",
+		Quota:     50000,
+		Other:     `{"model_price":0.1,"group_ratio":1}`,
+	}
+	rule := &ModelCostRule{
+		ModelName:        "image-model",
+		PurchasePriceCNY: 0.06,
+	}
+
+	record, err := calculateProfitRecord(log, rule, false)
+	require.NoError(t, err)
+	assert.Equal(t, int64(-100000), record.RevenueMicros)
+	assert.Equal(t, int64(-60000), record.CostMicros)
+	assert.Equal(t, int64(-40000), record.ProfitMicros())
+}
+
+func TestCalculateProfitRecordForRatioModel(t *testing.T) {
+	previousQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500000
+	t.Cleanup(func() { common.QuotaPerUnit = previousQuotaPerUnit })
+
+	log := &Log{
+		RequestId: "req-ratio",
+		Type:      LogTypeConsume,
+		ModelName: "video-token-model",
+		Quota:     341145,
+		Other:     `{"model_price":-1,"model_ratio":1.75,"group_ratio":1}`,
+	}
+	rule := &ModelCostRule{
+		ModelName:        "video-token-model",
+		PurchasePriceCNY: 2.1,
+	}
+
+	record, err := calculateProfitRecord(log, rule, false)
+	require.NoError(t, err)
+	assert.Equal(t, int64(682290), record.RevenueMicros)
+	assert.Equal(t, int64(409374), record.CostMicros)
+	assert.Equal(t, int64(272916), record.ProfitMicros())
+}
+
+func TestDreaminaCostVariantsUseConfiguredBasePurchasePrice(t *testing.T) {
+	previousQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500000
+	t.Cleanup(func() { common.QuotaPerUnit = previousQuotaPerUnit })
+
+	tests := []struct {
+		name             string
+		model            string
+		baseSalePrice    float64
+		purchasePriceCNY float64
+		variantSalePrice float64
+		expectedCostCNY  float64
+	}{
+		{"hc-4k-no-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 4, 21.76},
+		{"hc-4k-with-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 2.4, 13.056},
+		{"hc-480p-no-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 7, 38.08},
+		{"hc-480p-with-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 4.3, 23.392},
+		{"hc-720p-no-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 7, 38.08},
+		{"hc-720p-with-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 4.3, 23.392},
+		{"hc-1080p-no-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 7.7, 41.888},
+		{"hc-1080p-with-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 4.7, 25.568},
+		{"fast-no-ref", "dreamina-seedance-2-0-fast-hc", 5.6, 30.464, 5.6, 30.464},
+		{"fast-with-ref", "dreamina-seedance-2-0-fast-hc", 5.6, 30.464, 3.3, 17.952},
+		{"mini-no-ref", "dreamina-seedance-2-0-mini-hc", 3.5, 19.04, 3.5, 19.04},
+		{"mini-with-ref", "dreamina-seedance-2-0-mini-hc", 3.5, 19.04, 2.1, 11.424},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			quota := int(math.Round(500000 * test.variantSalePrice))
+			log := &Log{
+				RequestId: test.name, Type: LogTypeConsume, ModelName: test.model, Quota: quota,
+				Other: fmt.Sprintf(`{"model_price":-1,"model_ratio":%g,"group_ratio":1}`, test.baseSalePrice/2),
+			}
+			rule := &ModelCostRule{
+				ModelName: test.model, PurchasePriceCNY: test.purchasePriceCNY,
+			}
+
+			record, err := calculateProfitRecord(log, rule, false)
+			require.NoError(t, err)
+			expectedCostMicros := int64(math.Round(test.expectedCostCNY * 1_000_000))
+			assert.Equal(t, expectedCostMicros, record.CostMicros)
+		})
+	}
+}
+
+func TestResetProfitAnalysisDataPreventsHistoricalBackfill(t *testing.T) {
+	originalDB, originalLogDB := DB, LOG_DB
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&ModelCostRule{}, &ProfitRecord{}, &ProfitAnalysisState{}, &ProfitResetLogKey{}, &Ability{}))
+	logDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, logDB.Exec(`CREATE TABLE logs (
+		id INTEGER PRIMARY KEY, created_at INTEGER, type INTEGER, user_id INTEGER,
+		request_id TEXT, model_name TEXT, quota INTEGER, channel_id INTEGER,
+		token_id INTEGER, "group" TEXT, other TEXT
+	)`).Error)
+	DB, LOG_DB = db, logDB
+	t.Cleanup(func() { DB, LOG_DB = originalDB, originalLogDB })
+
+	require.NoError(t, db.Create(&ModelCostRule{
+		ModelName: "video", PurchasePriceCNY: 0.6, Version: 1, Enabled: true,
+	}).Error)
+	require.NoError(t, db.Create(&ProfitRecord{
+		SourceLogKey: "old", OccurredAt: 100, ModelName: "video", RevenueMicros: 1_000_000,
+	}).Error)
+	require.NoError(t, logDB.Create(&clickHouseProfitLogFixture{
+		LogID: 1, CreatedAt: 100, Type: LogTypeConsume, RequestId: "old", ModelName: "video",
+		Quota: 500_000, Other: `{"model_price":1,"group_ratio":1}`,
+	}).Error)
+	require.NoError(t, logDB.Create(&clickHouseProfitLogFixture{
+		LogID: 2, CreatedAt: 200, Type: LogTypeConsume, RequestId: "old-same-second", ModelName: "video",
+		Quota: 500_000, Other: `{"model_price":1,"group_ratio":1}`,
+	}).Error)
+
+	require.NoError(t, ResetProfitAnalysisData(200))
+	require.NoError(t, BackfillProfitRecords())
+
+	var recordCount, ruleCount int64
+	require.NoError(t, db.Model(&ProfitRecord{}).Count(&recordCount).Error)
+	require.NoError(t, db.Model(&ModelCostRule{}).Count(&ruleCount).Error)
+	assert.Equal(t, int64(1), recordCount)
+	assert.Equal(t, int64(1), ruleCount)
+	require.NoError(t, db.Create(&ProfitRecord{
+		SourceLogKey: "stale", Generation: 0, OccurredAt: 100, RevenueMicros: 9_000_000,
+	}).Error)
+	require.NoError(t, recordProfitForLog(&Log{
+		CreatedAt: 200, Type: LogTypeConsume, RequestId: "same-second", ModelName: "video",
+		Quota: 500_000, Other: `{"model_price":1,"group_ratio":1}`,
+	}, false, 1))
+
+	summary, err := GetProfitAggregate(ProfitQuery{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), summary.RecordCount)
+	assert.Equal(t, int64(1_000_000), summary.RevenueMicros)
+
+	require.NoError(t, logDB.Create(&clickHouseProfitLogFixture{
+		LogID: 3, CreatedAt: 200, Type: LogTypeConsume, RequestId: "new-same-second", ModelName: "video",
+		Quota: 500_000, Other: `{"model_price":1,"group_ratio":1}`,
+	}).Error)
+	require.NoError(t, BackfillProfitRecords())
+	summary, err = GetProfitAggregate(ProfitQuery{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), summary.RecordCount)
+
+	require.NoError(t, logDB.Create(&clickHouseProfitLogFixture{
+		LogID: 4, CreatedAt: 200, Type: LogTypeConsume, RequestId: "late-old-generation", ModelName: "video",
+		Quota: 500_000, Other: `{"model_price":1,"group_ratio":1,"profit_generation":0}`,
+	}).Error)
+	require.NoError(t, BackfillProfitRecords())
+	summary, err = GetProfitAggregate(ProfitQuery{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), summary.RecordCount)
+
+	require.NoError(t, logDB.Create(&clickHouseProfitLogFixture{
+		LogID: 5, CreatedAt: 201, Type: LogTypeConsume, RequestId: "new", ModelName: "video",
+		Quota: 500_000, Other: `{"model_price":1,"group_ratio":1}`,
+	}).Error)
+	require.NoError(t, BackfillProfitRecords())
+	summary, err = GetProfitAggregate(ProfitQuery{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), summary.RecordCount)
+}
+
+func TestGetProfitCostModelNamesReturnsStableUnion(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&ProfitRecord{}, &ModelCostRule{}))
+	DB = db
+	t.Cleanup(func() { DB = originalDB })
+
+	require.NoError(t, db.Create(&ProfitRecord{SourceLogKey: "mapped", CostModelName: "upstream-model"}).Error)
+	require.NoError(t, db.Create(&ModelCostRule{ModelName: "legacy-model", Version: 1}).Error)
+
+	names, err := GetProfitCostModelNames()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"legacy-model", "upstream-model"}, names)
+
+	_, err = SaveModelCostRule(&ModelCostRule{ModelName: "not-in-list", PurchasePriceCNY: 1})
+	assert.ErrorContains(t, err, "model name is not available")
+}
+
+func TestMigrateProfitRecordIndexesReplacesLegacyUniqueIndex(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&legacyProfitRecordFixture{}))
+	require.NoError(t, db.Create(&legacyProfitRecordFixture{SourceLogKey: "legacy"}).Error)
+	require.True(t, db.Migrator().HasIndex(&ProfitRecord{}, "idx_profit_records_source_log_key"))
+	require.NoError(t, db.AutoMigrate(&ProfitRecord{}))
+	DB = db
+	t.Cleanup(func() { DB = originalDB })
+
+	require.NoError(t, migrateProfitRecordIndexes())
+	assert.False(t, db.Migrator().HasIndex(&ProfitRecord{}, "idx_profit_records_source_log_key"))
+	assert.True(t, db.Migrator().HasIndex(&ProfitRecord{}, "idx_profit_source_generation"))
+	var migrated ProfitRecord
+	require.NoError(t, db.Where("source_log_key = ?", "legacy").First(&migrated).Error)
+	assert.Zero(t, migrated.Generation)
+}
+
+func TestProfitAnalysisStateMigrationDefaultsLegacyGeneration(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&legacyProfitAnalysisStateFixture{}))
+	require.NoError(t, db.Create(&legacyProfitAnalysisStateFixture{Id: 1, ResetAt: 100}).Error)
+
+	require.NoError(t, db.AutoMigrate(&ProfitAnalysisState{}))
+	var state ProfitAnalysisState
+	require.NoError(t, db.First(&state, 1).Error)
+	assert.Zero(t, state.Generation)
+	assert.Equal(t, int64(100), state.ResetAt)
+}
+
+func TestCalculateProfitRecordWithoutCostRuleStaysUnpriced(t *testing.T) {
+	log := &Log{
+		RequestId: "req-unpriced",
+		Type:      LogTypeConsume,
+		ModelName: "unknown",
+		Quota:     50000,
+	}
+
+	record, err := calculateProfitRecord(log, nil, true)
+	require.NoError(t, err)
+	assert.Equal(t, int64(100000), record.RevenueMicros)
+	assert.Zero(t, record.CostMicros)
+	assert.False(t, record.CostKnown)
+	assert.True(t, record.Estimated)
+}

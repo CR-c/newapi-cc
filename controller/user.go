@@ -307,6 +307,12 @@ func GetAllUsers(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if c.GetInt("role") == common.RoleRootUser {
+		if err := attachUserProfitSummaries(users); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
 
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(users)
@@ -336,11 +342,36 @@ func SearchUsers(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if c.GetInt("role") == common.RoleRootUser {
+		if err := attachUserProfitSummaries(users); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
 
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(users)
 	common.ApiSuccess(c, pageInfo)
 	return
+}
+
+func attachUserProfitSummaries(users []*model.User) error {
+	userIds := make([]int, 0, len(users))
+	for _, user := range users {
+		userIds = append(userIds, user.Id)
+	}
+	summaries, err := model.GetUserProfitSummaries(userIds)
+	if err != nil {
+		return err
+	}
+	for _, user := range users {
+		if summary, ok := summaries[user.Id]; ok {
+			user.ProfitSummary = summary
+		} else {
+			user.ProfitSummary = &model.ProfitAggregate{UserId: user.Id}
+		}
+	}
+	return nil
 }
 
 func canManageTargetRole(myRole int, targetRole int) bool {
@@ -591,6 +622,7 @@ func generateDefaultSidebarConfig(userRole int) string {
 			"redemption": true,
 			"user":       true,
 			"setting":    true,
+			"profit":     true,
 		}
 	}
 	// 普通用户不包含admin区域

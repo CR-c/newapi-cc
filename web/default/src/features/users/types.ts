@@ -62,6 +62,18 @@ export const userSchema = z.object({
   admin_permissions: z
     .record(z.string(), z.record(z.string(), z.boolean()))
     .optional(),
+  profit_summary: z
+    .object({
+      revenue_micros: z.number(),
+      known_revenue_micros: z.number(),
+      cost_micros: z.number(),
+      profit_micros: z.number(),
+      record_count: z.number(),
+      unpriced_record_count: z.number(),
+      profit_margin: z.number().nullable(),
+      cost_coverage: z.number(),
+    })
+    .optional(),
 })
 export type User = z.infer<typeof userSchema>
 

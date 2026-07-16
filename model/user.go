@@ -53,6 +53,7 @@ type User struct {
 	CreatedAt        int64                      `json:"created_at" gorm:"autoCreateTime;column:created_at"`
 	LastLoginAt      int64                      `json:"last_login_at" gorm:"default:0;column:last_login_at"`
 	AdminPermissions map[string]map[string]bool `json:"admin_permissions,omitempty" gorm:"-:all"`
+	ProfitSummary    *ProfitAggregate           `json:"profit_summary,omitempty" gorm:"-:all"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
@@ -162,6 +163,7 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 			"redemption": true,
 			"user":       true,
 			"setting":    true,
+			"profit":     true,
 		}
 	}
 	// 普通用户不包含admin区域
