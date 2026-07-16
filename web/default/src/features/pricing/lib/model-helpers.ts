@@ -50,6 +50,16 @@ export function getConfiguredGroupRatio(
   return typeof ratio === 'number' && Number.isFinite(ratio) ? ratio : 1
 }
 
+export function getModelEnabledPricingGroups(model: PricingModel): string[] {
+  const enabledGroups = Array.isArray(model.enable_groups)
+    ? model.enable_groups
+    : []
+  if (enabledGroups.includes('all')) {
+    return Object.keys(model.group_ratio || {})
+  }
+  return enabledGroups
+}
+
 /**
  * Resolve the group ratio used by model square summary prices.
  *
@@ -61,9 +71,7 @@ export function getDisplayGroupRatio(
   model: PricingModel,
   selectedGroup?: string
 ): number {
-  const modelEnableGroups = Array.isArray(model.enable_groups)
-    ? model.enable_groups
-    : []
+  const modelEnableGroups = getModelEnabledPricingGroups(model)
   const groupRatio = model.group_ratio || {}
 
   if (
@@ -92,6 +100,17 @@ export function getDisplayGroupRatio(
   }
 
   return minRatio === Number.POSITIVE_INFINITY ? 1 : minRatio
+}
+
+export function getGroupModelPrice(
+  model: PricingModel,
+  group: string
+): number {
+  const price = model.group_model_price?.[group]
+  if (typeof price === 'number' && Number.isFinite(price) && price >= 0) {
+    return price
+  }
+  return model.model_price || 0
 }
 
 /**

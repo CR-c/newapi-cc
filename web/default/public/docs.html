@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <title>VP API 调用文档</title>
+    <title>VP 统一图片与视频 API 文档</title>
     <style>
       :root {
         color-scheme: light;
@@ -185,6 +185,10 @@
         overflow-x: auto;
       }
 
+      .table-wrap table {
+        min-width: 680px;
+      }
+
       .note,
       .warning {
         margin: 18px 0;
@@ -252,10 +256,11 @@
   <body>
     <header>
       <div>
-        <h1>VP API 调用文档</h1>
+        <h1>VP 统一图片与视频 API 文档</h1>
         <p class="lede">
-          图片与异步视频生成接口。无论视频模型由哪个服务提供，调用方都只使用 VP
-          的统一接口提交、轮询和下载。
+          用户始终通过 VP
+          的统一接口生成图片和视频。分组路由、上游鉴权、参数转换、
+          视频任务映射与结果代理均由平台内部处理。
         </p>
       </div>
     </header>
@@ -289,13 +294,191 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
 
       <section id="images">
         <h2>图片生成</h2>
-        <p>适用分组：<strong>生图（香蕉和 Gemini）</strong>。</p>
+        <div class="note">
+          <strong>统一规则：</strong>所有图片分组和模型均调用
+          <code>POST /v1/images/generations</code>。API Key
+          所属分组决定可见模型、单次价格和内部上游；调用方不需要切换 URL
+          或使用上游密钥。
+        </div>
+
+        <h3>统一请求字段</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>字段</th>
+                <th>类型</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>model</code></td>
+                <td>string</td>
+                <td>必填，当前 API Key 分组内可用的图片模型</td>
+              </tr>
+              <tr>
+                <td><code>prompt</code></td>
+                <td>string</td>
+                <td>必填，图片描述或编辑指令</td>
+              </tr>
+              <tr>
+                <td><code>size</code></td>
+                <td>string</td>
+                <td>尺寸、比例映射尺寸或 <code>auto</code>，以模型能力为准</td>
+              </tr>
+              <tr>
+                <td><code>n</code></td>
+                <td>integer</td>
+                <td>生成数量，默认为 1</td>
+              </tr>
+              <tr>
+                <td><code>quality</code></td>
+                <td>string</td>
+                <td>模型支持时可用 <code>low/medium/high</code></td>
+              </tr>
+              <tr>
+                <td><code>background</code></td>
+                <td>string</td>
+                <td>模型支持时可用 <code>opaque/transparent</code></td>
+              </tr>
+              <tr>
+                <td><code>image</code></td>
+                <td>string / string[]</td>
+                <td>可选参考图，支持 HTTP(S) URL、Base64 或 data URL</td>
+              </tr>
+              <tr>
+                <td><code>input_reference</code></td>
+                <td>string / string[]</td>
+                <td><code>image</code> 的兼容别名</td>
+              </tr>
+              <tr>
+                <td><code>response_format</code></td>
+                <td>string</td>
+                <td><code>url</code> 或 <code>b64_json</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>64生图分组</h3>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>模型</th>
-                <th>单张价格</th>
+                <th>价格</th>
+                <th>分辨率与比例</th>
+                <th>支持参数</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>gemini-3-pro-image-preview</code></td>
+                <td>$0.15/次</td>
+                <td>固定 2K；标准 10 比例</td>
+                <td><code>n</code>、参考图、<code>response_format</code></td>
+              </tr>
+              <tr>
+                <td><code>gemini-3.1-flash-image-preview</code></td>
+                <td>$0.10/次</td>
+                <td>固定 2K；14 比例，支持超长图</td>
+                <td><code>n</code>、参考图、<code>response_format</code></td>
+              </tr>
+              <tr>
+                <td><code>gpt-image-2</code></td>
+                <td>$0.10/次</td>
+                <td>1K/2K/4K、自动、精确尺寸；标准 10 比例</td>
+                <td>
+                  <code>quality</code
+                  >、<code>background</code>、<code>n</code>、参考图、<code
+                    >response_format</code
+                  >
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p><strong>64生图</strong>标准比例：</p>
+        <pre><code>1:1 16:9 9:16 4:3 3:4 21:9 3:2 2:3 5:4 4:5</code></pre>
+        <p>
+          <code>gemini-3.1-flash-image-preview</code> 额外支持
+          <code>1:4 1:8 4:1 8:1</code>。经统一图片端点调用时，该分组的两个
+          preview 图片模型均固定输出 2K，<code>size</code>
+          仅用于映射最接近的宽高比。参考图最多 14 张。
+        </p>
+
+        <h3>gpt-image-2 预设与精确尺寸</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>比例</th>
+                <th>1K</th>
+                <th>2K</th>
+                <th>4K</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1:1</td>
+                <td><code>1024x1024</code></td>
+                <td><code>2048x2048</code></td>
+                <td><code>2480x2480</code></td>
+              </tr>
+              <tr>
+                <td>16:9</td>
+                <td><code>1280x720</code></td>
+                <td><code>2560x1440</code></td>
+                <td><code>3328x1872</code></td>
+              </tr>
+              <tr>
+                <td>9:16</td>
+                <td><code>720x1280</code></td>
+                <td><code>1440x2560</code></td>
+                <td><code>1872x3328</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          宽高均为 16 的倍数时，<code>gpt-image-2</code>
+          会原样透传精确尺寸，例如 <code>2160x3840</code>。传
+          <code>size: "auto"</code> 时由内部上游自动决定。
+        </p>
+
+        <h3>64生图请求示例</h3>
+        <pre><code>curl "$BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-3-pro-image-preview",
+    "prompt": "一只坐在窗边的橘猫，柔和自然光",
+    "size": "1024x1024",
+    "n": 1,
+    "response_format": "url"
+  }'</code></pre>
+
+        <pre><code>curl "$BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-image-2",
+    "prompt": "一只红苹果放在白色桌面上",
+    "size": "2048x2048",
+    "quality": "high",
+    "background": "opaque",
+    "response_format": "url"
+  }'</code></pre>
+
+        <h3>生图分组</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>模型</th>
+                <th>价格</th>
                 <th>说明</th>
               </tr>
             </thead>
@@ -313,7 +496,7 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
               <tr>
                 <td><code>gpt-image-2</code></td>
                 <td>$0.20</td>
-                <td>支持 2K、4K</td>
+                <td>该价格仅适用于此分组</td>
               </tr>
               <tr>
                 <td><code>gpt-image-2-all</code></td>
@@ -324,22 +507,11 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
           </table>
         </div>
 
-        <h3>生成图片</h3>
-        <pre><code>curl "$BASE_URL/v1/images/generations" \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gemini-3-pro-image",
-    "prompt": "一只坐在窗边的橘猫，柔和自然光",
-    "size": "1024x1024",
-    "n": 1,
-    "response_format": "url"
-  }'</code></pre>
-
         <h3>编辑图片</h3>
         <p>
           支持图片编辑的模型可调用 <code>POST /v1/images/edits</code>，使用
-          <code>multipart/form-data</code> 上传图片。
+          <code>multipart/form-data</code> 上传图片，或继续使用 JSON 中的
+          <code>image/input_reference</code>。
         </p>
         <pre><code>curl "$BASE_URL/v1/images/edits" \
   -H "Authorization: Bearer $API_KEY" \
@@ -423,6 +595,16 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
                 <td><code>audios</code></td>
                 <td>string[]</td>
                 <td>可选，模型支持时传参考音频 URL</td>
+              </tr>
+              <tr>
+                <td><code>first_image</code> / <code>last_image</code></td>
+                <td>string</td>
+                <td>可选，支持首尾帧的模型必须成对传入，且不能与参考素材数组混用</td>
+              </tr>
+              <tr>
+                <td><code>auto_face</code></td>
+                <td>boolean</td>
+                <td>可选，仅支持自动人脸处理的模型生效</td>
               </tr>
               <tr>
                 <td><code>generate_audio</code></td>
@@ -576,6 +758,33 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
                 </td>
                 <td>按实际 token</td>
               </tr>
+              <tr>
+                <td>kyy-sd</td>
+                <td>
+                  <code>videos</code>（7 元/次）<br /><code
+                    >videos_stable</code
+                  >（5 元/次）<br /><code>videos_stable_fast</code>（4
+                  元/次）<br /><code>videos_pro</code>（6.5 元/次）<br /><code
+                    >videos_pro_fast</code
+                  >（5.5 元/次）
+                </td>
+                <td>
+                  <code>videos/videos_stable</code> 为 4–15 秒；其余模型仅
+                  <code>10/15</code> 秒
+                </td>
+                <td>
+                  固定 <code>720p</code>；均支持
+                  <code>16:9/9:16/1:1</code>，<code>videos</code> 另支持
+                  <code>21:9/4:3/3:4</code>
+                </td>
+                <td>
+                  <code>videos</code>：9 图/3 视频/3 音频；<code
+                    >videos_stable*</code
+                  >：4 图/3 视频/1 音频；<code>videos_pro*</code>：9 图/0
+                  视频/3 音频，音频必须搭配图片
+                </td>
+                <td>固定按次</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -598,7 +807,29 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
     "resolution": "720p"
   }'</code></pre>
 
-        <h3>章鱼即梦多媒体参考请求</h3>
+        <h3>kyy-sd 多媒体参考请求</h3>
+        <pre><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "videos",
+    "prompt": "参考人物、动作和音乐生成自然流畅的短片",
+    "duration": 10,
+    "aspect_ratio": "9:16",
+    "resolution": "720p",
+    "images": ["https://example.com/person.jpg"],
+    "videos": ["https://example.com/motion.mp4"],
+    "audios": ["https://example.com/music.mp3"]
+  }'</code></pre>
+
+        <p>
+          首尾帧模式改用 <code>first_image</code> 和
+          <code>last_image</code>，两者必须同时提供，并移除
+          <code>images/videos/audios</code>。<code>videos_pro</code> 与
+          <code>videos_pro_fast</code> 不支持参考视频；传音频时至少同时传一张参考图。
+        </p>
+
+        <h3>即梦视频按次多媒体参考请求</h3>
         <pre><code>curl "$BASE_URL/v1/videos" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \

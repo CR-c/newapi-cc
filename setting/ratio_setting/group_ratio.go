@@ -3,6 +3,9 @@ package ratio_setting
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/config"
@@ -32,10 +35,13 @@ var defaultGroupSpecialUsableGroup = map[string]map[string]string{
 	},
 }
 
+var defaultGroupModelPrice = map[string]map[string]float64{}
+
 type GroupRatioSetting struct {
 	GroupRatio              *types.RWMap[string, float64]            `json:"group_ratio"`
 	GroupGroupRatio         *types.RWMap[string, map[string]float64] `json:"group_group_ratio"`
 	GroupSpecialUsableGroup *types.RWMap[string, map[string]string]  `json:"group_special_usable_group"`
+	GroupModelPrice         *types.RWMap[string, map[string]float64] `json:"group_model_price"`
 }
 
 var groupRatioSetting GroupRatioSetting
@@ -46,11 +52,14 @@ func init() {
 
 	groupRatioMap.AddAll(defaultGroupRatio)
 	groupGroupRatioMap.AddAll(defaultGroupGroupRatio)
+	groupModelPrice := types.NewRWMap[string, map[string]float64]()
+	groupModelPrice.AddAll(defaultGroupModelPrice)
 
 	groupRatioSetting = GroupRatioSetting{
 		GroupSpecialUsableGroup: groupSpecialUsableGroup,
 		GroupRatio:              groupRatioMap,
 		GroupGroupRatio:         groupGroupRatioMap,
+		GroupModelPrice:         groupModelPrice,
 	}
 
 	config.GlobalConfig.Register("group_ratio_setting", &groupRatioSetting)
@@ -60,6 +69,10 @@ func GetGroupRatioSetting() *GroupRatioSetting {
 	if groupRatioSetting.GroupSpecialUsableGroup == nil {
 		groupRatioSetting.GroupSpecialUsableGroup = types.NewRWMap[string, map[string]string]()
 		groupRatioSetting.GroupSpecialUsableGroup.AddAll(defaultGroupSpecialUsableGroup)
+	}
+	if groupRatioSetting.GroupModelPrice == nil {
+		groupRatioSetting.GroupModelPrice = types.NewRWMap[string, map[string]float64]()
+		groupRatioSetting.GroupModelPrice.AddAll(defaultGroupModelPrice)
 	}
 	return &groupRatioSetting
 }
@@ -108,6 +121,54 @@ func GroupGroupRatio2JSONString() string {
 
 func UpdateGroupGroupRatioByJSONString(jsonStr string) error {
 	return types.LoadFromJsonString(groupGroupRatioMap, jsonStr)
+}
+
+func GetGroupModelPrice(group, modelName string) (float64, bool) {
+	prices, ok := GetGroupRatioSetting().GroupModelPrice.Get(group)
+	if !ok {
+		return 0, false
+	}
+	price, ok := prices[FormatMatchingModelName(modelName)]
+	if !ok || price < 0 || math.IsNaN(price) || math.IsInf(price, 0) {
+		return 0, false
+	}
+	return price, true
+}
+
+func GroupModelPrice2JSONString() string {
+	return GetGroupRatioSetting().GroupModelPrice.MarshalJSONString()
+}
+
+func UpdateGroupModelPriceByJSONString(jsonStr string) error {
+	if err := ValidateGroupModelPrice(jsonStr); err != nil {
+		return err
+	}
+	return types.LoadFromJsonStringWithCallback(
+		GetGroupRatioSetting().GroupModelPrice,
+		jsonStr,
+		InvalidateExposedDataCache,
+	)
+}
+
+func ValidateGroupModelPrice(jsonStr string) error {
+	prices := make(map[string]map[string]float64)
+	if err := common.Unmarshal([]byte(jsonStr), &prices); err != nil {
+		return err
+	}
+	for group, modelPrices := range prices {
+		if strings.TrimSpace(group) == "" {
+			return errors.New("group model price contains an empty group")
+		}
+		for modelName, price := range modelPrices {
+			if strings.TrimSpace(modelName) == "" {
+				return fmt.Errorf("group model price for %s contains an empty model", group)
+			}
+			if price < 0 || math.IsNaN(price) || math.IsInf(price, 0) {
+				return fmt.Errorf("group model price for %s/%s must be finite and not less than 0", group, modelName)
+			}
+		}
+	}
+	return nil
 }
 
 func CheckGroupRatio(jsonStr string) error {

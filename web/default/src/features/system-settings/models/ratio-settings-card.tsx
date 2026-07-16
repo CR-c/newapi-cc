@@ -58,18 +58,18 @@ function formatJsonValidationError(
     )
   }
 
-  const parts = [
-    error.line && error.column
-      ? t('JSON is invalid at line {{line}}, column {{column}}.', {
-          line: error.line,
-          column: error.column,
-        })
-      : error.position !== undefined
-        ? t('JSON is invalid at position {{position}}.', {
-            position: error.position,
-          })
-        : t('JSON is invalid. Please check the syntax.'),
-  ]
+  let primaryMessage = t('JSON is invalid. Please check the syntax.')
+  if (error.line && error.column) {
+    primaryMessage = t('JSON is invalid at line {{line}}, column {{column}}.', {
+      line: error.line,
+      column: error.column,
+    })
+  } else if (error.position !== undefined) {
+    primaryMessage = t('JSON is invalid at position {{position}}.', {
+      position: error.position,
+    })
+  }
+  const parts = [primaryMessage]
 
   if (error.missingCommaLine) {
     parts.push(
@@ -118,6 +118,7 @@ const createGroupSchema = (t: Translate) =>
     TopupGroupRatio: createJsonStringField(t),
     UserUsableGroups: createJsonStringField(t),
     GroupGroupRatio: createJsonStringField(t),
+    GroupModelPrice: createJsonStringField(t),
     AutoGroups: createJsonStringField(t, {
       predicate: (parsed) =>
         Array.isArray(parsed) &&
@@ -192,6 +193,7 @@ export function RatioSettingsCard({
     TopupGroupRatio: normalizeJsonString(groupDefaults.TopupGroupRatio),
     UserUsableGroups: normalizeJsonString(groupDefaults.UserUsableGroups),
     GroupGroupRatio: normalizeJsonString(groupDefaults.GroupGroupRatio),
+    GroupModelPrice: normalizeJsonString(groupDefaults.GroupModelPrice),
     AutoGroups: normalizeJsonString(groupDefaults.AutoGroups),
     DefaultUseAutoGroup: groupDefaults.DefaultUseAutoGroup,
     GroupSpecialUsableGroup: normalizeJsonString(
@@ -230,6 +232,7 @@ export function RatioSettingsCard({
       TopupGroupRatio: formatJsonForTextarea(groupDefaults.TopupGroupRatio),
       UserUsableGroups: formatJsonForTextarea(groupDefaults.UserUsableGroups),
       GroupGroupRatio: formatJsonForTextarea(groupDefaults.GroupGroupRatio),
+      GroupModelPrice: formatJsonForTextarea(groupDefaults.GroupModelPrice),
       AutoGroups: formatJsonForTextarea(groupDefaults.AutoGroups),
       GroupSpecialUsableGroup: formatJsonForTextarea(
         groupDefaults.GroupSpecialUsableGroup
@@ -278,6 +281,7 @@ export function RatioSettingsCard({
       TopupGroupRatio: normalizeJsonString(groupDefaults.TopupGroupRatio),
       UserUsableGroups: normalizeJsonString(groupDefaults.UserUsableGroups),
       GroupGroupRatio: normalizeJsonString(groupDefaults.GroupGroupRatio),
+      GroupModelPrice: normalizeJsonString(groupDefaults.GroupModelPrice),
       AutoGroups: normalizeJsonString(groupDefaults.AutoGroups),
       DefaultUseAutoGroup: groupDefaults.DefaultUseAutoGroup,
       GroupSpecialUsableGroup: normalizeJsonString(
@@ -291,6 +295,7 @@ export function RatioSettingsCard({
       TopupGroupRatio: formatJsonForTextarea(groupDefaults.TopupGroupRatio),
       UserUsableGroups: formatJsonForTextarea(groupDefaults.UserUsableGroups),
       GroupGroupRatio: formatJsonForTextarea(groupDefaults.GroupGroupRatio),
+      GroupModelPrice: formatJsonForTextarea(groupDefaults.GroupModelPrice),
       AutoGroups: formatJsonForTextarea(groupDefaults.AutoGroups),
       GroupSpecialUsableGroup: formatJsonForTextarea(
         groupDefaults.GroupSpecialUsableGroup
@@ -348,6 +353,7 @@ export function RatioSettingsCard({
         TopupGroupRatio: normalizeJsonString(values.TopupGroupRatio),
         UserUsableGroups: normalizeJsonString(values.UserUsableGroups),
         GroupGroupRatio: normalizeJsonString(values.GroupGroupRatio),
+        GroupModelPrice: normalizeJsonString(values.GroupModelPrice),
         AutoGroups: normalizeJsonString(values.AutoGroups),
         DefaultUseAutoGroup: values.DefaultUseAutoGroup,
         GroupSpecialUsableGroup: normalizeJsonString(
@@ -359,6 +365,7 @@ export function RatioSettingsCard({
       const apiKeyMap: Record<string, string> = {
         GroupSpecialUsableGroup:
           'group_ratio_setting.group_special_usable_group',
+        GroupModelPrice: 'group_ratio_setting.group_model_price',
       }
 
       const updates = (

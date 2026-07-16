@@ -160,6 +160,8 @@ export interface ImageGenerationRequest {
   quality?: string
   n?: number
   response_format: 'url' | 'b64_json'
+  background?: 'opaque' | 'transparent'
+  image?: string[]
 }
 
 export interface ImageGenerationResult {

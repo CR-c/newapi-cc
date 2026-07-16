@@ -67,6 +67,7 @@ type GroupFormValues = {
   TopupGroupRatio: string
   UserUsableGroups: string
   GroupGroupRatio: string
+  GroupModelPrice: string
   AutoGroups: string
   DefaultUseAutoGroup: boolean
   GroupSpecialUsableGroup: string
@@ -185,6 +186,25 @@ export const GroupRatioForm = memo(function GroupRatioForm({
 
             <FormField
               control={form.control}
+              name='GroupModelPrice'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Group model prices')}</FormLabel>
+                  <FormControl>
+                    <Textarea rows={8} {...field} />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'Nested JSON: group → model → fixed price. Overrides the global fixed model price for requests using that group.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
               name='DefaultUseAutoGroup'
               render={({ field }) => (
                 <SettingsSwitchItem>
@@ -280,6 +300,25 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                     {`{ targetGroup: ratio }`}{' '}
                     {t(
                       'to override billing when a user in one group uses a token of another group.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='GroupModelPrice'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Group model prices')}</FormLabel>
+                  <FormControl>
+                    <Textarea rows={8} {...field} />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'Nested JSON: group → model → fixed price. Overrides the global fixed model price for requests using that group.'
                     )}
                   </FormDescription>
                   <FormMessage />

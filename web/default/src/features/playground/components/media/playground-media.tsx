@@ -46,6 +46,11 @@ import {
 } from '../../api'
 import { PLAYGROUND_MODES } from '../../constants'
 import { usePlaygroundOptions } from '../../hooks/use-playground-options'
+import {
+  getImageModelProfile,
+  getImagePresetSize,
+  isValidExactImageSize,
+} from '../../image-model-profiles'
 import type {
   GroupOption,
   ImageGenerationResult,
@@ -55,6 +60,10 @@ import type {
   VideoTaskResponse,
 } from '../../types'
 import { getVideoModelProfile } from '../../video-model-profiles'
+import {
+  ImageGenerationControls,
+  type ImageGenerationSettings,
+} from './image-generation-controls'
 import { PlaygroundMediaHistory } from './playground-media-history'
 import {
   VideoReferenceInputs,
@@ -110,10 +119,21 @@ export function PlaygroundMedia(props: PlaygroundMediaProps) {
   })
   const [models, setModels] = useState<ModelOption[]>([])
   const [prompt, setPrompt] = useState('')
-  const [size, setSize] = useState(
-    props.mode === PLAYGROUND_MODES.IMAGE ? '1024x1024' : '720x1280'
-  )
-  const [quality, setQuality] = useState('standard')
+  const size = '720x1280'
+  const [imageSettings, setImageSettings] = useState<ImageGenerationSettings>({
+    aspectRatio: '1:1',
+    resolution: '2K',
+    size: '1024x1024',
+    quality: 'standard',
+    count: 1,
+    responseFormat: 'url',
+    background: 'opaque',
+    useExactSize: false,
+    exactWidth: '2048',
+    exactHeight: '2048',
+    referenceFiles: [],
+    referenceURLs: [],
+  })
   const [seconds, setSeconds] = useState('4')
   const [aspectRatio, setAspectRatio] = useState('16:9')
   const [resolution, setResolution] = useState('720p')
@@ -147,9 +167,13 @@ export function PlaygroundMedia(props: PlaygroundMediaProps) {
   })
   const refetchHistory = historyQuery.refetch
   const isImage = props.mode === PLAYGROUND_MODES.IMAGE
+  const imageProfile = useMemo(
+    () => getImageModelProfile(config.group, config.model),
+    [config.group, config.model]
+  )
   const videoProfile = useMemo(
-    () => getVideoModelProfile(config.model),
-    [config.model]
+    () => getVideoModelProfile(config.model, config.group),
+    [config.group, config.model]
   )
   const durationOptions = useMemo(() => {
     if (
@@ -236,6 +260,62 @@ export function PlaygroundMedia(props: PlaygroundMediaProps) {
   )
 
   useEffect(() => {
+    if (!isImage) return
+
+    setImageSettings((current) => {
+      const aspectRatio = imageProfile.aspectRatios.includes(
+        current.aspectRatio
+      )
+        ? current.aspectRatio
+        : (imageProfile.aspectRatios[0] ?? '1:1')
+      const resolution = imageProfile.resolutions.includes(current.resolution)
+        ? current.resolution
+        : (imageProfile.fixedResolution ??
+          imageProfile.resolutions[0] ??
+          current.resolution)
+      const quality = imageProfile.qualities.includes(current.quality)
+        ? current.quality
+        : (imageProfile.qualities[0] ?? 'standard')
+      const background = imageProfile.backgrounds.includes(current.background)
+        ? current.background
+        : ((imageProfile.backgrounds[0] ?? 'opaque') as
+            | 'opaque'
+            | 'transparent')
+      const responseFormat = imageProfile.responseFormats.includes(
+        current.responseFormat
+      )
+        ? current.responseFormat
+        : (imageProfile.responseFormats[0] ?? 'url')
+
+      return {
+        ...current,
+        aspectRatio,
+        resolution,
+        quality,
+        background,
+        responseFormat,
+        count: Math.min(current.count, imageProfile.maxImages),
+        useExactSize: imageProfile.supportsExactSize && current.useExactSize,
+        referenceFiles: current.referenceFiles.slice(
+          0,
+          imageProfile.maxReferences
+        ),
+        referenceURLs: current.referenceURLs.slice(
+          0,
+          Math.max(
+            0,
+            imageProfile.maxReferences -
+              Math.min(
+                current.referenceFiles.length,
+                imageProfile.maxReferences
+              )
+          )
+        ),
+      }
+    })
+  }, [imageProfile, isImage])
+
+  useEffect(() => {
     setSeconds((current) => {
       const duration = Number(current)
       if (
@@ -304,16 +384,43 @@ export function PlaygroundMedia(props: PlaygroundMediaProps) {
     videoProfile,
   ])
 
+  const referenceImageCount =
+    referenceFiles.images.length + referenceURLs.images.length
+  const referenceAudioCount =
+    referenceFiles.audios.length + referenceURLs.audios.length
   const hasRequiredReferences =
-    !videoProfile.requiresImage ||
-    referenceFiles.images.length + referenceURLs.images.length === 1
+    (!videoProfile.requiresImage || referenceImageCount === 1) &&
+    (!videoProfile.requiresImageWithAudio ||
+      referenceAudioCount === 0 ||
+      referenceImageCount > 0)
+
+  const exactImageSizeValid =
+    !imageSettings.useExactSize ||
+    isValidExactImageSize(imageSettings.exactWidth, imageSettings.exactHeight)
+  let imageSize = imageSettings.size
+  if (imageSettings.useExactSize) {
+    imageSize = `${imageSettings.exactWidth}x${imageSettings.exactHeight}`
+  } else if (
+    imageProfile.supportsAutoSize &&
+    imageSettings.resolution === 'auto'
+  ) {
+    imageSize = 'auto'
+  } else if (imageProfile.provider !== 'generic') {
+    imageSize = getImagePresetSize(
+      imageProfile,
+      imageSettings.resolution,
+      imageSettings.aspectRatio
+    )
+  }
 
   const canSubmit =
     !isSubmitting &&
     !isLoadingModels &&
     config.model !== '' &&
     prompt.trim() !== '' &&
-    (isImage || (isVideoDurationValid && hasRequiredReferences))
+    (isImage
+      ? exactImageSizeValid
+      : isVideoDurationValid && hasRequiredReferences)
 
   const handleSubmit = async () => {
     if (!canSubmit) return
@@ -324,15 +431,32 @@ export function PlaygroundMedia(props: PlaygroundMediaProps) {
 
     try {
       if (props.mode === PLAYGROUND_MODES.IMAGE) {
+        const uploadedReferences = await Promise.all(
+          imageSettings.referenceFiles.map((file) =>
+            uploadPlaygroundAsset(file, 'image', controller.signal)
+          )
+        )
+        const references = [
+          ...imageSettings.referenceURLs,
+          ...uploadedReferences.map((asset) => asset.url),
+        ]
         const response = await generateImages(
           {
             model: config.model,
             group: config.group,
             prompt: prompt.trim(),
-            size,
-            quality,
-            n: 1,
-            response_format: 'url',
+            size: imageSize,
+            n: imageSettings.count,
+            response_format: imageSettings.responseFormat,
+            quality:
+              imageProfile.qualities.length > 0
+                ? imageSettings.quality
+                : undefined,
+            background:
+              imageProfile.backgrounds.length > 0
+                ? imageSettings.background
+                : undefined,
+            image: references.length > 0 ? references : undefined,
           },
           controller.signal
         )
@@ -526,41 +650,13 @@ export function PlaygroundMedia(props: PlaygroundMediaProps) {
           </div>
 
           {isImage ? (
-            <div className='grid grid-cols-2 gap-3'>
-              <div className='space-y-2'>
-                <Label>{t('Size')}</Label>
-                <Select
-                  value={size}
-                  onValueChange={(value) => value && setSize(value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue>{size}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {['1024x1024', '1024x1792', '1792x1024'].map((value) => (
-                      <SelectItem key={value} value={value}>
-                        {value}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className='space-y-2'>
-                <Label>{t('Quality')}</Label>
-                <Select
-                  value={quality}
-                  onValueChange={(value) => value && setQuality(value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue>{t(quality)}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value='standard'>{t('standard')}</SelectItem>
-                    <SelectItem value='hd'>{t('hd')}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+            <ImageGenerationControls
+              profile={imageProfile}
+              settings={imageSettings}
+              exactSizeValid={exactImageSizeValid}
+              disabled={isSubmitting}
+              onChange={setImageSettings}
+            />
           ) : (
             <div className='space-y-4'>
               <VideoReferenceInputs

@@ -103,6 +103,7 @@ export function getChannelTypeIcon(type: number): string {
     54: 'Doubao', // DoubaoVideo
     56: 'Replicate', // Replicate
     59: 'Service Inference', // Service Inference video
+    60: 'OpenAI', // KYY Video
 
     // Tools & Platforms
     37: 'Dify', // Dify

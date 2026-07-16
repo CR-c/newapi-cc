@@ -144,6 +144,19 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models: 'Models exposed by this channel',
     },
   },
+  60: {
+    id: 60,
+    name: CHANNEL_TYPES[60],
+    icon: 'openai',
+    defaultBaseUrl: 'https://zcbservice.aizfw.cn/kyyReactApiServer',
+    supportedModels: [
+      'videos',
+      'videos_stable',
+      'videos_stable_fast',
+      'videos_pro',
+      'videos_pro_fast',
+    ],
+  },
 }
 
 /**

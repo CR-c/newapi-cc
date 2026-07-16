@@ -18,9 +18,14 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { formatCurrencyFromUSD } from '@/lib/currency'
 
-import { QUOTA_TYPE_VALUES, TOKEN_UNIT_DIVISORS } from '../constants'
+import { FILTER_ALL, QUOTA_TYPE_VALUES, TOKEN_UNIT_DIVISORS } from '../constants'
 import type { PricingModel, TokenUnit, PriceType } from '../types'
-import { getConfiguredGroupRatio, getDisplayGroupRatio } from './model-helpers'
+import {
+  getConfiguredGroupRatio,
+  getDisplayGroupRatio,
+  getGroupModelPrice,
+  getModelEnabledPricingGroups,
+} from './model-helpers'
 
 // ----------------------------------------------------------------------------
 // Price Calculation Utilities
@@ -223,7 +228,7 @@ export function formatFixedPrice(
   }
 
   const ratio = getConfiguredGroupRatio(groupRatio, group)
-  let priceInUSD = (model.model_price || 0) * ratio
+  let priceInUSD = getGroupModelPrice(model, group) * ratio
 
   priceInUSD = applyRechargeRate(
     priceInUSD,
@@ -253,9 +258,26 @@ export function formatRequestPrice(
     return '-'
   }
 
-  const displayGroupRatio = getDisplayGroupRatio(model, selectedGroup)
-
-  let priceInUSD = (model.model_price || 0) * displayGroupRatio
+  let priceInUSD: number
+  if (
+    selectedGroup &&
+    selectedGroup !== FILTER_ALL &&
+    getModelEnabledPricingGroups(model).includes(selectedGroup)
+  ) {
+    priceInUSD =
+      getGroupModelPrice(model, selectedGroup) *
+      getDisplayGroupRatio(model, selectedGroup)
+  } else {
+    const enabledPrices = getModelEnabledPricingGroups(model).map(
+      (group) =>
+        getGroupModelPrice(model, group) *
+        getConfiguredGroupRatio(model.group_ratio || {}, group)
+    )
+    priceInUSD =
+      enabledPrices.length > 0
+        ? Math.min(...enabledPrices)
+        : model.model_price || 0
+  }
 
   priceInUSD = applyRechargeRate(
     priceInUSD,

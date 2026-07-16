@@ -222,6 +222,7 @@ export type ModelSettings = {
   GroupRatio: string
   UserUsableGroups: string
   GroupGroupRatio: string
+  'group_ratio_setting.group_model_price': string
   AutoGroups: string
   DefaultUseAutoGroup: boolean
   'group_ratio_setting.group_special_usable_group': string
@@ -276,6 +277,7 @@ export type BillingSettings = {
   GroupRatio: string
   UserUsableGroups: string
   GroupGroupRatio: string
+  'group_ratio_setting.group_model_price': string
   AutoGroups: string
   DefaultUseAutoGroup: boolean
   'group_ratio_setting.group_special_usable_group': string

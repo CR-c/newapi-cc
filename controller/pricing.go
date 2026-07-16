@@ -33,6 +33,29 @@ func filterPricingByUsableGroups(pricing []model.Pricing, usableGroup map[string
 	return filtered
 }
 
+func attachGroupModelPrices(pricing []model.Pricing, usableGroup map[string]string) []model.Pricing {
+	result := make([]model.Pricing, len(pricing))
+	copy(result, pricing)
+	for i := range result {
+		if result[i].QuotaType != 1 || result[i].BillingMode == "tiered_expr" {
+			continue
+		}
+		prices := make(map[string]float64)
+		for group := range usableGroup {
+			if !common.StringsContains(result[i].EnableGroup, group) && !common.StringsContains(result[i].EnableGroup, "all") {
+				continue
+			}
+			if price, ok := ratio_setting.GetGroupModelPrice(group, result[i].ModelName); ok {
+				prices[group] = price
+			}
+		}
+		if len(prices) > 0 {
+			result[i].GroupModelPrice = prices
+		}
+	}
+	return result
+}
+
 func GetPricing(c *gin.Context) {
 	pricing := model.GetPricing()
 	userId, exists := c.Get("id")
@@ -57,6 +80,7 @@ func GetPricing(c *gin.Context) {
 
 	usableGroup = service.GetUserUsableGroups(group)
 	pricing = filterPricingByUsableGroups(pricing, usableGroup)
+	pricing = attachGroupModelPrices(pricing, usableGroup)
 	// check groupRatio contains usableGroup
 	for group := range ratio_setting.GetGroupRatioCopy() {
 		if _, ok := usableGroup[group]; !ok {

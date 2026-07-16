@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 export interface VideoModelProfile {
-  provider: 'grok' | 'sub2api' | 'service-inference' | 'generic'
+  provider: 'grok' | 'sub2api' | 'service-inference' | 'kyy' | 'generic'
   durations: number[]
   aspectRatios: string[]
   resolutions: string[]
@@ -25,6 +25,7 @@ export interface VideoModelProfile {
   maxVideos: number
   maxAudios: number
   requiresImage: boolean
+  requiresImageWithAudio: boolean
   supportsGenerateAudio: boolean
   supportsWatermark: boolean
 }
@@ -38,11 +39,69 @@ const GENERIC_PROFILE: VideoModelProfile = {
   maxVideos: 0,
   maxAudios: 0,
   requiresImage: false,
+  requiresImageWithAudio: false,
   supportsGenerateAudio: false,
   supportsWatermark: false,
 }
 
-export function getVideoModelProfile(model: string): VideoModelProfile {
+export function getVideoModelProfile(
+  model: string,
+  group?: string
+): VideoModelProfile {
+  if (group === 'kyy-sd' && model === 'videos') {
+    return {
+      provider: 'kyy',
+      durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      aspectRatios: ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'],
+      resolutions: ['720p'],
+      maxImages: 9,
+      maxVideos: 3,
+      maxAudios: 3,
+      requiresImage: false,
+      requiresImageWithAudio: false,
+      supportsGenerateAudio: false,
+      supportsWatermark: false,
+    }
+  }
+  if (
+    group === 'kyy-sd' &&
+    (model === 'videos_stable' || model === 'videos_stable_fast')
+  ) {
+    return {
+      provider: 'kyy',
+      durations:
+        model === 'videos_stable_fast'
+          ? [10, 15]
+          : [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      aspectRatios: ['16:9', '9:16', '1:1'],
+      resolutions: ['720p'],
+      maxImages: 4,
+      maxVideos: 3,
+      maxAudios: 1,
+      requiresImage: false,
+      requiresImageWithAudio: false,
+      supportsGenerateAudio: false,
+      supportsWatermark: false,
+    }
+  }
+  if (
+    group === 'kyy-sd' &&
+    (model === 'videos_pro' || model === 'videos_pro_fast')
+  ) {
+    return {
+      provider: 'kyy',
+      durations: [10, 15],
+      aspectRatios: ['16:9', '9:16', '1:1'],
+      resolutions: ['720p'],
+      maxImages: 9,
+      maxVideos: 0,
+      maxAudios: 3,
+      requiresImage: false,
+      requiresImageWithAudio: true,
+      supportsGenerateAudio: false,
+      supportsWatermark: false,
+    }
+  }
   if (model === 'grok-video-1.5') {
     return {
       provider: 'grok',
@@ -53,6 +112,7 @@ export function getVideoModelProfile(model: string): VideoModelProfile {
       maxVideos: 0,
       maxAudios: 0,
       requiresImage: true,
+      requiresImageWithAudio: false,
       supportsGenerateAudio: false,
       supportsWatermark: false,
     }
@@ -67,6 +127,7 @@ export function getVideoModelProfile(model: string): VideoModelProfile {
       maxVideos: 0,
       maxAudios: 0,
       requiresImage: false,
+      requiresImageWithAudio: false,
       supportsGenerateAudio: false,
       supportsWatermark: false,
     }
@@ -81,6 +142,7 @@ export function getVideoModelProfile(model: string): VideoModelProfile {
       maxVideos: 3,
       maxAudios: 1,
       requiresImage: false,
+      requiresImageWithAudio: false,
       supportsGenerateAudio: false,
       supportsWatermark: false,
     }
@@ -95,6 +157,7 @@ export function getVideoModelProfile(model: string): VideoModelProfile {
       maxVideos: 0,
       maxAudios: 0,
       requiresImage: false,
+      requiresImageWithAudio: false,
       supportsGenerateAudio: true,
       supportsWatermark: true,
     }

@@ -57,6 +57,15 @@ interface VideoReferenceInputsProps {
   onURLsChange: (urls: VideoReferenceURLs) => void
 }
 
+interface ImageReferenceInputsProps {
+  files: File[]
+  urls: string[]
+  maxFiles: number
+  disabled: boolean
+  onChange: (files: File[]) => void
+  onURLsChange: (urls: string[]) => void
+}
+
 interface ReferenceFileInputProps {
   kind: PlaygroundAssetKind
   files: File[]
@@ -350,5 +359,23 @@ export function VideoReferenceInputs(props: VideoReferenceInputsProps) {
         />
       )}
     </div>
+  )
+}
+
+export function ImageReferenceInputs(props: ImageReferenceInputsProps) {
+  if (props.maxFiles <= 0) return null
+
+  return (
+    <ReferenceFileInput
+      kind='image'
+      files={props.files}
+      urls={props.urls}
+      maxFiles={props.maxFiles}
+      accept='image/jpeg,image/png,image/webp'
+      disabled={props.disabled}
+      onChange={props.onChange}
+      onURLsChange={props.onURLsChange}
+      allowImageDataURL
+    />
   )
 }
