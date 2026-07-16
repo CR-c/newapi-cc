@@ -151,6 +151,15 @@ func GetProfitCostModels(c *gin.Context) {
 	common.ApiSuccess(c, modelNames)
 }
 
+func GetProfitCostModelGroups(c *gin.Context) {
+	modelGroups, err := model.GetProfitCostModelGroups()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, modelGroups)
+}
+
 func SaveModelCostRule(c *gin.Context) {
 	var input model.ModelCostRule
 	if err := common.DecodeJson(c.Request.Body, &input); err != nil {

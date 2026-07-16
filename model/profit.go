@@ -40,6 +40,11 @@ type ModelCostRule struct {
 	Discount         float64 `json:"-" gorm:"column:discount;->;-:migration"`
 }
 
+type ProfitCostModelGroup struct {
+	Group  string   `json:"group"`
+	Models []string `json:"models"`
+}
+
 func (rule *ModelCostRule) AfterFind(*gorm.DB) error {
 	if rule.PurchasePriceCNY == 0 && rule.UpstreamPriceUSD > 0 && rule.ExchangeRate > 0 && rule.Discount > 0 {
 		rule.PurchasePriceCNY = rule.UpstreamPriceUSD * rule.ExchangeRate * rule.Discount
@@ -121,23 +126,33 @@ type profitBillingSnapshot struct {
 	ProfitGeneration  *int64  `json:"profit_generation"`
 }
 
-func attachProfitGeneration(log *Log, generation int64) error {
+func attachProfitGeneration(log *Log, generation int64) (int64, error) {
 	if log == nil {
-		return errors.New("log is required")
+		return generation, errors.New("log is required")
 	}
 	other := make(map[string]interface{})
 	if log.Other != "" {
 		if err := common.UnmarshalJsonStr(log.Other, &other); err != nil {
-			return err
+			return generation, err
+		}
+		var snapshot profitBillingSnapshot
+		if err := common.UnmarshalJsonStr(log.Other, &snapshot); err != nil {
+			return generation, err
+		}
+		if snapshot.ProfitGeneration != nil {
+			if *snapshot.ProfitGeneration < 0 {
+				return generation, errors.New("profit generation must not be negative")
+			}
+			return *snapshot.ProfitGeneration, nil
 		}
 	}
 	other["profit_generation"] = generation
 	encoded, err := common.Marshal(other)
 	if err != nil {
-		return err
+		return generation, err
 	}
 	log.Other = string(encoded)
-	return nil
+	return generation, nil
 }
 
 func profitSourceLogKey(log *Log) string {
@@ -265,7 +280,7 @@ func GetModelCostRules() ([]*ModelCostRule, error) {
 	return rules, err
 }
 
-func GetProfitCostModelNames() ([]string, error) {
+func getConfiguredProfitCostModelNames() ([]string, error) {
 	modelNames := make(map[string]struct{})
 	sources := []struct {
 		model  interface{}
@@ -291,6 +306,96 @@ func GetProfitCostModelNames() ([]string, error) {
 	result := make([]string, 0, len(modelNames))
 	for name := range modelNames {
 		result = append(result, name)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func GetProfitCostModelGroups() ([]ProfitCostModelGroup, error) {
+	type abilityModel struct {
+		Group string `gorm:"column:model_group"`
+		Model string `gorm:"column:model"`
+	}
+
+	groupedModels := make(map[string]map[string]struct{})
+	modelSeenInGroup := make(map[string]struct{})
+	addModel := func(group, modelName string) {
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" {
+			return
+		}
+		if _, ok := groupedModels[group]; !ok {
+			groupedModels[group] = make(map[string]struct{})
+		}
+		groupedModels[group][modelName] = struct{}{}
+		if group != "" {
+			modelSeenInGroup[modelName] = struct{}{}
+		}
+	}
+
+	abilityModels := make([]abilityModel, 0)
+	if err := DB.Model(&Ability{}).
+		Select(commonGroupCol+" AS model_group, model").
+		Where("enabled = ?", true).
+		Group(commonGroupCol + ", model").
+		Order(commonGroupCol + " ASC, model ASC").
+		Scan(&abilityModels).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range abilityModels {
+		addModel(row.Group, row.Model)
+	}
+
+	configuredNames, err := getConfiguredProfitCostModelNames()
+	if err != nil {
+		return nil, err
+	}
+	for _, modelName := range configuredNames {
+		if _, ok := modelSeenInGroup[modelName]; !ok {
+			addModel("", modelName)
+		}
+	}
+
+	groups := make([]string, 0, len(groupedModels))
+	for group := range groupedModels {
+		groups = append(groups, group)
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i] == "" {
+			return false
+		}
+		if groups[j] == "" {
+			return true
+		}
+		return groups[i] < groups[j]
+	})
+
+	result := make([]ProfitCostModelGroup, 0, len(groups))
+	for _, group := range groups {
+		models := make([]string, 0, len(groupedModels[group]))
+		for modelName := range groupedModels[group] {
+			models = append(models, modelName)
+		}
+		sort.Strings(models)
+		result = append(result, ProfitCostModelGroup{Group: group, Models: models})
+	}
+	return result, nil
+}
+
+func GetProfitCostModelNames() ([]string, error) {
+	groups, err := GetProfitCostModelGroups()
+	if err != nil {
+		return nil, err
+	}
+	modelNames := make(map[string]struct{})
+	for _, group := range groups {
+		for _, modelName := range group.Models {
+			modelNames[modelName] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(modelNames))
+	for modelName := range modelNames {
+		result = append(result, modelName)
 	}
 	sort.Strings(result)
 	return result, nil

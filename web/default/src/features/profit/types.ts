@@ -51,6 +51,11 @@ export type ModelCostRule = {
   effective_to: number
 }
 
+export type ProfitCostModelGroup = {
+  group: string
+  models: string[]
+}
+
 export type ProfitQuery = {
   start_timestamp?: number
   end_timestamp?: number

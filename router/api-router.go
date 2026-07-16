@@ -204,6 +204,7 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			profitRoute.GET("/overview", controller.GetProfitOverview)
 			profitRoute.GET("/cost-models", controller.GetProfitCostModels)
+			profitRoute.GET("/cost-model-groups", controller.GetProfitCostModelGroups)
 			profitRoute.GET("/cost-rules", controller.GetModelCostRules)
 			profitRoute.POST("/cost-rules", middleware.CriticalRateLimit(), controller.SaveModelCostRule)
 			profitRoute.POST("/backfill", middleware.CriticalRateLimit(), controller.BackfillProfitRecords)

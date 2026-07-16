@@ -32,7 +32,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   backfillProfitRecords,
   getModelCostRules,
-  getProfitCostModels,
+  getProfitCostModelGroups,
   getProfitOverview,
   resetProfitAnalysisData,
   saveModelCostRule,
@@ -75,8 +75,8 @@ export function Profit() {
     queryFn: getModelCostRules,
   })
   const costModelsQuery = useQuery({
-    queryKey: ['profit-cost-models'],
-    queryFn: getProfitCostModels,
+    queryKey: ['profit-cost-model-groups'],
+    queryFn: getProfitCostModelGroups,
   })
   const saveMutation = useMutation({
     mutationFn: saveModelCostRule,
@@ -103,7 +103,7 @@ export function Profit() {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['profit-overview'] }),
-        queryClient.invalidateQueries({ queryKey: ['profit-cost-models'] }),
+        queryClient.invalidateQueries({ queryKey: ['profit-cost-model-groups'] }),
         queryClient.invalidateQueries({ queryKey: ['users'] }),
       ])
       setResetConfirmOpen(false)
@@ -194,7 +194,7 @@ export function Profit() {
               <TabsContent value='costs'>
                 <CostRules
                   rules={rulesQuery.data ?? []}
-                  modelNames={costModelsQuery.data ?? []}
+                  modelGroups={costModelsQuery.data ?? []}
                   isSaving={saveMutation.isPending}
                   onSave={saveRule}
                 />

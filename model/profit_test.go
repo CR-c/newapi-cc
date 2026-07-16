@@ -210,6 +210,81 @@ func TestCreateLogPersistsProfitGenerationForBackfill(t *testing.T) {
 	assert.Equal(t, int64(3), record.Generation)
 }
 
+func TestCreateLogPreservesExplicitProfitGenerationAcrossReset(t *testing.T) {
+	originalDB, originalLogDB := DB, LOG_DB
+	originalLogConsumeEnabled := common.LogConsumeEnabled
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&ModelCostRule{}, &ProfitRecord{}, &ProfitAnalysisState{}))
+	require.NoError(t, db.Create(&ProfitAnalysisState{Id: 1, Generation: 2}).Error)
+	logDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, logDB.AutoMigrate(&Log{}))
+	DB, LOG_DB = db, logDB
+	common.LogConsumeEnabled = true
+	t.Cleanup(func() {
+		DB, LOG_DB = originalDB, originalLogDB
+		common.LogConsumeEnabled = originalLogConsumeEnabled
+	})
+
+	require.NoError(t, createBillingLog(&Log{
+		CreatedAt: 100, Type: LogTypeRefund, UserId: 1, ModelName: "video", Quota: 100,
+		Other: `{"model_price":1,"group_ratio":1,"profit_generation":1}`,
+	}))
+
+	var storedLog Log
+	require.NoError(t, logDB.First(&storedLog).Error)
+	var snapshot profitBillingSnapshot
+	require.NoError(t, common.UnmarshalJsonStr(storedLog.Other, &snapshot))
+	require.NotNil(t, snapshot.ProfitGeneration)
+	assert.Equal(t, int64(1), *snapshot.ProfitGeneration)
+	var record ProfitRecord
+	require.NoError(t, db.First(&record).Error)
+	assert.Equal(t, int64(1), record.Generation)
+}
+
+func TestAsyncBillingEventsStayTogetherAcrossProfitReset(t *testing.T) {
+	originalDB, originalLogDB := DB, LOG_DB
+	originalLogConsumeEnabled := common.LogConsumeEnabled
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&ModelCostRule{}, &ProfitRecord{}, &ProfitAnalysisState{}, &ProfitResetLogKey{}))
+	require.NoError(t, db.Create(&ProfitAnalysisState{Id: 1, Generation: 1}).Error)
+	require.NoError(t, db.Create(&ModelCostRule{
+		ModelName: "video", PurchasePriceCNY: 0.6, Version: 1, Enabled: true,
+	}).Error)
+	logDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, logDB.AutoMigrate(&Log{}))
+	DB, LOG_DB = db, logDB
+	common.LogConsumeEnabled = true
+	t.Cleanup(func() {
+		DB, LOG_DB = originalDB, originalLogDB
+		common.LogConsumeEnabled = originalLogConsumeEnabled
+	})
+
+	require.NoError(t, createBillingLog(&Log{
+		CreatedAt: 100, Type: LogTypeConsume, UserId: 1, ModelName: "video", Quota: 500_000,
+		Other: `{"model_price":1,"group_ratio":1,"profit_generation":1}`,
+	}))
+	require.NoError(t, ResetProfitAnalysisData(200))
+	require.NoError(t, createBillingLog(&Log{
+		CreatedAt: 300, Type: LogTypeRefund, UserId: 1, ModelName: "video", Quota: 200_000,
+		Other: `{"model_price":1,"group_ratio":1,"profit_generation":1}`,
+	}))
+
+	current, err := GetProfitAggregate(ProfitQuery{UserId: 1})
+	require.NoError(t, err)
+	assert.Zero(t, current.RecordCount)
+	previousGeneration := int64(1)
+	previous, err := GetProfitAggregate(ProfitQuery{UserId: 1, Generation: &previousGeneration})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), previous.RecordCount)
+	assert.Equal(t, int64(600_000), previous.RevenueMicros)
+	assert.Equal(t, int64(360_000), previous.CostMicros)
+	assert.Equal(t, int64(240_000), previous.ProfitMicros)
+}
+
 func TestBackfillProfitRecordsClickHouseModeUsesOffsetAndIsIdempotent(t *testing.T) {
 	originalDB, originalLogDB := DB, LOG_DB
 	originalLogDatabaseType := common.LogDatabaseType()
@@ -470,16 +545,27 @@ func TestGetProfitCostModelNamesReturnsStableUnion(t *testing.T) {
 	originalDB := DB
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&ProfitRecord{}, &ModelCostRule{}))
+	require.NoError(t, db.AutoMigrate(&ProfitRecord{}, &ModelCostRule{}, &Ability{}))
 	DB = db
 	t.Cleanup(func() { DB = originalDB })
 
 	require.NoError(t, db.Create(&ProfitRecord{SourceLogKey: "mapped", CostModelName: "upstream-model"}).Error)
 	require.NoError(t, db.Create(&ModelCostRule{ModelName: "legacy-model", Version: 1}).Error)
+	require.NoError(t, db.Create(&Ability{Group: "kyy-sd", Model: "sd-model", ChannelId: 1, Enabled: true}).Error)
 
 	names, err := GetProfitCostModelNames()
 	require.NoError(t, err)
-	assert.Equal(t, []string{"legacy-model", "upstream-model"}, names)
+	assert.Equal(t, []string{"legacy-model", "sd-model", "upstream-model"}, names)
+
+	groups, err := GetProfitCostModelGroups()
+	require.NoError(t, err)
+	assert.Equal(t, []ProfitCostModelGroup{
+		{Group: "kyy-sd", Models: []string{"sd-model"}},
+		{Group: "", Models: []string{"legacy-model", "upstream-model"}},
+	}, groups)
+
+	_, err = SaveModelCostRule(&ModelCostRule{ModelName: "sd-model", PurchasePriceCNY: 1})
+	assert.NoError(t, err)
 
 	_, err = SaveModelCostRule(&ModelCostRule{ModelName: "not-in-list", PurchasePriceCNY: 1})
 	assert.ErrorContains(t, err, "model name is not available")

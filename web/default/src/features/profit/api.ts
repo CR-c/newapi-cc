@@ -20,6 +20,7 @@ import { api } from '@/lib/api'
 
 import type {
   ModelCostRule,
+  ProfitCostModelGroup,
   ProfitOverview,
   ProfitQuery,
   SaveCostRuleInput,
@@ -58,6 +59,15 @@ export async function getModelCostRules(): Promise<ModelCostRule[]> {
 export async function getProfitCostModels(): Promise<string[]> {
   const response = await api.get<ApiEnvelope<string[]>>(
     '/api/profit/cost-models'
+  )
+  return unwrap(response.data)
+}
+
+export async function getProfitCostModelGroups(): Promise<
+  ProfitCostModelGroup[]
+> {
+  const response = await api.get<ApiEnvelope<ProfitCostModelGroup[]>>(
+    '/api/profit/cost-model-groups'
   )
   return unwrap(response.data)
 }

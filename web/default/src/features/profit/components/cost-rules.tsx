@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -32,11 +32,15 @@ import {
   TableRow,
 } from '@/components/ui/table'
 
-import type { ModelCostRule, SaveCostRuleInput } from '../types'
+import type {
+  ModelCostRule,
+  ProfitCostModelGroup,
+  SaveCostRuleInput,
+} from '../types'
 
 export function CostRules(props: {
   rules: ModelCostRule[]
-  modelNames: string[]
+  modelGroups: ProfitCostModelGroup[]
   isSaving: boolean
   onSave: (input: SaveCostRuleInput) => Promise<void>
 }) {
@@ -47,9 +51,34 @@ export function CostRules(props: {
     () => props.rules.filter((rule) => rule.enabled),
     [props.rules]
   )
+  const activeRuleByModel = useMemo(() => {
+    const rules = new Map<string, ModelCostRule>()
+    for (const rule of activeRules) {
+      if (!rules.has(rule.model_name)) {
+        rules.set(rule.model_name, rule)
+      }
+    }
+    return rules
+  }, [activeRules])
+  const groupsByModel = useMemo(() => {
+    const groups = new Map<string, string[]>()
+    for (const group of props.modelGroups) {
+      const groupName = group.group || t('Other')
+      for (const model of group.models) {
+        groups.set(model, [...(groups.get(model) ?? []), groupName])
+      }
+    }
+    return groups
+  }, [props.modelGroups, t])
   const modelOptions = useMemo(
-    () => props.modelNames.map((name) => ({ value: name, label: name })),
-    [props.modelNames]
+    () =>
+      [...groupsByModel.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([name, groups]) => ({
+          value: name,
+          label: `${name} (${groups.join(', ')})`,
+        })),
+    [groupsByModel]
   )
   const parsedPurchasePrice = Number(purchasePrice)
   const canSave =
@@ -60,8 +89,8 @@ export function CostRules(props: {
 
   const selectModel = (value: string) => {
     setModelName(value)
-    const activeRule = activeRules.find((rule) => rule.model_name === value)
-    setPurchasePrice(activeRule ? String(activeRule.purchase_price_cny) : '')
+    const activeRule = activeRuleByModel.get(value)
+    setPurchasePrice(activeRule ? String(activeRule.purchase_price_cny) : '0')
   }
 
   const submit = async () => {
@@ -112,6 +141,7 @@ export function CostRules(props: {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead>{t('Group')}</TableHead>
               <TableHead>{t('Model')}</TableHead>
               <TableHead className='text-right'>
                 {t('Purchase cost (CNY)')}
@@ -120,15 +150,52 @@ export function CostRules(props: {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {activeRules.map((rule) => (
-              <TableRow key={rule.id}>
-                <TableCell className='font-medium'>{rule.model_name}</TableCell>
-                <TableCell className='text-right'>
-                  ¥ {rule.purchase_price_cny.toFixed(4)}
+            {props.modelGroups.length === 0 ? (
+              <TableRow>
+                <TableCell
+                  colSpan={4}
+                  className='text-muted-foreground py-8 text-center'
+                >
+                  {t('No models available')}
                 </TableCell>
-                <TableCell className='text-right'>v{rule.version}</TableCell>
               </TableRow>
-            ))}
+            ) : (
+              props.modelGroups.map((group) => (
+                <Fragment key={`group-${group.group || 'other'}`}>
+                  <TableRow
+                    className='bg-muted/40 hover:bg-muted/40'
+                  >
+                    <TableCell
+                      colSpan={4}
+                      className='text-muted-foreground text-xs font-medium uppercase tracking-wide'
+                    >
+                      {group.group || t('Other')}
+                    </TableCell>
+                  </TableRow>
+                  {group.models.map((name) => {
+                    const rule = activeRuleByModel.get(name)
+                    return (
+                      <TableRow
+                        key={`${group.group || 'other'}-${name}`}
+                        className='cursor-pointer'
+                        onClick={() => selectModel(name)}
+                      >
+                        <TableCell className='text-muted-foreground'>
+                          {group.group || t('Other')}
+                        </TableCell>
+                        <TableCell className='font-medium'>{name}</TableCell>
+                        <TableCell className='text-right'>
+                          ¥ {(rule?.purchase_price_cny ?? 0).toFixed(4)}
+                        </TableCell>
+                        <TableCell className='text-right'>
+                          {rule ? `v${rule.version}` : t('Default')}
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </Fragment>
+              ))
+            )}
           </TableBody>
         </Table>
       </div>
