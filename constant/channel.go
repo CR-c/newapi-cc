@@ -57,6 +57,7 @@ const (
 	ChannelTypeCodex            = 57
 	ChannelTypeAdvancedCustom   = 58
 	ChannelTypeServiceInference = 59
+	ChannelTypeKyyVideo         = 60
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -122,6 +123,7 @@ var ChannelBaseURLs = []string{
 	"https://chatgpt.com",                       //57
 	"",                                          //58
 	"https://console.service-inference.ai",      //59
+	"https://zcbservice.aizfw.cn/kyyReactApiServer", //60
 }
 
 var ChannelTypeNames = map[int]string{
@@ -181,6 +183,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeCodex:            "ChatGPT Subscription (Codex)",
 	ChannelTypeAdvancedCustom:   "Advanced Custom",
 	ChannelTypeServiceInference: "Service Inference",
+	ChannelTypeKyyVideo:         "KYY Video",
 }
 
 func GetChannelTypeName(channelType int) string {

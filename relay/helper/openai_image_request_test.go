@@ -147,3 +147,28 @@ func TestGetAndValidOpenAIImageRequestNBounds(t *testing.T) {
 		require.Contains(t, err.Error(), boundErr)
 	})
 }
+
+func TestGetAndValidOpenAIImageRequestPreservesInputReference(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/v1/images/generations",
+		bytes.NewBufferString(`{
+			"model":"gpt-image-2",
+			"prompt":"use these references",
+			"input_reference":["https://example.com/one.png","data:image/png;base64,AAAA"]
+		}`),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	req, err := GetAndValidOpenAIImageRequest(c, relayconstant.RelayModeImagesGenerations)
+	require.NoError(t, err)
+	encoded, err := common.Marshal(req)
+	require.NoError(t, err)
+	require.JSONEq(t, `[
+		"https://example.com/one.png",
+		"data:image/png;base64,AAAA"
+	]`, string(req.InputReference))
+	require.Contains(t, string(encoded), `"input_reference"`)
+}

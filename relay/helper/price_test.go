@@ -10,8 +10,10 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -59,6 +61,93 @@ func TestModelPriceHelperTieredUsesPreloadedRequestInput(t *testing.T) {
 	require.Equal(t, "stream", info.TieredBillingSnapshot.EstimatedTier)
 	require.Equal(t, billing_setting.BillingModeTieredExpr, info.TieredBillingSnapshot.BillingMode)
 	require.Equal(t, common.QuotaPerUnit, info.TieredBillingSnapshot.QuotaPerUnit)
+}
+
+func TestModelPriceHelperPerCallUsesGroupModelPrice(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	originalGroupPrices := ratio_setting.GroupModelPrice2JSONString()
+	originalModelPrices := ratio_setting.ModelPrice2JSONString()
+	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupModelPriceByJSONString(originalGroupPrices))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(originalModelPrices))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))
+	})
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"video-ds-2.0":7}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"enterprise":1}`))
+	require.NoError(t, ratio_setting.UpdateGroupModelPriceByJSONString(`{
+		"enterprise": {"video-ds-2.0": 6}
+	}`))
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "video-ds-2.0",
+		UserGroup:       "enterprise",
+		UsingGroup:      "enterprise",
+	}
+
+	priceData, err := ModelPriceHelperPerCall(ctx, info)
+	require.NoError(t, err)
+	assert.Equal(t, 6.0, priceData.ModelPrice)
+	assert.Equal(t, common.QuotaFromFloat(6*common.QuotaPerUnit), priceData.Quota)
+}
+
+func TestModelPriceHelperPerCallUsesKyyGroupPricesWithoutDurationMultiplier(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	originalGroupPrices := ratio_setting.GroupModelPrice2JSONString()
+	originalModelPrices := ratio_setting.ModelPrice2JSONString()
+	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupModelPriceByJSONString(originalGroupPrices))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(originalModelPrices))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))
+	})
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{
+		"videos": 7,
+		"videos_stable": 5,
+		"videos_stable_fast": 4,
+		"videos_pro": 6.5,
+		"videos_pro_fast": 5.5
+	}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"kyy-sd":1}`))
+	require.NoError(t, ratio_setting.UpdateGroupModelPriceByJSONString(`{
+		"kyy-sd": {
+			"videos": 7,
+			"videos_stable": 5,
+			"videos_stable_fast": 4,
+			"videos_pro": 6.5,
+			"videos_pro_fast": 5.5
+		}
+	}`))
+
+	tests := map[string]float64{
+		"videos":             7,
+		"videos_stable":      5,
+		"videos_stable_fast": 4,
+		"videos_pro":         6.5,
+		"videos_pro_fast":    5.5,
+	}
+	for modelName, expectedPrice := range tests {
+		t.Run(modelName, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+
+			priceData, err := ModelPriceHelperPerCall(ctx, &relaycommon.RelayInfo{
+				OriginModelName: modelName,
+				UserGroup:       "kyy-sd",
+				UsingGroup:      "kyy-sd",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, expectedPrice, priceData.ModelPrice)
+			assert.Equal(t, common.QuotaFromFloat(expectedPrice*common.QuotaPerUnit), priceData.Quota)
+		})
+	}
 }
 
 func TestModelPriceHelperTieredPreConsumeMaxTokensFallback(t *testing.T) {

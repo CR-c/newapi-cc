@@ -226,6 +226,9 @@ func isKnownTaskField(field string) bool {
 		"resolution":      true,
 		"generate_audio":  true,
 		"watermark":       true,
+		"first_image":     true,
+		"last_image":      true,
+		"auto_face":       true,
 		"duration":        true,
 		"input_reference": true, // Sora 特有字段
 	}

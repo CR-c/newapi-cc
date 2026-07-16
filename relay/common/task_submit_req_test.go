@@ -33,3 +33,19 @@ func TestTaskSubmitReqParsesUnifiedMediaFieldsAndExplicitFalse(t *testing.T) {
 	require.NotNil(t, request.Watermark)
 	assert.False(t, *request.Watermark)
 }
+
+func TestTaskSubmitReqParsesVideoFrameFieldsAndExplicitAutoFaceFalse(t *testing.T) {
+	var request TaskSubmitReq
+	require.NoError(t, basecommon.Unmarshal([]byte(`{
+		"model":"videos",
+		"prompt":"animate",
+		"first_image":"https://example.com/first.png",
+		"last_image":"https://example.com/last.png",
+		"auto_face":false
+	}`), &request))
+
+	assert.Equal(t, "https://example.com/first.png", request.FirstImage)
+	assert.Equal(t, "https://example.com/last.png", request.LastImage)
+	require.NotNil(t, request.AutoFace)
+	assert.False(t, *request.AutoFace)
+}

@@ -19,3 +19,12 @@ func TestWriteVideoDataURLRejectsExecutableContent(t *testing.T) {
 	require.Error(t, err)
 	assert.Empty(t, recorder.Body.String())
 }
+
+func TestWriteVideoDataURLDisablesSharedCaching(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	require.NoError(t, writeVideoDataURL(context, "data:video/mp4;base64,AAAA"))
+	assert.Equal(t, "private, no-store", recorder.Header().Get("Cache-Control"))
+}

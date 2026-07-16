@@ -162,6 +162,9 @@ type RelayInfo struct {
 	UpstreamRequestBodySize int64
 
 	PriceData types.PriceData
+	// ProfitGeneration freezes the profit-analysis generation for asynchronous
+	// task submission and settlement logs. Nil keeps the normal current-generation behavior.
+	ProfitGeneration *int64
 
 	// QuotaClamp is set (non-nil) when a quota conversion saturated at the
 	// int32 bound (or NaN fallback) while computing this request's charge.
@@ -702,6 +705,9 @@ type TaskSubmitReq struct {
 	Seconds        string                 `json:"seconds,omitempty"`
 	GenerateAudio  *bool                  `json:"generate_audio,omitempty"`
 	Watermark      *bool                  `json:"watermark,omitempty"`
+	FirstImage     string                 `json:"first_image,omitempty"`
+	LastImage      string                 `json:"last_image,omitempty"`
+	AutoFace       *bool                  `json:"auto_face,omitempty"`
 	InputReference string                 `json:"input_reference,omitempty"`
 	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }

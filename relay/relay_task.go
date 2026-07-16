@@ -230,7 +230,17 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
 	if resp != nil && resp.StatusCode != http.StatusOK {
+		if info.ChannelType == constant.ChannelTypeKyyVideo {
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+			_ = resp.Body.Close()
+			return nil, service.TaskErrorWrapper(
+				fmt.Errorf("KYY video upstream request failed"),
+				"fail_to_fetch_task",
+				resp.StatusCode,
+			)
+		}
 		responseBody, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
 		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
 	}
 
@@ -556,7 +566,7 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 }
 
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
-	return &dto.TaskDto{
+	result := &dto.TaskDto{
 		ID:         task.ID,
 		CreatedAt:  task.CreatedAt,
 		UpdatedAt:  task.UpdatedAt,
@@ -578,4 +588,20 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Username:   task.Username,
 		Data:       task.Data,
 	}
+	if task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKyyVideo)) {
+		if task.Status == model.TaskStatusSuccess {
+			result.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+		}
+		var data map[string]any
+		if common.Unmarshal(result.Data, &data) == nil {
+			delete(data, "id")
+			delete(data, "video_url")
+			delete(data, "amount")
+			delete(data, "error")
+			if sanitized, err := common.Marshal(data); err == nil {
+				result.Data = sanitized
+			}
+		}
+	}
+	return result
 }

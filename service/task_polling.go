@@ -402,6 +402,7 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	}
 	info := &relaycommon.RelayInfo{}
 	info.ChannelMeta = &relaycommon.ChannelMeta{
+		ChannelType:          cacheGetChannel.Type,
 		ChannelBaseUrl:       cacheGetChannel.GetBaseURL(),
 		ChannelOtherSettings: cacheGetChannel.GetOtherSettings(),
 	}
@@ -495,7 +496,11 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
 	}
 
-	task.Data = redactVideoResponseBody(responseBody)
+	storedResponseBody := redactVideoResponseBody(responseBody)
+	if sanitizer, ok := adaptor.(interface{ SanitizeTaskData([]byte) []byte }); ok {
+		storedResponseBody = sanitizer.SanitizeTaskData(storedResponseBody)
+	}
+	task.Data = storedResponseBody
 
 	logger.LogDebug(ctx, "updateVideoSingleTask taskResult: %+v", taskResult)
 

@@ -200,6 +200,8 @@ func TestPriceDataReplaceAndApplyOtherRatios(t *testing.T) {
 
 func TestTaskBillingOtherFiltersHistoricalOtherRatios(t *testing.T) {
 	task := makeTask(1, 1, 100, 0, BillingSourceWallet, 0)
+	profitGeneration := int64(3)
+	task.PrivateData.BillingContext.ProfitGeneration = &profitGeneration
 	task.PrivateData.BillingContext.OtherRatios = map[string]float64{
 		"seconds":  2,
 		"identity": 1,
@@ -219,6 +221,7 @@ func TestTaskBillingOtherFiltersHistoricalOtherRatios(t *testing.T) {
 	assert.NotContains(t, other, "inf")
 	assert.Equal(t, "video", other["media_type"])
 	assert.Equal(t, task.TaskID, other["task_id"])
+	assert.Equal(t, int64(3), other["profit_generation"])
 }
 
 func TestLogTaskConsumptionRecordsVideoMetadata(t *testing.T) {
@@ -230,11 +233,13 @@ func TestLogTaskConsumptionRecordsVideoMetadata(t *testing.T) {
 	context, _ := gin.CreateTestContext(httptest.NewRecorder())
 	context.Request = httptest.NewRequest(http.MethodPost, "/pg/videos", nil)
 	context.Set("token_name", "playground-default")
+	profitGeneration := int64(3)
 
 	info := &relaycommon.RelayInfo{
-		UserId:          1,
-		OriginModelName: "sora-2",
-		UsingGroup:      "default",
+		UserId:           1,
+		OriginModelName:  "sora-2",
+		UsingGroup:       "default",
+		ProfitGeneration: &profitGeneration,
 		ChannelMeta: &relaycommon.ChannelMeta{
 			ChannelId: 1,
 		},
@@ -252,6 +257,7 @@ func TestLogTaskConsumptionRecordsVideoMetadata(t *testing.T) {
 	require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
 	assert.Equal(t, "video", other["media_type"])
 	assert.Equal(t, "task_media_log", other["task_id"])
+	assert.Equal(t, float64(3), other["profit_generation"])
 }
 
 func TestTaskBillingContextPriceDataFiltersMultiplier(t *testing.T) {

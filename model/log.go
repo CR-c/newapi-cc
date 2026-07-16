@@ -102,10 +102,14 @@ func createLog(log *Log) error {
 	profitEpochMutex.RLock()
 	defer profitEpochMutex.RUnlock()
 	generation, generationErr := GetProfitAnalysisGeneration()
+	recordGeneration := generation
 	ensureLogRequestId(log)
 	if generationErr == nil {
-		if err := attachProfitGeneration(log, generation); err != nil {
+		resolvedGeneration, err := attachProfitGeneration(log, generation)
+		if err != nil {
 			common.SysError("failed to attach profit generation: " + err.Error())
+		} else {
+			recordGeneration = resolvedGeneration
 		}
 	}
 	if err := LOG_DB.Create(log).Error; err != nil {
@@ -115,7 +119,7 @@ func createLog(log *Log) error {
 		common.SysError("failed to load profit generation: " + generationErr.Error())
 		return nil
 	}
-	if err := recordProfitForLog(log, false, generation); err != nil {
+	if err := recordProfitForLog(log, false, recordGeneration); err != nil {
 		common.SysError("failed to record profit: " + err.Error())
 	}
 	return nil
@@ -128,17 +132,21 @@ func createBillingLog(log *Log) error {
 	profitEpochMutex.RLock()
 	defer profitEpochMutex.RUnlock()
 	generation, generationErr := GetProfitAnalysisGeneration()
+	recordGeneration := generation
 	ensureLogRequestId(log)
 	if generationErr == nil {
-		if err := attachProfitGeneration(log, generation); err != nil {
+		resolvedGeneration, err := attachProfitGeneration(log, generation)
+		if err != nil {
 			common.SysError("failed to attach profit generation: " + err.Error())
+		} else {
+			recordGeneration = resolvedGeneration
 		}
 	}
 	if generationErr != nil {
 		common.SysError("failed to load profit generation: " + generationErr.Error())
 		return nil
 	}
-	if err := recordProfitForLog(log, false, generation); err != nil {
+	if err := recordProfitForLog(log, false, recordGeneration); err != nil {
 		common.SysError("failed to record profit: " + err.Error())
 	}
 	return nil

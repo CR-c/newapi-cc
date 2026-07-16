@@ -515,6 +515,12 @@ func RelayTask(c *gin.Context) {
 		respondTaskError(c, taskErr)
 		return
 	}
+	profitGeneration, generationErr := model.GetProfitAnalysisGeneration()
+	if generationErr != nil {
+		common.SysError("get profit analysis generation error: " + generationErr.Error())
+	} else {
+		relayInfo.ProfitGeneration = &profitGeneration
+	}
 
 	var result *relay.TaskSubmitResult
 	var taskErr *dto.TaskError
@@ -598,12 +604,13 @@ func RelayTask(c *gin.Context) {
 		task.PrivateData.TokenId = relayInfo.TokenId
 		task.PrivateData.NodeName = common.NodeName
 		task.PrivateData.BillingContext = &model.TaskBillingContext{
-			ModelPrice:      relayInfo.PriceData.ModelPrice,
-			GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,
-			ModelRatio:      relayInfo.PriceData.ModelRatio,
-			OtherRatios:     relayInfo.PriceData.OtherRatios(),
-			OriginModelName: relayInfo.OriginModelName,
-			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
+			ModelPrice:       relayInfo.PriceData.ModelPrice,
+			GroupRatio:       relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+			ModelRatio:       relayInfo.PriceData.ModelRatio,
+			OtherRatios:      relayInfo.PriceData.OtherRatios(),
+			OriginModelName:  relayInfo.OriginModelName,
+			PerCallBilling:   common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
+			ProfitGeneration: relayInfo.ProfitGeneration,
 		}
 		task.Quota = result.Quota
 		task.Data = result.TaskData
