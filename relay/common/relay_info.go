@@ -717,6 +717,8 @@ type TaskSubmitReq struct {
 	AutoFace       *bool                  `json:"auto_face,omitempty"`
 	InputReference string                 `json:"input_reference,omitempty"`
 	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+	durationSet    bool
+	secondsSet     bool
 }
 
 func (t *TaskSubmitReq) GetPrompt() string {
@@ -729,6 +731,8 @@ func (t *TaskSubmitReq) HasImage() bool {
 
 func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	type Alias TaskSubmitReq
+	t.durationSet = false
+	t.secondsSet = false
 	aux := &struct {
 		Metadata json.RawMessage `json:"metadata,omitempty"`
 		Duration json.RawMessage `json:"duration,omitempty"`
@@ -743,27 +747,48 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	}
 
 	if len(aux.Duration) > 0 {
-		var durationInt int
-		if err := common.Unmarshal(aux.Duration, &durationInt); err == nil {
-			t.Duration = durationInt
-		} else {
-			var durationStr string
-			if err := common.Unmarshal(aux.Duration, &durationStr); err == nil && durationStr != "" {
-				if v, err := strconv.Atoi(durationStr); err == nil {
-					t.Duration = v
-				}
+		switch common.GetJsonType(aux.Duration) {
+		case "null":
+		case "number":
+			t.durationSet = true
+			if err := common.Unmarshal(aux.Duration, &t.Duration); err != nil {
+				return fmt.Errorf("duration must be an integer")
 			}
+		case "string":
+			t.durationSet = true
+			var durationStr string
+			if err := common.Unmarshal(aux.Duration, &durationStr); err != nil {
+				return fmt.Errorf("duration must be an integer")
+			}
+			duration, err := strconv.Atoi(durationStr)
+			if err != nil {
+				return fmt.Errorf("duration must be an integer")
+			}
+			t.Duration = duration
+		default:
+			return fmt.Errorf("duration must be an integer")
 		}
 	}
 	if len(aux.Seconds) > 0 {
-		var secondsString string
-		if err := common.Unmarshal(aux.Seconds, &secondsString); err == nil {
-			t.Seconds = secondsString
-		} else {
-			var secondsInt int
-			if err := common.Unmarshal(aux.Seconds, &secondsInt); err == nil {
-				t.Seconds = strconv.Itoa(secondsInt)
+		switch common.GetJsonType(aux.Seconds) {
+		case "null":
+		case "number":
+			t.secondsSet = true
+			var seconds int
+			if err := common.Unmarshal(aux.Seconds, &seconds); err != nil {
+				return fmt.Errorf("seconds must be an integer")
 			}
+			t.Seconds = strconv.Itoa(seconds)
+		case "string":
+			t.secondsSet = true
+			if err := common.Unmarshal(aux.Seconds, &t.Seconds); err != nil {
+				return fmt.Errorf("seconds must be an integer")
+			}
+			if _, err := strconv.Atoi(t.Seconds); err != nil {
+				return fmt.Errorf("seconds must be an integer")
+			}
+		default:
+			return fmt.Errorf("seconds must be an integer")
 		}
 	}
 

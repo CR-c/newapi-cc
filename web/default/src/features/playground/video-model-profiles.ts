@@ -48,7 +48,9 @@ export function getVideoModelProfile(
   model: string,
   group?: string
 ): VideoModelProfile {
-  if (group === 'kyy-sd' && model === 'videos') {
+  const isKyyVideoGroup = group === 'sd-video' || group === 'kyy-sd'
+
+  if (isKyyVideoGroup && model === 'videos') {
     return {
       provider: 'kyy',
       durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
@@ -64,7 +66,7 @@ export function getVideoModelProfile(
     }
   }
   if (
-    group === 'kyy-sd' &&
+    isKyyVideoGroup &&
     (model === 'videos_stable' || model === 'videos_stable_fast')
   ) {
     return {
@@ -85,7 +87,7 @@ export function getVideoModelProfile(
     }
   }
   if (
-    group === 'kyy-sd' &&
+    isKyyVideoGroup &&
     (model === 'videos_pro' || model === 'videos_pro_fast')
   ) {
     return {
@@ -152,7 +154,10 @@ export function getVideoModelProfile(
       provider: 'service-inference',
       durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
       aspectRatios: ['1:1', '16:9', '9:16'],
-      resolutions: ['480p', '720p', '1080p', '4k'],
+      resolutions:
+        model === 'dreamina-seedance-2-0-hc'
+          ? ['480p', '720p', '1080p', '4k']
+          : ['480p', '720p'],
       maxImages: 4,
       maxVideos: 0,
       maxAudios: 0,

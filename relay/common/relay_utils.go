@@ -83,13 +83,26 @@ func validatePrompt(prompt string) *dto.TaskError {
 // overflow quota calculation into a negative charge.
 const MaxTaskDurationSeconds = 3600
 
-func validateTaskDurationBounds(req TaskSubmitReq) *dto.TaskError {
+func normalizeTaskDuration(req *TaskSubmitReq) *dto.TaskError {
+	durationSet := req.durationSet || req.Duration != 0
+	secondsSet := req.secondsSet || req.Seconds != ""
 	seconds := req.Duration
-	if seconds == 0 && req.Seconds != "" {
-		seconds, _ = strconv.Atoi(req.Seconds)
+	if secondsSet {
+		parsedSeconds, err := strconv.Atoi(req.Seconds)
+		if err != nil {
+			return createTaskError(fmt.Errorf("seconds must be an integer"), "invalid_seconds", http.StatusBadRequest, true)
+		}
+		if durationSet && req.Duration != parsedSeconds {
+			return createTaskError(fmt.Errorf("seconds and duration must match when both are provided"), "invalid_seconds", http.StatusBadRequest, true)
+		}
+		seconds = parsedSeconds
 	}
-	if seconds < 0 || seconds > MaxTaskDurationSeconds {
+	if ((durationSet || secondsSet) && seconds < 1) || seconds > MaxTaskDurationSeconds {
 		return createTaskError(fmt.Errorf("seconds must be between 1 and %d", MaxTaskDurationSeconds), "invalid_seconds", http.StatusBadRequest, true)
+	}
+	if seconds > 0 {
+		req.Duration = seconds
+		req.Seconds = strconv.Itoa(seconds)
 	}
 	return nil
 }
@@ -157,10 +170,6 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 	prompt = req.Prompt
 	model = req.Model
 	size = req.Size
-	seconds, _ = strconv.Atoi(req.Seconds)
-	if seconds == 0 {
-		seconds = req.Duration
-	}
 	if req.InputReference != "" {
 		req.Images = []string{req.InputReference}
 	} else if len(req.Images) == 0 && strings.TrimSpace(req.Image) != "" {
@@ -180,9 +189,10 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 		return taskErr
 	}
 
-	if taskErr := validateTaskDurationBounds(req); taskErr != nil {
+	if taskErr := normalizeTaskDuration(&req); taskErr != nil {
 		return taskErr
 	}
+	seconds = req.Duration
 
 	action := constant.TaskActionTextGenerate
 	if hasInputReference {
@@ -230,6 +240,7 @@ func isKnownTaskField(field string) bool {
 		"last_image":      true,
 		"auto_face":       true,
 		"duration":        true,
+		"seconds":         true,
 		"input_reference": true, // Sora 特有字段
 	}
 	return knownFields[field]
@@ -254,7 +265,7 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 		return taskErr
 	}
 
-	if taskErr := validateTaskDurationBounds(req); taskErr != nil {
+	if taskErr := normalizeTaskDuration(&req); taskErr != nil {
 		return taskErr
 	}
 

@@ -82,17 +82,10 @@ func Distribute() func(c *gin.Context) {
 					return
 				}
 				var selectGroup string
-				usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-				if usingGroup == "" {
-					usingGroup = common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-				}
-				if strings.HasPrefix(c.Request.URL.Path, "/pg/") && modelRequest.Group != "" {
-					if !service.GroupInUserUsableGroups(usingGroup, modelRequest.Group) && modelRequest.Group != usingGroup {
-						abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
-						return
-					}
-					usingGroup = modelRequest.Group
-					common.SetContextKey(c, constant.ContextKeyUsingGroup, usingGroup)
+				usingGroup, groupAllowed := resolveRequestGroup(c, modelRequest.Group)
+				if !groupAllowed {
+					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
+					return
 				}
 
 				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
@@ -161,6 +154,23 @@ func Distribute() func(c *gin.Context) {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}
+}
+
+// resolveRequestGroup keeps API key group selection authoritative for public
+// relay routes. Only playground routes may request another usable user group.
+func resolveRequestGroup(c *gin.Context, requestedGroup string) (string, bool) {
+	usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+	if usingGroup == "" {
+		usingGroup = common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+	}
+	if !strings.HasPrefix(c.Request.URL.Path, "/pg/") || requestedGroup == "" {
+		return usingGroup, true
+	}
+	if !service.GroupInUserUsableGroups(usingGroup, requestedGroup) && requestedGroup != usingGroup {
+		return usingGroup, false
+	}
+	common.SetContextKey(c, constant.ContextKeyUsingGroup, requestedGroup)
+	return requestedGroup, true
 }
 
 func relayRequestPath(path string) string {

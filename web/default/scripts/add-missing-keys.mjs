@@ -22,7 +22,7 @@ import path from 'node:path'
 const LOCALES_DIR = path.resolve('src/i18n/locales')
 
 function stableStringify(obj) {
-  return JSON.stringify(obj, null, 2) + '\n'
+  return `${JSON.stringify(obj, null, 2)}\n`
 }
 
 const newKeys = {
@@ -770,6 +770,363 @@ Object.assign(newKeys.vi, {
   'All time': 'Toàn bộ thời gian',
   'Cost Configuration': 'Cấu hình chi phí',
   'Filter by model': 'Lọc theo mô hình',
+})
+
+Object.assign(newKeys.en, {
+  'Add gift tier': 'Add gift tier',
+  'Admin consumption': 'Admin consumption',
+  'Admin cost': 'Admin cost',
+  'Balance source': 'Balance source',
+  'Balance type: Gift balance': 'Balance type: Gift balance',
+  'Configure promotional gifts for exact recharge amounts':
+    'Configure promotional gifts for exact recharge amounts',
+  'Edit gift tier': 'Edit gift tier',
+  Gift: 'Gift',
+  'Gift Amount (USD)': 'Gift Amount (USD)',
+  'Gift Quota': 'Gift Quota',
+  'Gift balance': 'Gift balance',
+  'Gift balance is promotional credit and produces no revenue.':
+    'Gift balance is promotional credit and produces no revenue.',
+  'Gift balance produces no recognized revenue when spent.':
+    'Gift balance produces no recognized revenue when spent.',
+  'Gift consumption': 'Gift consumption',
+  'Gift cost': 'Gift cost',
+  'Gift quota map by exact recharge amount (JSON object)':
+    'Gift quota map by exact recharge amount (JSON object)',
+  'Gift {{bonus}} · Total {{total}}': 'Gift {{bonus}} · Total {{total}}',
+  'Legacy unattributed': 'Legacy unattributed',
+  'Legacy unattributed consumption': 'Legacy unattributed consumption',
+  'No gift tiers configured.': 'No gift tiers configured.',
+  'Nominal consumption': 'Nominal consumption',
+  'Optional promotional quota credited in addition to the paid quota.':
+    'Optional promotional quota credited in addition to the paid quota.',
+  'Paid balance': 'Paid balance',
+  Principal: 'Principal',
+  'Recharge gift': 'Recharge gift',
+  'Recognized revenue': 'Recognized revenue',
+  'Redemption codes add gift balance. Gift balance is promotional credit and does not count as paid recharge.':
+    'Redemption codes add gift balance. Gift balance is promotional credit and does not count as paid recharge.',
+  'Redemption codes always create promotional gift balance and never paid balance.':
+    'Redemption codes always create promotional gift balance and never paid balance.',
+  'Set the gift quota credited for an exact recharge amount.':
+    'Set the gift quota credited for an exact recharge amount.',
+  'The gift applies only when this exact amount is recharged.':
+    'The gift applies only when this exact amount is recharged.',
+  'Total credited': 'Total credited',
+  'Use paid balance only after confirming payment was received.':
+    'Use paid balance only after confirming payment was received.',
+  'e.g., 50000': 'e.g., 50000',
+  gift: 'gift',
+})
+Object.assign(newKeys.zh, {
+  'Add gift tier': '添加赠送档位',
+  'Admin consumption': '管理员内部消费',
+  'Admin cost': '管理员使用成本',
+  'Balance source': '余额来源',
+  'Balance type: Gift balance': '余额类型：赠送余额',
+  'Configure promotional gifts for exact recharge amounts':
+    '按精确充值金额配置赠送额度',
+  'Edit gift tier': '编辑赠送档位',
+  Gift: '赠送',
+  'Gift Amount (USD)': '赠送金额（美元）',
+  'Gift Quota': '赠送额度',
+  'Gift balance': '赠送余额',
+  'Gift balance is promotional credit and produces no revenue.':
+    '赠送余额属于营销额度，不产生收入。',
+  'Gift balance produces no recognized revenue when spent.':
+    '赠送余额消费时不确认任何收入。',
+  'Gift consumption': '赠送额度消费',
+  'Gift cost': '赠送额度成本',
+  'Gift quota map by exact recharge amount (JSON object)':
+    '按精确充值金额配置赠送额度（JSON 对象）',
+  'Gift {{bonus}} · Total {{total}}': '赠送 {{bonus}} · 总到账 {{total}}',
+  'Legacy unattributed': '历史未归因',
+  'Legacy unattributed consumption': '历史未归因消费',
+  'No gift tiers configured.': '尚未配置赠送档位。',
+  'Nominal consumption': '名义消费额',
+  'Optional promotional quota credited in addition to the paid quota.':
+    '可选。除付费额度外额外到账的营销赠送额度。',
+  'Paid balance': '付费余额',
+  Principal: '充值本金',
+  'Recharge gift': '充值赠送',
+  'Recognized revenue': '确认收入',
+  'Redemption codes add gift balance. Gift balance is promotional credit and does not count as paid recharge.':
+    '兑换码到账的是赠送余额，属于营销额度，不计为付费充值。',
+  'Redemption codes always create promotional gift balance and never paid balance.':
+    '兑换码固定生成营销赠送余额，不会生成付费余额。',
+  'Set the gift quota credited for an exact recharge amount.':
+    '设置精确充值金额对应的赠送额度。',
+  'The gift applies only when this exact amount is recharged.':
+    '仅充值该精确金额时发放赠送额度。',
+  'Total credited': '总到账',
+  'Use paid balance only after confirming payment was received.':
+    '仅在确认已收到款项后选择付费余额。',
+  'e.g., 50000': '例如 50000',
+  gift: '赠送',
+})
+Object.assign(newKeys['zh-TW'], {
+  'Add gift tier': '新增贈送檔位',
+  'Admin consumption': '管理員內部消費',
+  'Admin cost': '管理員使用成本',
+  'Balance source': '餘額來源',
+  'Balance type: Gift balance': '餘額類型：贈送餘額',
+  'Configure promotional gifts for exact recharge amounts':
+    '依精確儲值金額設定贈送額度',
+  'Edit gift tier': '編輯贈送檔位',
+  Gift: '贈送',
+  'Gift Amount (USD)': '贈送金額（美元）',
+  'Gift Quota': '贈送額度',
+  'Gift balance': '贈送餘額',
+  'Gift balance is promotional credit and produces no revenue.':
+    '贈送餘額屬於行銷額度，不產生收入。',
+  'Gift balance produces no recognized revenue when spent.':
+    '贈送餘額消費時不確認任何收入。',
+  'Gift consumption': '贈送額度消費',
+  'Gift cost': '贈送額度成本',
+  'Gift quota map by exact recharge amount (JSON object)':
+    '依精確儲值金額設定贈送額度（JSON 物件）',
+  'Gift {{bonus}} · Total {{total}}': '贈送 {{bonus}} · 總入帳 {{total}}',
+  'Legacy unattributed': '歷史未歸因',
+  'Legacy unattributed consumption': '歷史未歸因消費',
+  'No gift tiers configured.': '尚未設定贈送檔位。',
+  'Nominal consumption': '名義消費額',
+  'Optional promotional quota credited in addition to the paid quota.':
+    '選填。除付費額度外額外入帳的行銷贈送額度。',
+  'Paid balance': '付費餘額',
+  Principal: '儲值本金',
+  'Recharge gift': '儲值贈送',
+  'Recognized revenue': '確認收入',
+  'Redemption codes add gift balance. Gift balance is promotional credit and does not count as paid recharge.':
+    '兌換碼入帳的是贈送餘額，屬於行銷額度，不計為付費儲值。',
+  'Redemption codes always create promotional gift balance and never paid balance.':
+    '兌換碼固定產生行銷贈送餘額，不會產生付費餘額。',
+  'Set the gift quota credited for an exact recharge amount.':
+    '設定精確儲值金額對應的贈送額度。',
+  'The gift applies only when this exact amount is recharged.':
+    '僅儲值此精確金額時發放贈送額度。',
+  'Total credited': '總入帳',
+  'Use paid balance only after confirming payment was received.':
+    '僅在確認已收到款項後選擇付費餘額。',
+  'e.g., 50000': '例如 50000',
+  gift: '贈送',
+})
+Object.assign(newKeys.fr, {
+  'Add gift tier': 'Ajouter un palier bonus',
+  'Admin consumption': 'Consommation administrateur',
+  'Admin cost': 'Coût administrateur',
+  'Balance source': 'Origine du solde',
+  'Balance type: Gift balance': 'Type de solde : solde offert',
+  'Configure promotional gifts for exact recharge amounts':
+    'Configurer les bonus pour des montants de recharge exacts',
+  'Edit gift tier': 'Modifier le palier bonus',
+  Gift: 'Bonus',
+  'Gift Amount (USD)': 'Montant offert (USD)',
+  'Gift Quota': 'Quota offert',
+  'Gift balance': 'Solde offert',
+  'Gift balance is promotional credit and produces no revenue.':
+    'Le solde offert est un crédit promotionnel et ne génère aucun revenu.',
+  'Gift balance produces no recognized revenue when spent.':
+    'La dépense du solde offert ne génère aucun revenu comptabilisé.',
+  'Gift consumption': 'Consommation offerte',
+  'Gift cost': 'Coût du solde offert',
+  'Gift quota map by exact recharge amount (JSON object)':
+    'Quotas offerts par montant exact de recharge (objet JSON)',
+  'Gift {{bonus}} · Total {{total}}': 'Bonus {{bonus}} · Total {{total}}',
+  'Legacy unattributed': 'Historique non attribué',
+  'Legacy unattributed consumption': 'Consommation historique non attribuée',
+  'No gift tiers configured.': 'Aucun palier bonus configuré.',
+  'Nominal consumption': 'Consommation nominale',
+  'Optional promotional quota credited in addition to the paid quota.':
+    'Quota promotionnel facultatif crédité en plus du quota payé.',
+  'Paid balance': 'Solde payé',
+  Principal: 'Montant principal',
+  'Recharge gift': 'Bonus de recharge',
+  'Recognized revenue': 'Revenu comptabilisé',
+  'Redemption codes add gift balance. Gift balance is promotional credit and does not count as paid recharge.':
+    "Les codes ajoutent un solde offert promotionnel qui n'est pas compté comme recharge payée.",
+  'Redemption codes always create promotional gift balance and never paid balance.':
+    'Les codes créent toujours un solde promotionnel offert, jamais un solde payé.',
+  'Set the gift quota credited for an exact recharge amount.':
+    'Définissez le quota offert pour un montant de recharge exact.',
+  'The gift applies only when this exact amount is recharged.':
+    "Le bonus s'applique uniquement à ce montant de recharge exact.",
+  'Total credited': 'Total crédité',
+  'Use paid balance only after confirming payment was received.':
+    'Utilisez le solde payé uniquement après confirmation de la réception du paiement.',
+  'e.g., 50000': 'p. ex. 50000',
+  gift: 'offert',
+})
+Object.assign(newKeys.ja, {
+  'Add gift tier': '特典枠を追加',
+  'Admin consumption': '管理者の内部消費',
+  'Admin cost': '管理者利用コスト',
+  'Balance source': '残高の種別',
+  'Balance type: Gift balance': '残高タイプ：特典残高',
+  'Configure promotional gifts for exact recharge amounts':
+    '指定したチャージ金額ごとに特典を設定',
+  'Edit gift tier': '特典枠を編集',
+  Gift: '特典',
+  'Gift Amount (USD)': '特典額（USD）',
+  'Gift Quota': '特典クォータ',
+  'Gift balance': '特典残高',
+  'Gift balance is promotional credit and produces no revenue.':
+    '特典残高は販促クレジットであり、売上にはなりません。',
+  'Gift balance produces no recognized revenue when spent.':
+    '特典残高の利用は売上として認識されません。',
+  'Gift consumption': '特典残高の消費',
+  'Gift cost': '特典利用コスト',
+  'Gift quota map by exact recharge amount (JSON object)':
+    '指定チャージ金額ごとの特典クォータ（JSON オブジェクト）',
+  'Gift {{bonus}} · Total {{total}}': '特典 {{bonus}} · 合計 {{total}}',
+  'Legacy unattributed': '過去分・未帰属',
+  'Legacy unattributed consumption': '過去の未帰属消費',
+  'No gift tiers configured.': '特典枠は設定されていません。',
+  'Nominal consumption': '名目消費額',
+  'Optional promotional quota credited in addition to the paid quota.':
+    '任意。支払済みクォータに加えて付与する販促クォータです。',
+  'Paid balance': '支払済み残高',
+  Principal: 'チャージ元金',
+  'Recharge gift': 'チャージ特典',
+  'Recognized revenue': '認識売上',
+  'Redemption codes add gift balance. Gift balance is promotional credit and does not count as paid recharge.':
+    '引換コードは特典残高を追加します。販促クレジットのため、有料チャージには含まれません。',
+  'Redemption codes always create promotional gift balance and never paid balance.':
+    '引換コードは常に販促用の特典残高を作成し、支払済み残高は作成しません。',
+  'Set the gift quota credited for an exact recharge amount.':
+    '指定したチャージ金額に付与する特典クォータを設定します。',
+  'The gift applies only when this exact amount is recharged.':
+    'この指定金額をチャージした場合にのみ特典が適用されます。',
+  'Total credited': '合計付与額',
+  'Use paid balance only after confirming payment was received.':
+    '入金確認後にのみ支払済み残高を選択してください。',
+  'e.g., 50000': '例：50000',
+  gift: '特典',
+})
+Object.assign(newKeys.ru, {
+  'Add gift tier': 'Добавить уровень бонуса',
+  'Admin consumption': 'Внутреннее потребление администратора',
+  'Admin cost': 'Затраты администратора',
+  'Balance source': 'Источник баланса',
+  'Balance type: Gift balance': 'Тип баланса: подарочный',
+  'Configure promotional gifts for exact recharge amounts':
+    'Настройте бонусы для точных сумм пополнения',
+  'Edit gift tier': 'Изменить уровень бонуса',
+  Gift: 'Бонус',
+  'Gift Amount (USD)': 'Сумма бонуса (USD)',
+  'Gift Quota': 'Подарочная квота',
+  'Gift balance': 'Подарочный баланс',
+  'Gift balance is promotional credit and produces no revenue.':
+    'Подарочный баланс является рекламным кредитом и не приносит дохода.',
+  'Gift balance produces no recognized revenue when spent.':
+    'Расход подарочного баланса не создаёт признанного дохода.',
+  'Gift consumption': 'Расход подарочного баланса',
+  'Gift cost': 'Стоимость подарочного баланса',
+  'Gift quota map by exact recharge amount (JSON object)':
+    'Подарочные квоты по точной сумме пополнения (объект JSON)',
+  'Gift {{bonus}} · Total {{total}}': 'Бонус {{bonus}} · Итого {{total}}',
+  'Legacy unattributed': 'Историческое без атрибуции',
+  'Legacy unattributed consumption': 'Историческое потребление без атрибуции',
+  'No gift tiers configured.': 'Уровни бонусов не настроены.',
+  'Nominal consumption': 'Номинальное потребление',
+  'Optional promotional quota credited in addition to the paid quota.':
+    'Необязательная рекламная квота сверх оплаченной квоты.',
+  'Paid balance': 'Оплаченный баланс',
+  Principal: 'Основная сумма',
+  'Recharge gift': 'Бонус за пополнение',
+  'Recognized revenue': 'Признанный доход',
+  'Redemption codes add gift balance. Gift balance is promotional credit and does not count as paid recharge.':
+    'Коды пополняют подарочный рекламный баланс, который не считается платным пополнением.',
+  'Redemption codes always create promotional gift balance and never paid balance.':
+    'Коды всегда создают подарочный рекламный баланс, а не оплаченный.',
+  'Set the gift quota credited for an exact recharge amount.':
+    'Задайте подарочную квоту для точной суммы пополнения.',
+  'The gift applies only when this exact amount is recharged.':
+    'Бонус применяется только при пополнении на эту точную сумму.',
+  'Total credited': 'Всего зачислено',
+  'Use paid balance only after confirming payment was received.':
+    'Выбирайте оплаченный баланс только после подтверждения получения платежа.',
+  'e.g., 50000': 'например, 50000',
+  gift: 'бонус',
+})
+Object.assign(newKeys.vi, {
+  'Add gift tier': 'Thêm mức tặng',
+  'Admin consumption': 'Mức sử dụng nội bộ của quản trị viên',
+  'Admin cost': 'Chi phí quản trị viên',
+  'Balance source': 'Nguồn số dư',
+  'Balance type: Gift balance': 'Loại số dư: số dư tặng',
+  'Configure promotional gifts for exact recharge amounts':
+    'Cấu hình quà tặng theo số tiền nạp chính xác',
+  'Edit gift tier': 'Sửa mức tặng',
+  Gift: 'Tặng',
+  'Gift Amount (USD)': 'Số tiền tặng (USD)',
+  'Gift Quota': 'Hạn mức tặng',
+  'Gift balance': 'Số dư tặng',
+  'Gift balance is promotional credit and produces no revenue.':
+    'Số dư tặng là tín dụng khuyến mại và không tạo doanh thu.',
+  'Gift balance produces no recognized revenue when spent.':
+    'Chi tiêu số dư tặng không tạo doanh thu được ghi nhận.',
+  'Gift consumption': 'Mức sử dụng số dư tặng',
+  'Gift cost': 'Chi phí số dư tặng',
+  'Gift quota map by exact recharge amount (JSON object)':
+    'Hạn mức tặng theo số tiền nạp chính xác (đối tượng JSON)',
+  'Gift {{bonus}} · Total {{total}}': 'Tặng {{bonus}} · Tổng {{total}}',
+  'Legacy unattributed': 'Dữ liệu cũ chưa phân bổ',
+  'Legacy unattributed consumption': 'Mức sử dụng cũ chưa phân bổ',
+  'No gift tiers configured.': 'Chưa cấu hình mức tặng.',
+  'Nominal consumption': 'Mức tiêu dùng danh nghĩa',
+  'Optional promotional quota credited in addition to the paid quota.':
+    'Hạn mức khuyến mại tùy chọn được cộng thêm ngoài hạn mức đã thanh toán.',
+  'Paid balance': 'Số dư đã thanh toán',
+  Principal: 'Tiền nạp gốc',
+  'Recharge gift': 'Quà tặng nạp tiền',
+  'Recognized revenue': 'Doanh thu được ghi nhận',
+  'Redemption codes add gift balance. Gift balance is promotional credit and does not count as paid recharge.':
+    'Mã đổi thưởng cộng số dư tặng khuyến mại và không được tính là khoản nạp đã thanh toán.',
+  'Redemption codes always create promotional gift balance and never paid balance.':
+    'Mã đổi thưởng luôn tạo số dư tặng khuyến mại, không tạo số dư đã thanh toán.',
+  'Set the gift quota credited for an exact recharge amount.':
+    'Đặt hạn mức tặng cho một số tiền nạp chính xác.',
+  'The gift applies only when this exact amount is recharged.':
+    'Quà tặng chỉ áp dụng khi nạp đúng số tiền này.',
+  'Total credited': 'Tổng cộng vào',
+  'Use paid balance only after confirming payment was received.':
+    'Chỉ dùng số dư đã thanh toán sau khi xác nhận đã nhận tiền.',
+  'e.g., 50000': 'ví dụ: 50000',
+  gift: 'tặng',
+})
+
+Object.assign(newKeys.en, {
+  'Amount gift must be a JSON object': 'Amount gift must be a JSON object',
+  'Gift quota cannot be negative': 'Gift quota cannot be negative',
+})
+Object.assign(newKeys.zh, {
+  'Amount gift must be a JSON object': '充值赠送必须是 JSON 对象',
+  'Gift quota cannot be negative': '赠送额度不能为负数',
+})
+Object.assign(newKeys['zh-TW'], {
+  'Amount gift must be a JSON object': '儲值贈送必須是 JSON 物件',
+  'Gift quota cannot be negative': '贈送額度不能為負數',
+})
+Object.assign(newKeys.fr, {
+  'Amount gift must be a JSON object':
+    'Les bonus par montant doivent être un objet JSON',
+  'Gift quota cannot be negative': 'Le quota offert ne peut pas être négatif',
+})
+Object.assign(newKeys.ja, {
+  'Amount gift must be a JSON object':
+    'チャージ特典は JSON オブジェクトで指定してください',
+  'Gift quota cannot be negative': '特典クォータを負の値にはできません',
+})
+Object.assign(newKeys.ru, {
+  'Amount gift must be a JSON object':
+    'Бонусы по суммам должны быть объектом JSON',
+  'Gift quota cannot be negative':
+    'Подарочная квота не может быть отрицательной',
+})
+Object.assign(newKeys.vi, {
+  'Amount gift must be a JSON object':
+    'Quà tặng theo số tiền phải là một đối tượng JSON',
+  'Gift quota cannot be negative': 'Hạn mức tặng không được âm',
 })
 
 async function main() {

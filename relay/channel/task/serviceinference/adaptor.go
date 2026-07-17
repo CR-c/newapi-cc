@@ -41,15 +41,17 @@ type requestPayload struct {
 }
 type taskEnvelope struct {
 	Task struct {
-		ID      string   `json:"id"`
-		Status  string   `json:"status"`
-		Outputs []string `json:"outputs"`
-		Error   any      `json:"error"`
-		Usage   struct {
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
-		} `json:"usage"`
+		ID      string    `json:"id"`
+		Status  string    `json:"status"`
+		Outputs []string  `json:"outputs"`
+		Error   any       `json:"error"`
+		Usage   taskUsage `json:"usage"`
 	} `json:"task"`
+}
+
+type taskUsage struct {
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
 type assetResponse struct {
@@ -115,8 +117,30 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			http.StatusBadRequest,
 		)
 	}
+	modelName := info.OriginModelName
+	if info.ChannelMeta != nil && info.UpstreamModelName != "" {
+		modelName = info.UpstreamModelName
+	}
+	if modelName == "" {
+		modelName = req.Model
+	}
+	resolution := strings.ToLower(taskResolution(req))
+	if resolution != "" {
+		allowedResolution := resolution == "480p" || resolution == "720p"
+		if modelName == "dreamina-seedance-2-0-hc" {
+			allowedResolution = allowedResolution || resolution == "1080p" || resolution == "4k"
+		}
+		if !allowedResolution {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("resolution %s is not supported by %s", resolution, modelName),
+				"invalid_resolution",
+				http.StatusBadRequest,
+			)
+		}
+	}
 	req.Duration = duration
 	req.Seconds = ""
+	req.Resolution = resolution
 	c.Set("task_request", req)
 	return nil
 }
@@ -292,7 +316,7 @@ func (a *TaskAdaptor) createImageAsset(c *gin.Context, info *relaycommon.RelayIn
 		return "", err
 	}
 	if !result.Success || result.Data.BaseResp.StatusCode != 0 || result.Data.ID == "" {
-		return "", fmt.Errorf("asset upload failed: %s", result.Data.BaseResp.StatusMsg)
+		return "", errors.New("asset upload failed")
 	}
 	return result.Data.ID, nil
 }
@@ -318,7 +342,26 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	out.CreatedAt = time.Now().Unix()
 	out.Model = info.OriginModelName
 	c.JSON(http.StatusOK, out)
-	return task.Task.ID, b, nil
+	return task.Task.ID, a.SanitizeTaskData(b), nil
+}
+
+func (a *TaskAdaptor) SanitizeTaskData(body []byte) []byte {
+	var upstream taskEnvelope
+	safe := struct {
+		Task struct {
+			Status string     `json:"status,omitempty"`
+			Usage  *taskUsage `json:"usage,omitempty"`
+		} `json:"task"`
+	}{}
+	if err := common.Unmarshal(body, &upstream); err == nil {
+		safe.Task.Status = upstream.Task.Status
+		safe.Task.Usage = &upstream.Task.Usage
+	}
+	data, err := common.Marshal(safe)
+	if err != nil {
+		return []byte(`{"task":{}}`)
+	}
+	return data
 }
 func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy string) (*http.Response, error) {
 	id, ok := body["task_id"].(string)
@@ -364,5 +407,15 @@ func (a *TaskAdaptor) GetModelList() []string {
 }
 func (a *TaskAdaptor) GetChannelName() string { return "service-inference" }
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
-	return common.Marshal(task.ToOpenAIVideo())
+	response := task.ToOpenAIVideo()
+	if task.Status == model.TaskStatusSuccess {
+		response.SetMetadata("url", taskcommon.BuildProxyURL(task.TaskID))
+	}
+	if task.Status == model.TaskStatusFailure {
+		response.Error = &dto.OpenAIVideoError{
+			Code:    "task_failed",
+			Message: "Video generation failed",
+		}
+	}
+	return common.Marshal(response)
 }

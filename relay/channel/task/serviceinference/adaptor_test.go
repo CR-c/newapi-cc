@@ -63,6 +63,29 @@ func TestBuildRequestBodyUploadsImagesAndPreservesOptionalParameters(t *testing.
 	assert.Equal(t, "reference_image", payload.Content[1].Role)
 }
 
+func TestBuildRequestBodyHidesAssetUploadFailureDetails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"success":false,"data":{"base_resp":{"status_code":500,"status_msg":"request-id secret-upstream-host"}}}`))
+	}))
+	defer server.Close()
+
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Set("task_request", relaycommon.TaskSubmitReq{
+		Model: "dreamina-seedance-2-0-hc", Prompt: "animate", Duration: 5,
+		Images: []string{"https://example.com/reference.png"},
+	})
+	adaptor := &TaskAdaptor{baseURL: server.URL, apiKey: "test-key"}
+
+	_, err := adaptor.BuildRequestBody(context, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "dreamina-seedance-2-0-hc"},
+	})
+
+	require.EqualError(t, err, "asset upload failed")
+	assert.NotContains(t, err.Error(), "request-id")
+	assert.NotContains(t, err.Error(), "secret-upstream-host")
+}
+
 func TestBillingRatio(t *testing.T) {
 	tests := []struct {
 		model      string
@@ -166,6 +189,127 @@ func TestValidateRequestEnforcesServiceInferenceDuration(t *testing.T) {
 				return
 			}
 			require.Nil(t, taskErr)
+		})
+	}
+}
+
+func TestValidateRequestEnforcesResolutionByModel(t *testing.T) {
+	tests := []struct {
+		name       string
+		model      string
+		resolution string
+		wantError  string
+	}{
+		{name: "fast rejects 1080p", model: "dreamina-seedance-2-0-fast-hc", resolution: "1080p", wantError: "resolution"},
+		{name: "mini rejects 4k", model: "dreamina-seedance-2-0-mini-hc", resolution: "4k", wantError: "resolution"},
+		{name: "fast accepts 720p", model: "dreamina-seedance-2-0-fast-hc", resolution: "720p"},
+		{name: "mini accepts 480p", model: "dreamina-seedance-2-0-mini-hc", resolution: "480p"},
+		{name: "full model accepts 1080p", model: "dreamina-seedance-2-0-hc", resolution: "1080p"},
+		{name: "full model accepts 4k", model: "dreamina-seedance-2-0-hc", resolution: "4k"},
+		{name: "full model normalizes 4K", model: "dreamina-seedance-2-0-hc", resolution: "4K"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			context, _ := gin.CreateTestContext(httptest.NewRecorder())
+			context.Request = httptest.NewRequest(
+				http.MethodPost,
+				"/v1/videos",
+				strings.NewReader(`{"model":"`+tt.model+`","prompt":"test","seconds":4,"resolution":"`+tt.resolution+`"}`),
+			)
+			context.Request.Header.Set("Content-Type", "application/json")
+			info := &relaycommon.RelayInfo{
+				OriginModelName: tt.model,
+				ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: tt.model},
+				TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+			}
+
+			taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(context, info)
+			if tt.wantError == "" {
+				require.Nil(t, taskErr)
+				request, err := relaycommon.GetTaskRequest(context)
+				require.NoError(t, err)
+				assert.Equal(t, strings.ToLower(tt.resolution), request.Resolution)
+				return
+			}
+			require.NotNil(t, taskErr)
+			assert.Contains(t, taskErr.Message, tt.wantError)
+		})
+	}
+}
+
+func TestDoResponseHidesServiceInferenceUpstreamIdentifiers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	response := &http.Response{
+		Body: io.NopCloser(strings.NewReader(`{
+			"task": {
+				"id": "upstream-task-id",
+				"status": "queued",
+				"outputs": ["https://storage.example/result.mp4"],
+				"error": "internal upstream detail",
+				"usage": {"completion_tokens": 12, "total_tokens": 34}
+			}
+		}`)),
+	}
+
+	upstreamID, taskData, taskErr := (&TaskAdaptor{}).DoResponse(context, response, &relaycommon.RelayInfo{
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
+		OriginModelName: "dreamina-seedance-2-0-hc",
+	})
+
+	require.Nil(t, taskErr)
+	assert.Equal(t, "upstream-task-id", upstreamID)
+	assert.NotContains(t, string(taskData), "upstream-task-id")
+	assert.NotContains(t, string(taskData), "storage.example")
+	assert.NotContains(t, string(taskData), "internal upstream detail")
+	assert.Contains(t, string(taskData), `"status":"queued"`)
+	assert.Contains(t, string(taskData), `"total_tokens":34`)
+	assert.NotContains(t, recorder.Body.String(), "upstream-task-id")
+	assert.Contains(t, recorder.Body.String(), "task_public")
+}
+
+func TestSanitizeTaskDataFailsClosedForInvalidJSON(t *testing.T) {
+	sanitized := (&TaskAdaptor{}).SanitizeTaskData([]byte(`upstream-task-id https://storage.example/signed-result.mp4`))
+
+	require.JSONEq(t, `{"task":{}}`, string(sanitized))
+	assert.NotContains(t, string(sanitized), "upstream-task-id")
+	assert.NotContains(t, string(sanitized), "storage.example")
+}
+
+func TestConvertToOpenAIVideoHidesServiceInferenceResultDetails(t *testing.T) {
+	tests := []struct {
+		name string
+		task *model.Task
+	}{
+		{
+			name: "success uses content proxy",
+			task: &model.Task{
+				TaskID: "task_public", Status: model.TaskStatusSuccess,
+				PrivateData: model.TaskPrivateData{ResultURL: "https://storage.example/signed-result.mp4"},
+			},
+		},
+		{
+			name: "failure hides upstream reason",
+			task: &model.Task{
+				TaskID: "task_public", Status: model.TaskStatusFailure,
+				FailReason: "upstream internal stack detail",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := (&TaskAdaptor{}).ConvertToOpenAIVideo(tt.task)
+			require.NoError(t, err)
+			assert.NotContains(t, string(data), "storage.example")
+			assert.NotContains(t, string(data), "upstream internal stack detail")
+			if tt.task.Status == model.TaskStatusSuccess {
+				assert.Contains(t, string(data), "/v1/videos/task_public/content")
+			} else {
+				assert.Contains(t, string(data), "Video generation failed")
+			}
 		})
 	}
 }

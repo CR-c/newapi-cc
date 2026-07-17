@@ -230,18 +230,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
 	if resp != nil && resp.StatusCode != http.StatusOK {
-		if info.ChannelType == constant.ChannelTypeKyyVideo {
-			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
-			_ = resp.Body.Close()
-			return nil, service.TaskErrorWrapper(
-				fmt.Errorf("KYY video upstream request failed"),
-				"fail_to_fetch_task",
-				resp.StatusCode,
-			)
-		}
-		responseBody, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
+		return nil, taskSubmitHTTPError(resp, info.ChannelType)
 	}
 
 	// 10. 返回 OtherRatios 给下游（header 必须在 DoResponse 写 body 之前设置）
@@ -275,6 +264,21 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		Platform:       platform,
 		Quota:          finalQuota,
 	}, nil
+}
+
+func taskSubmitHTTPError(resp *http.Response, channelType int) *dto.TaskError {
+	if channelType == constant.ChannelTypeKyyVideo || channelType == constant.ChannelTypeServiceInference {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+		_ = resp.Body.Close()
+		message := "Video upstream request failed"
+		if channelType == constant.ChannelTypeKyyVideo {
+			message = "KYY video upstream request failed"
+		}
+		return service.TaskErrorWrapper(errors.New(message), "fail_to_fetch_task", resp.StatusCode)
+	}
+	responseBody, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	return service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。
@@ -588,9 +592,34 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Username:   task.Username,
 		Data:       task.Data,
 	}
+	isPrivateVideoPlatform := task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeServiceInference)) ||
+		task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKyyVideo))
+	if isPrivateVideoPlatform {
+		safeProperties := task.Properties
+		safeProperties.UpstreamModelName = ""
+		result.Properties = safeProperties
+	}
+	if sanitizer, ok := GetTaskAdaptor(task.Platform).(interface{ SanitizeTaskData([]byte) []byte }); ok {
+		if sanitized := sanitizer.SanitizeTaskData(result.Data); sanitized != nil {
+			result.Data = sanitized
+		}
+	}
+	if task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeServiceInference)) {
+		if task.Status == model.TaskStatusSuccess {
+			result.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+		}
+		if task.Status == model.TaskStatusFailure {
+			result.FailReason = "Video generation failed"
+			result.ResultURL = ""
+		}
+	}
 	if task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKyyVideo)) {
 		if task.Status == model.TaskStatusSuccess {
 			result.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+		}
+		if task.Status == model.TaskStatusFailure {
+			result.FailReason = "Video generation failed"
+			result.ResultURL = ""
 		}
 		var data map[string]any
 		if common.Unmarshal(result.Data, &data) == nil {

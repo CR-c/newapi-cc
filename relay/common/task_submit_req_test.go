@@ -49,3 +49,32 @@ func TestTaskSubmitReqParsesVideoFrameFieldsAndExplicitAutoFaceFalse(t *testing.
 	require.NotNil(t, request.AutoFace)
 	assert.False(t, *request.AutoFace)
 }
+
+func TestTaskSubmitReqRejectsInvalidDurationTypes(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "seconds integer overflow", body: `{"seconds":18446744073709551616}`},
+		{name: "seconds non numeric string", body: `{"seconds":"ten"}`},
+		{name: "duration decimal", body: `{"duration":1.5}`},
+		{name: "duration boolean", body: `{"duration":true}`},
+		{name: "duration object", body: `{"duration":{"value":10}}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var request TaskSubmitReq
+			err := basecommon.Unmarshal([]byte(tt.body), &request)
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), "18446744073709551616")
+		})
+	}
+}
+
+func TestTaskSubmitReqAllowsNullDurationAliases(t *testing.T) {
+	var request TaskSubmitReq
+	require.NoError(t, basecommon.Unmarshal([]byte(`{"duration":null,"seconds":null}`), &request))
+	assert.Zero(t, request.Duration)
+	assert.Empty(t, request.Seconds)
+}

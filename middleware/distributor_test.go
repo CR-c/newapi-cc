@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -33,6 +35,32 @@ func TestGetModelRequestRecognizesPlaygroundVideos(t *testing.T) {
 	relayMode, exists := context.Get("relay_mode")
 	require.True(t, exists)
 	assert.Equal(t, relayconstant.RelayModeVideoSubmit, relayMode)
+}
+
+func TestResolveRequestGroupKeepsTokenGroupForExternalVideoRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/v1/videos",
+		bytes.NewBufferString(`{"model":"videos","group":"video-dddd","prompt":"test"}`),
+	)
+	context.Request.Header.Set("Content-Type", "application/json")
+	common.SetContextKey(context, constant.ContextKeyTokenGroup, "sd-video")
+	common.SetContextKey(context, constant.ContextKeyUsingGroup, "sd-video")
+
+	request, shouldSelectChannel, err := getModelRequest(context)
+	require.NoError(t, err)
+	require.NotNil(t, request)
+	assert.True(t, shouldSelectChannel)
+	assert.Equal(t, "video-dddd", request.Group)
+
+	usingGroup, allowed := resolveRequestGroup(context, request.Group)
+
+	assert.True(t, allowed)
+	assert.Equal(t, "sd-video", usingGroup)
+	assert.Equal(t, "sd-video", common.GetContextKeyString(context, constant.ContextKeyTokenGroup))
+	assert.Equal(t, "sd-video", common.GetContextKeyString(context, constant.ContextKeyUsingGroup))
 }
 
 func TestGetModelRequestRecognizesPlaygroundImageGenerationGroup(t *testing.T) {

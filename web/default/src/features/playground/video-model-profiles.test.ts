@@ -4,6 +4,15 @@ import { describe, test } from 'node:test'
 import { getVideoModelProfile } from './video-model-profiles'
 
 describe('KYY video model profiles', () => {
+  test('sd-video uses the KYY model capabilities', () => {
+    const profile = getVideoModelProfile('videos', 'sd-video')
+
+    assert.equal(profile.provider, 'kyy')
+    assert.equal(profile.maxImages, 9)
+    assert.equal(profile.maxVideos, 3)
+    assert.equal(profile.maxAudios, 3)
+  })
+
   test('videos exposes nine images three videos and three audios', () => {
     const profile = getVideoModelProfile('videos', 'kyy-sd')
 
@@ -61,5 +70,23 @@ describe('KYY video model profiles', () => {
     assert.equal(profile.maxImages, 0)
     assert.equal(profile.maxVideos, 0)
     assert.equal(profile.maxAudios, 0)
+  })
+})
+
+describe('service inference video model profiles', () => {
+  test('only the full model exposes 1080p and 4k', () => {
+    const full = getVideoModelProfile('dreamina-seedance-2-0-hc', 'video-dddd')
+    const fast = getVideoModelProfile(
+      'dreamina-seedance-2-0-fast-hc',
+      'video-dddd'
+    )
+    const mini = getVideoModelProfile(
+      'dreamina-seedance-2-0-mini-hc',
+      'video-dddd'
+    )
+
+    assert.deepEqual(full.resolutions, ['480p', '720p', '1080p', '4k'])
+    assert.deepEqual(fast.resolutions, ['480p', '720p'])
+    assert.deepEqual(mini.resolutions, ['480p', '720p'])
   })
 })
