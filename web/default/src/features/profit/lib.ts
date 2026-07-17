@@ -16,7 +16,41 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { ProfitAggregate } from './types'
+
 const MICROS_PER_UNIT = 1_000_000
+
+export type NormalizedProfitAggregate = {
+  nominalConsumptionMicros: number
+  recognizedRevenueMicros: number
+  promoConsumptionMicros: number
+  promoCostMicros: number
+  adminConsumptionMicros: number
+  adminCostMicros: number
+  legacyUnknownConsumptionMicros: number
+}
+
+export function normalizeProfitAggregate(
+  aggregate?: ProfitAggregate
+): NormalizedProfitAggregate {
+  return {
+    nominalConsumptionMicros:
+      aggregate?.gross_consumption_micros ??
+      aggregate?.nominal_consumption_micros ??
+      aggregate?.revenue_micros ??
+      0,
+    recognizedRevenueMicros:
+      aggregate?.recognized_revenue_micros ?? aggregate?.revenue_micros ?? 0,
+    promoConsumptionMicros: aggregate?.promo_consumption_micros ?? 0,
+    promoCostMicros: aggregate?.promo_cost_micros ?? 0,
+    adminConsumptionMicros: aggregate?.admin_consumption_micros ?? 0,
+    adminCostMicros: aggregate?.admin_cost_micros ?? 0,
+    legacyUnknownConsumptionMicros:
+      aggregate?.legacy_consumption_micros ??
+      aggregate?.legacy_unknown_consumption_micros ??
+      0,
+  }
+}
 
 export function formatProfitMoney(micros: number): string {
   const amount = micros / MICROS_PER_UNIT

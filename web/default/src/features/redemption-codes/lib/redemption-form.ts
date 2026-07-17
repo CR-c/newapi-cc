@@ -25,7 +25,7 @@ import {
   REDEMPTION_VALIDATION,
   getRedemptionFormErrorMessages,
 } from '../constants'
-import { type RedemptionFormData, type Redemption } from '../types'
+import type { RedemptionFormData, Redemption } from '../types'
 
 // ============================================================================
 // Form Schema (use getRedemptionFormSchema(t) in components for i18n messages)
@@ -83,6 +83,7 @@ export function transformFormDataToPayload(
       ? Math.floor(data.expired_time.getTime() / 1000)
       : 0,
     count: data.count || 1,
+    funding_source: 'promo',
   }
 }
 

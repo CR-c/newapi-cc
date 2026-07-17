@@ -80,12 +80,20 @@ export function Wallet(props: WalletProps) {
   const { currency } = useSystemConfig()
   const { topupInfo, presetAmounts, loading: topupLoading } = useTopupInfo()
 
-  // Calculate effective exchange rate - when display type is USD, use rate of 1
-  const effectiveUsdExchangeRate = useMemo(() => {
-    return currency?.quotaDisplayType === 'USD'
-      ? 1
-      : currency?.usdExchangeRate || 1
-  }, [currency?.quotaDisplayType, currency?.usdExchangeRate])
+  const creditDisplayRate = useMemo(() => {
+    switch (currency?.quotaDisplayType) {
+      case 'CNY':
+        return currency.usdExchangeRate || 1
+      case 'CUSTOM':
+        return currency.customCurrencyExchangeRate || 1
+      default:
+        return 1
+    }
+  }, [
+    currency?.customCurrencyExchangeRate,
+    currency?.quotaDisplayType,
+    currency?.usdExchangeRate,
+  ])
   const {
     amount: paymentAmount,
     calculating,
@@ -293,7 +301,7 @@ export function Wallet(props: WalletProps) {
                   topupLink={topupInfo?.topup_link}
                   loading={topupLoading}
                   priceRatio={(status?.price as number) || 1}
-                  usdExchangeRate={effectiveUsdExchangeRate}
+                  usdExchangeRate={creditDisplayRate}
                   onOpenBilling={() => setBillingDialogOpen(true)}
                   creemProducts={topupInfo?.creem_products}
                   enableCreemTopup={topupInfo?.enable_creem_topup}
@@ -339,7 +347,8 @@ export function Wallet(props: WalletProps) {
         calculating={calculating}
         processing={processing || pancakeProcessing}
         discountRate={getDiscountRate()}
-        usdExchangeRate={effectiveUsdExchangeRate}
+        usdExchangeRate={creditDisplayRate}
+        bonusAmount={topupInfo?.amount_bonus?.[topupAmount] || 0}
       />
 
       <TransferDialog

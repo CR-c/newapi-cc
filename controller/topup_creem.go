@@ -53,11 +53,44 @@ type CreemPayRequest struct {
 }
 
 type CreemProduct struct {
-	ProductId string  `json:"productId"`
-	Name      string  `json:"name"`
-	Price     float64 `json:"price"`
-	Currency  string  `json:"currency"`
-	Quota     int64   `json:"quota"`
+	ProductId  string  `json:"productId"`
+	Name       string  `json:"name"`
+	Price      float64 `json:"price"`
+	Currency   string  `json:"currency"`
+	Quota      int64   `json:"quota"`
+	BonusQuota int64   `json:"bonusQuota,omitempty"`
+}
+
+func setCreemTopUpQuotaSnapshot(topUp *model.TopUp, product *CreemProduct) error {
+	if product == nil || product.Quota <= 0 || product.Quota > int64(common.MaxQuota) {
+		return errors.New("产品充值额度超出上限")
+	}
+	if product.BonusQuota < 0 || product.BonusQuota > int64(common.MaxQuota) {
+		return errors.New("产品赠送额度超出上限")
+	}
+	principalQuota := int(product.Quota)
+	if product.BonusQuota > 0 {
+		return topUp.SetQuotaSnapshot(principalQuota, int(product.BonusQuota))
+	}
+	return setTopUpQuotaSnapshot(topUp, topUpBonusLookupAmountFromQuota(principalQuota), principalQuota)
+}
+
+func getCreemProductsWithBonus(raw string) string {
+	var products []CreemProduct
+	if err := common.UnmarshalJsonStr(raw, &products); err != nil {
+		return raw
+	}
+	for i := range products {
+		topUp := &model.TopUp{}
+		if err := setCreemTopUpQuotaSnapshot(topUp, &products[i]); err == nil {
+			products[i].BonusQuota = int64(topUp.PromoQuota)
+		}
+	}
+	encoded, err := common.Marshal(products)
+	if err != nil {
+		return raw
+	}
+	return string(encoded)
 }
 
 type CreemAdaptor struct {
@@ -114,6 +147,10 @@ func (*CreemAdaptor) RequestPay(c *gin.Context, req *CreemPayRequest) {
 		PaymentProvider: model.PaymentProviderCreem,
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
+	}
+	if err := setCreemTopUpQuotaSnapshot(topUp, selectedProduct); err != nil {
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": err.Error()})
+		return
 	}
 	err = topUp.Insert()
 	if err != nil {
@@ -302,7 +339,8 @@ func handleCheckoutCompleted(c *gin.Context, event *CreemWebhookEvent) {
 	// Try complete subscription order first
 	LockOrder(referenceId)
 	defer UnlockOrder(referenceId)
-	if err := model.CompleteSubscriptionOrder(referenceId, common.GetJsonString(event), model.PaymentProviderCreem, ""); err == nil {
+	paidAmount := float64(event.Object.Order.AmountPaid) / 100
+	if err := model.CompleteSubscriptionOrderWithPaidAmount(referenceId, common.GetJsonString(event), model.PaymentProviderCreem, "", paidAmount); err == nil {
 		logger.LogInfo(c.Request.Context(), fmt.Sprintf("Creem 订阅订单处理成功 trade_no=%s creem_order_id=%s", referenceId, event.Object.Order.Id))
 		c.Status(http.StatusOK)
 		return

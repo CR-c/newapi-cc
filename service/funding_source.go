@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/QuantumNous/new-api/model"
@@ -27,8 +28,10 @@ type FundingSource interface {
 // ---------------------------------------------------------------------------
 
 type WalletFunding struct {
-	userId   int
-	consumed int // 实际预扣的用户额度
+	userId      int
+	requestId   string
+	allocation  model.WalletAllocation
+	mutationSeq int
 }
 
 func (w *WalletFunding) Source() string { return BillingSourceWallet }
@@ -37,10 +40,11 @@ func (w *WalletFunding) PreConsume(amount int) error {
 	if amount <= 0 {
 		return nil
 	}
-	if err := model.DecreaseUserQuota(w.userId, amount, false); err != nil {
+	allocation, err := model.DebitWallet(w.userId, amount, "billing:"+w.requestId+":pre")
+	if err != nil {
 		return err
 	}
-	w.consumed = amount
+	w.allocation = allocation
 	return nil
 }
 
@@ -49,18 +53,57 @@ func (w *WalletFunding) Settle(delta int) error {
 		return nil
 	}
 	if delta > 0 {
-		return model.DecreaseUserQuota(w.userId, delta, false)
+		eventKey := fmt.Sprintf("billing:%s:debit:%d", w.requestId, w.mutationSeq+1)
+		allocation, err := model.DebitWallet(w.userId, delta, eventKey)
+		if err != nil {
+			return err
+		}
+		w.mutationSeq++
+		w.allocation.PaidQuota += allocation.PaidQuota
+		w.allocation.PromoQuota += allocation.PromoQuota
+		w.allocation.LegacyQuota += allocation.LegacyQuota
+		return nil
 	}
-	return model.IncreaseUserQuota(w.userId, -delta, false)
+	refund := takeWalletRefund(&w.allocation, -delta)
+	if refund.Total() != -delta {
+		return fmt.Errorf("wallet settlement refund exceeds consumed allocation")
+	}
+	eventKey := fmt.Sprintf("billing:%s:refund:%d", w.requestId, w.mutationSeq+1)
+	if _, err := model.RefundWallet(w.userId, refund, eventKey); err != nil {
+		w.allocation.PaidQuota += refund.PaidQuota
+		w.allocation.PromoQuota += refund.PromoQuota
+		w.allocation.LegacyQuota += refund.LegacyQuota
+		return err
+	}
+	w.mutationSeq++
+	return nil
 }
 
 func (w *WalletFunding) Refund() error {
-	if w.consumed <= 0 {
+	if w.allocation.Total() <= 0 {
 		return nil
 	}
-	// IncreaseUserQuota 是 quota += N 的非幂等操作，不能重试，否则会多退额度。
-	// 订阅的 RefundSubscriptionPreConsume 有 requestId 幂等保护所以可以重试。
-	return model.IncreaseUserQuota(w.userId, w.consumed, false)
+	_, err := model.RefundWallet(w.userId, w.allocation, "billing:"+w.requestId+":full-refund")
+	return err
+}
+
+func (w *WalletFunding) Allocation() model.WalletAllocation { return w.allocation }
+
+func takeWalletRefund(allocation *model.WalletAllocation, amount int) model.WalletAllocation {
+	if allocation == nil || amount <= 0 {
+		return model.WalletAllocation{}
+	}
+	remaining := amount
+	refund := model.WalletAllocation{}
+	refund.PaidQuota = min(remaining, allocation.PaidQuota)
+	remaining -= refund.PaidQuota
+	refund.LegacyQuota = min(remaining, allocation.LegacyQuota)
+	remaining -= refund.LegacyQuota
+	refund.PromoQuota = min(remaining, allocation.PromoQuota)
+	allocation.PaidQuota -= refund.PaidQuota
+	allocation.LegacyQuota -= refund.LegacyQuota
+	allocation.PromoQuota -= refund.PromoQuota
+	return refund
 }
 
 // ---------------------------------------------------------------------------
@@ -74,6 +117,7 @@ type SubscriptionFunding struct {
 	amount         int64 // 预扣的订阅额度（subConsume）
 	subscriptionId int
 	preConsumed    int64
+	allocation     model.WalletAllocation
 	// 以下字段在 PreConsume 成功后填充，供 RelayInfo 同步使用
 	AmountTotal     int64
 	AmountUsedAfter int64
@@ -91,6 +135,7 @@ func (s *SubscriptionFunding) PreConsume(_ int) error {
 	}
 	s.subscriptionId = res.UserSubscriptionId
 	s.preConsumed = res.PreConsumed
+	s.allocation = res.FundingAllocation
 	s.AmountTotal = res.AmountTotal
 	s.AmountUsedAfter = res.AmountUsedAfter
 	// 获取订阅计划信息
@@ -105,8 +150,22 @@ func (s *SubscriptionFunding) Settle(delta int) error {
 	if delta == 0 {
 		return nil
 	}
-	return model.PostConsumeUserSubscriptionDelta(s.subscriptionId, int64(delta))
+	targetAmount := s.allocation.Total() + delta
+	if targetAmount < 0 {
+		return fmt.Errorf("subscription settlement refund exceeds consumed allocation")
+	}
+	target, err := model.GetSubscriptionFundingAllocation(s.subscriptionId, int64(targetAmount))
+	if err != nil {
+		return err
+	}
+	if err := model.PostConsumeUserSubscriptionDelta(s.subscriptionId, int64(delta)); err != nil {
+		return err
+	}
+	s.allocation = target
+	return nil
 }
+
+func (s *SubscriptionFunding) Allocation() model.WalletAllocation { return s.allocation }
 
 func (s *SubscriptionFunding) Refund() error {
 	if s.preConsumed <= 0 {

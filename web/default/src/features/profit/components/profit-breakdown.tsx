@@ -30,7 +30,12 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 
-import { formatProfitMoney, formatProfitPercent, getProfitTone } from '../lib'
+import {
+  formatProfitMoney,
+  formatProfitPercent,
+  getProfitTone,
+  normalizeProfitAggregate,
+} from '../lib'
 import type { ProfitAggregate, ProfitOverview } from '../types'
 
 type Dimension = 'user' | 'model' | 'group' | 'channel'
@@ -60,26 +65,44 @@ export function ProfitBreakdown(props: { overview?: ProfitOverview }) {
 
   return (
     <div className='border-border border'>
-      <div className='border-border flex items-center justify-between border-b px-3 py-2'>
+      <div className='border-border flex flex-col items-start gap-2 border-b px-3 py-2 sm:flex-row sm:items-center sm:justify-between'>
         <h2 className='text-sm font-medium'>{t('Profit breakdown')}</h2>
-        <Tabs
-          value={dimension}
-          onValueChange={(value) => setDimension(value as Dimension)}
-        >
-          <TabsList>
-            {(Object.keys(labels) as Dimension[]).map((key) => (
-              <TabsTrigger key={key} value={key}>
-                {labels[key]}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
+        <div className='max-w-full overflow-x-auto'>
+          <Tabs
+            value={dimension}
+            onValueChange={(value) => setDimension(value as Dimension)}
+          >
+            <TabsList className='w-max'>
+              {(Object.keys(labels) as Dimension[]).map((key) => (
+                <TabsTrigger key={key} value={key}>
+                  {labels[key]}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+        </div>
       </div>
       <Table>
         <TableHeader>
           <TableRow>
             <TableHead>{labels[dimension]}</TableHead>
-            <TableHead className='text-right'>{t('Sales revenue')}</TableHead>
+            <TableHead className='text-right'>
+              {t('Nominal consumption')}
+            </TableHead>
+            <TableHead className='text-right'>
+              {t('Recognized revenue')}
+            </TableHead>
+            <TableHead className='text-right'>
+              {t('Gift consumption')}
+            </TableHead>
+            <TableHead className='text-right'>{t('Gift cost')}</TableHead>
+            <TableHead className='text-right'>
+              {t('Admin consumption')}
+            </TableHead>
+            <TableHead className='text-right'>{t('Admin cost')}</TableHead>
+            <TableHead className='text-right'>
+              {t('Legacy unattributed')}
+            </TableHead>
             <TableHead className='text-right'>{t('Purchase cost')}</TableHead>
             <TableHead className='text-right'>{t('Gross profit')}</TableHead>
             <TableHead className='text-right'>{t('Profit margin')}</TableHead>
@@ -87,39 +110,64 @@ export function ProfitBreakdown(props: { overview?: ProfitOverview }) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rowsByDimension[dimension].map((row) => (
-            <TableRow key={rowLabel(row, dimension)}>
-              <TableCell className='font-medium'>
-                {rowLabel(row, dimension)}
-              </TableCell>
-              <TableCell className='text-right'>
-                {formatProfitMoney(row.revenue_micros)}
-              </TableCell>
-              <TableCell className='text-right'>
-                {formatProfitMoney(row.cost_micros)}
-              </TableCell>
-              <TableCell
-                className={cn(
-                  'text-right font-medium',
-                  getProfitTone(row.profit_micros)
-                )}
-              >
-                {row.unpriced_record_count === row.record_count
-                  ? '--'
-                  : formatProfitMoney(row.profit_micros)}
-              </TableCell>
-              <TableCell className='text-right'>
-                {formatProfitPercent(row.profit_margin)}
-              </TableCell>
-              <TableCell className='text-right'>
-                {formatProfitPercent(row.cost_coverage)}
-              </TableCell>
-            </TableRow>
-          ))}
+          {rowsByDimension[dimension].map((row) => {
+            const attributed = normalizeProfitAggregate(row)
+            return (
+              <TableRow key={rowLabel(row, dimension)}>
+                <TableCell className='font-medium'>
+                  {rowLabel(row, dimension)}
+                </TableCell>
+                <TableCell className='text-right'>
+                  {formatProfitMoney(attributed.nominalConsumptionMicros)}
+                </TableCell>
+                <TableCell className='text-right'>
+                  {formatProfitMoney(attributed.recognizedRevenueMicros)}
+                </TableCell>
+                <TableCell className='text-right text-amber-600 dark:text-amber-400'>
+                  {formatProfitMoney(attributed.promoConsumptionMicros)}
+                </TableCell>
+                <TableCell className='text-right'>
+                  {(row.promo_unpriced_record_count ?? 0) > 0
+                    ? '--'
+                    : formatProfitMoney(attributed.promoCostMicros)}
+                </TableCell>
+                <TableCell className='text-right text-amber-600 dark:text-amber-400'>
+                  {formatProfitMoney(attributed.adminConsumptionMicros)}
+                </TableCell>
+                <TableCell className='text-right'>
+                  {(row.admin_unpriced_record_count ?? 0) > 0
+                    ? '--'
+                    : formatProfitMoney(attributed.adminCostMicros)}
+                </TableCell>
+                <TableCell className='text-muted-foreground text-right'>
+                  {formatProfitMoney(attributed.legacyUnknownConsumptionMicros)}
+                </TableCell>
+                <TableCell className='text-right'>
+                  {formatProfitMoney(row.cost_micros)}
+                </TableCell>
+                <TableCell
+                  className={cn(
+                    'text-right font-medium',
+                    getProfitTone(row.profit_micros)
+                  )}
+                >
+                  {row.unpriced_record_count === row.record_count
+                    ? '--'
+                    : formatProfitMoney(row.profit_micros)}
+                </TableCell>
+                <TableCell className='text-right'>
+                  {formatProfitPercent(row.profit_margin)}
+                </TableCell>
+                <TableCell className='text-right'>
+                  {formatProfitPercent(row.cost_coverage)}
+                </TableCell>
+              </TableRow>
+            )
+          })}
           {rowsByDimension[dimension].length === 0 && (
             <TableRow>
               <TableCell
-                colSpan={6}
+                colSpan={12}
                 className='text-muted-foreground h-24 text-center'
               >
                 {t('No profit data')}

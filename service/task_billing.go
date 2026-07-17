@@ -58,6 +58,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = info.UpstreamModelName
 	}
+	appendBillingInfo(info, other)
 	attachQuotaSaturation(c, info, other)
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
@@ -94,14 +95,68 @@ func taskIsSubscription(task *model.Task) bool {
 }
 
 // taskAdjustFunding 调整任务的资金来源（钱包或订阅），delta > 0 表示扣费，delta < 0 表示退还。
-func taskAdjustFunding(task *model.Task, delta int) error {
+func taskAdjustFunding(task *model.Task, delta int) (model.WalletAllocation, error) {
 	if taskIsSubscription(task) {
-		return model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, int64(delta))
+		current := task.PrivateData.WalletAllocation
+		if current.Total() == 0 && task.Quota > 0 {
+			var err error
+			current, err = model.GetSubscriptionFundingAllocation(task.PrivateData.SubscriptionId, int64(task.Quota))
+			if err != nil {
+				return model.WalletAllocation{}, err
+			}
+		}
+		targetQuota := task.Quota + delta
+		if targetQuota < 0 {
+			return model.WalletAllocation{}, fmt.Errorf("task subscription refund exceeds consumed allocation")
+		}
+		target, err := model.GetSubscriptionFundingAllocation(task.PrivateData.SubscriptionId, int64(targetQuota))
+		if err != nil {
+			return model.WalletAllocation{}, err
+		}
+		if err := model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, int64(delta)); err != nil {
+			return model.WalletAllocation{}, err
+		}
+		event := model.WalletAllocation{}
+		if delta > 0 {
+			event.PaidQuota = target.PaidQuota - current.PaidQuota
+			event.PromoQuota = target.PromoQuota - current.PromoQuota
+			event.LegacyQuota = target.LegacyQuota - current.LegacyQuota
+		} else {
+			event.PaidQuota = current.PaidQuota - target.PaidQuota
+			event.PromoQuota = current.PromoQuota - target.PromoQuota
+			event.LegacyQuota = current.LegacyQuota - target.LegacyQuota
+		}
+		task.PrivateData.WalletAllocation = target
+		return event, nil
 	}
 	if delta > 0 {
-		return model.DecreaseUserQuota(task.UserId, delta, false)
+		allocation, err := model.DebitWallet(task.UserId, delta,
+			fmt.Sprintf("task:%s:quota:%d:debit", task.TaskID, task.Quota+delta))
+		if err != nil {
+			return model.WalletAllocation{}, err
+		}
+		task.PrivateData.WalletAllocation.PaidQuota += allocation.PaidQuota
+		task.PrivateData.WalletAllocation.PromoQuota += allocation.PromoQuota
+		task.PrivateData.WalletAllocation.LegacyQuota += allocation.LegacyQuota
+		return allocation, nil
 	}
-	return model.IncreaseUserQuota(task.UserId, -delta, false)
+	refund := model.WalletAllocation{}
+	if task.PrivateData.WalletAllocation.Total() == 0 {
+		refund.LegacyQuota = -delta
+	} else {
+		refund = takeWalletRefund(&task.PrivateData.WalletAllocation, -delta)
+	}
+	if refund.Total() != -delta {
+		return model.WalletAllocation{}, fmt.Errorf("task wallet refund exceeds consumed allocation")
+	}
+	_, err := model.RefundWallet(task.UserId, refund,
+		fmt.Sprintf("task:%s:quota:%d:refund", task.TaskID, task.Quota+delta))
+	if err != nil {
+		task.PrivateData.WalletAllocation.PaidQuota += refund.PaidQuota
+		task.PrivateData.WalletAllocation.PromoQuota += refund.PromoQuota
+		task.PrivateData.WalletAllocation.LegacyQuota += refund.LegacyQuota
+	}
+	return refund, err
 }
 
 // taskAdjustTokenQuota 调整任务的令牌额度，delta > 0 表示扣费，delta < 0 表示退还。
@@ -126,11 +181,28 @@ func taskAdjustTokenQuota(ctx context.Context, task *model.Task, delta int) {
 }
 
 // taskBillingOther 从 task 的 BillingContext 构建日志 Other 字段。
-func taskBillingOther(task *model.Task) map[string]interface{} {
+func taskBillingOther(task *model.Task, eventAllocation ...model.WalletAllocation) map[string]interface{} {
 	other := map[string]interface{}{
-		"is_task":    true,
-		"media_type": string(model.MediaTypeVideo),
-		"task_id":    task.TaskID,
+		"is_task":            true,
+		"media_type":         string(model.MediaTypeVideo),
+		"task_id":            task.TaskID,
+		"billing_source":     task.PrivateData.BillingSource,
+		"user_role_snapshot": task.PrivateData.UserRoleSnapshot,
+	}
+	if task.PrivateData.IsAdminUsage {
+		other["is_admin_usage"] = true
+	}
+	allocation := task.PrivateData.WalletAllocation
+	if len(eventAllocation) > 0 {
+		allocation = eventAllocation[0]
+	}
+	if allocation.PaidQuota != 0 || allocation.PromoQuota != 0 || allocation.LegacyQuota != 0 {
+		other["wallet_funding"] = map[string]interface{}{
+			"version":      1,
+			"paid_quota":   allocation.PaidQuota,
+			"promo_quota":  allocation.PromoQuota,
+			"legacy_quota": allocation.LegacyQuota,
+		}
 	}
 	if bc := task.PrivateData.BillingContext; bc != nil {
 		other["model_price"] = bc.ModelPrice
@@ -183,7 +255,8 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 	}
 
 	// 1. 退还资金来源（钱包或订阅）
-	if err := taskAdjustFunding(task, -quota); err != nil {
+	allocation, err := taskAdjustFunding(task, -quota)
+	if err != nil {
 		logger.LogWarn(ctx, fmt.Sprintf("退还资金来源失败 task %s: %s", task.TaskID, err.Error()))
 		return
 	}
@@ -194,7 +267,7 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 	model.UpdateChannelUsedQuota(task.ChannelId, -quota)
 
 	// 3. 记录日志
-	other := taskBillingOther(task)
+	other := taskBillingOther(task, allocation)
 	other["reason"] = reason
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 		UserId:    task.UserId,
@@ -235,7 +308,8 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	))
 
 	// 调整资金来源
-	if err := taskAdjustFunding(task, quotaDelta); err != nil {
+	allocation, err := taskAdjustFunding(task, quotaDelta)
+	if err != nil {
 		logger.LogError(ctx, fmt.Sprintf("差额结算资金调整失败 task %s: %s", task.TaskID, err.Error()))
 		return
 	}
@@ -259,7 +333,7 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	}
 	model.UpdateUserUsedQuota(task.UserId, quotaDelta)
 	model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
-	other := taskBillingOther(task)
+	other := taskBillingOther(task, allocation)
 	other["pre_consumed_quota"] = preConsumedQuota
 	other["actual_quota"] = actualQuota
 	for _, clamp := range clamps {

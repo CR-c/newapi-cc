@@ -61,12 +61,80 @@ func TestCalculateProfitRecordForFixedPriceConsume(t *testing.T) {
 
 	record, err := calculateProfitRecord(log, rule, false)
 	require.NoError(t, err)
-	assert.Equal(t, int64(100000), record.RevenueMicros)
+	assert.Zero(t, record.RevenueMicros)
+	assert.Equal(t, int64(100000), record.LegacyConsumptionMicros)
 	assert.Equal(t, int64(60000), record.CostMicros)
 	assert.True(t, record.CostKnown)
-	assert.Equal(t, int64(40000), record.ProfitMicros())
+	assert.Equal(t, int64(-60000), record.ProfitMicros())
 	assert.Equal(t, int64(3), record.CostRuleId)
 	assert.Equal(t, 2, record.CostRuleVersion)
+}
+
+func TestCalculateProfitRecordUsesFundingAttributionForRecognizedRevenue(t *testing.T) {
+	tests := []struct {
+		name            string
+		other           string
+		expectedRevenue int64
+		expectedPromo   int64
+		expectedLegacy  int64
+		expectedAdmin   int64
+		expectedCost    int64
+		expectedProfit  int64
+	}{
+		{
+			name:            "paid wallet usage",
+			other:           `{"model_price":0.1,"group_ratio":1,"wallet_funding":{"version":1,"paid_quota":50000}}`,
+			expectedRevenue: 100000,
+			expectedCost:    60000,
+			expectedProfit:  40000,
+		},
+		{
+			name:           "promotional wallet usage",
+			other:          `{"model_price":0.1,"group_ratio":1,"wallet_funding":{"version":1,"promo_quota":50000}}`,
+			expectedPromo:  100000,
+			expectedCost:   60000,
+			expectedProfit: -60000,
+		},
+		{
+			name:           "promotional subscription usage",
+			other:          `{"model_price":0.1,"group_ratio":1,"billing_source":"subscription","wallet_funding":{"version":1,"promo_quota":50000}}`,
+			expectedPromo:  100000,
+			expectedCost:   60000,
+			expectedProfit: -60000,
+		},
+		{
+			name:           "legacy unknown wallet usage",
+			other:          `{"model_price":0.1,"group_ratio":1,"wallet_funding":{"version":1,"legacy_quota":50000}}`,
+			expectedLegacy: 100000,
+			expectedCost:   60000,
+			expectedProfit: -60000,
+		},
+		{
+			name:           "administrator paid usage",
+			other:          `{"model_price":0.1,"group_ratio":1,"is_admin_usage":true,"user_role_snapshot":10,"wallet_funding":{"version":1,"paid_quota":50000}}`,
+			expectedAdmin:  100000,
+			expectedCost:   60000,
+			expectedProfit: -60000,
+		},
+	}
+
+	rule := &ModelCostRule{Id: 3, ModelName: "image-model", PurchasePriceCNY: 0.06, Version: 2}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			record, err := calculateProfitRecord(&Log{
+				RequestId: "req-attribution", CreatedAt: 100, Type: LogTypeConsume,
+				UserId: 7, ModelName: "image-model", Quota: 50000, Other: test.other,
+			}, rule, false)
+			require.NoError(t, err)
+			assert.Equal(t, int64(100000), record.GrossConsumptionMicros)
+			assert.Equal(t, test.expectedRevenue, record.RevenueMicros)
+			assert.Equal(t, test.expectedPromo, record.PromoConsumptionMicros)
+			assert.Equal(t, test.expectedLegacy, record.LegacyConsumptionMicros)
+			assert.Equal(t, test.expectedAdmin, record.AdminConsumptionMicros)
+			assert.Equal(t, test.expectedCost, record.CostMicros)
+			assert.Equal(t, test.expectedProfit, record.ProfitMicros())
+		})
+	}
 }
 
 func TestGetProfitAggregateNetsRefundsAndExcludesUnpricedRevenueFromMargin(t *testing.T) {
@@ -93,6 +161,26 @@ func TestGetProfitAggregateNetsRefundsAndExcludesUnpricedRevenueFromMargin(t *te
 	assert.InDelta(t, 0.4, *summary.ProfitMargin, 0.000001)
 	assert.InDelta(t, 2.0/3.0, summary.CostCoverage, 0.000001)
 	assert.Equal(t, int64(1), summary.UnpricedRecordCount)
+}
+
+func TestGetProfitAggregateReportsUnpricedAttributionCosts(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&ProfitRecord{}, &ProfitAnalysisState{}))
+	DB = db
+	t.Cleanup(func() { DB = originalDB })
+
+	require.NoError(t, db.Create([]*ProfitRecord{
+		{SourceLogKey: "promo-unpriced", PromoConsumptionMicros: 100_000, CostKnown: false},
+		{SourceLogKey: "promo-priced", PromoConsumptionMicros: 200_000, CostMicros: 50_000, CostKnown: true},
+		{SourceLogKey: "admin-unpriced", AdminConsumptionMicros: 300_000, CostKnown: false},
+	}).Error)
+
+	summary, err := GetProfitAggregate(ProfitQuery{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), summary.PromoUnpricedRecordCount)
+	assert.Equal(t, int64(1), summary.AdminUnpricedRecordCount)
 }
 
 func TestProfitSourceLogKeyDistinguishesBillingEventsWithSameRequestId(t *testing.T) {
@@ -280,9 +368,10 @@ func TestAsyncBillingEventsStayTogetherAcrossProfitReset(t *testing.T) {
 	previous, err := GetProfitAggregate(ProfitQuery{UserId: 1, Generation: &previousGeneration})
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), previous.RecordCount)
-	assert.Equal(t, int64(600_000), previous.RevenueMicros)
+	assert.Zero(t, previous.RevenueMicros)
+	assert.Equal(t, int64(600_000), previous.LegacyConsumptionMicros)
 	assert.Equal(t, int64(360_000), previous.CostMicros)
-	assert.Equal(t, int64(240_000), previous.ProfitMicros)
+	assert.Equal(t, int64(-360_000), previous.ProfitMicros)
 }
 
 func TestBackfillProfitRecordsClickHouseModeUsesOffsetAndIsIdempotent(t *testing.T) {
@@ -319,6 +408,48 @@ func TestBackfillProfitRecordsClickHouseModeUsesOffsetAndIsIdempotent(t *testing
 	var count int64
 	require.NoError(t, db.Model(&ProfitRecord{}).Count(&count).Error)
 	assert.Equal(t, int64(501), count)
+}
+
+func TestBackfillProfitRecordsRecalculatesLegacyAttributionVersion(t *testing.T) {
+	originalDB, originalLogDB := DB, LOG_DB
+	originalLogDatabaseType := common.LogDatabaseType()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&ModelCostRule{}, &ProfitRecord{}, &ProfitAnalysisState{}, &ProfitResetLogKey{}))
+	logDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, logDB.Exec(`CREATE TABLE logs (
+		id INTEGER PRIMARY KEY, created_at INTEGER, type INTEGER, user_id INTEGER,
+		request_id TEXT, model_name TEXT, quota INTEGER, channel_id INTEGER,
+		token_id INTEGER, "group" TEXT, other TEXT
+	)`).Error)
+	DB, LOG_DB = db, logDB
+	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
+	t.Cleanup(func() {
+		DB, LOG_DB = originalDB, originalLogDB
+		common.SetLogDatabaseType(originalLogDatabaseType)
+	})
+
+	require.NoError(t, db.Create(&ModelCostRule{
+		ModelName: "video", PurchasePriceCNY: 0.6, Version: 1, Enabled: true,
+	}).Error)
+	require.NoError(t, db.Create(&ProfitRecord{
+		SourceLogKey: "id:1", Generation: 0, ModelName: "video",
+		RevenueMicros: 1_000_000, CostMicros: 600_000, CostKnown: true,
+	}).Error)
+	require.NoError(t, logDB.Create(&clickHouseProfitLogFixture{
+		LogID: 1, CreatedAt: 100, Type: LogTypeConsume, RequestId: "legacy-attribution",
+		ModelName: "video", Quota: 500_000,
+		Other: `{"model_price":1,"group_ratio":1,"wallet_funding":{"version":1,"promo_quota":500000}}`,
+	}).Error)
+
+	require.NoError(t, BackfillProfitRecords())
+	var record ProfitRecord
+	require.NoError(t, db.Where("source_log_key = ?", "id:1").First(&record).Error)
+	assert.Equal(t, currentProfitAttributionVersion, record.AttributionVersion)
+	assert.Zero(t, record.RevenueMicros)
+	assert.Equal(t, int64(1_000_000), record.PromoConsumptionMicros)
+	assert.Equal(t, int64(600_000), record.CostMicros)
 }
 
 func TestBackfillProfitRecordsRestartsWhenGenerationChanges(t *testing.T) {
@@ -387,9 +518,10 @@ func TestCalculateProfitRecordRefundReversesRevenueAndCost(t *testing.T) {
 
 	record, err := calculateProfitRecord(log, rule, false)
 	require.NoError(t, err)
-	assert.Equal(t, int64(-100000), record.RevenueMicros)
+	assert.Zero(t, record.RevenueMicros)
+	assert.Equal(t, int64(-100000), record.LegacyConsumptionMicros)
 	assert.Equal(t, int64(-60000), record.CostMicros)
-	assert.Equal(t, int64(-40000), record.ProfitMicros())
+	assert.Equal(t, int64(60000), record.ProfitMicros())
 }
 
 func TestCalculateProfitRecordForRatioModel(t *testing.T) {
@@ -411,9 +543,10 @@ func TestCalculateProfitRecordForRatioModel(t *testing.T) {
 
 	record, err := calculateProfitRecord(log, rule, false)
 	require.NoError(t, err)
-	assert.Equal(t, int64(682290), record.RevenueMicros)
+	assert.Zero(t, record.RevenueMicros)
+	assert.Equal(t, int64(682290), record.LegacyConsumptionMicros)
 	assert.Equal(t, int64(409374), record.CostMicros)
-	assert.Equal(t, int64(272916), record.ProfitMicros())
+	assert.Equal(t, int64(-409374), record.ProfitMicros())
 }
 
 func TestDreaminaCostVariantsUseConfiguredBasePurchasePrice(t *testing.T) {
@@ -511,7 +644,8 @@ func TestResetProfitAnalysisDataPreventsHistoricalBackfill(t *testing.T) {
 	summary, err := GetProfitAggregate(ProfitQuery{})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), summary.RecordCount)
-	assert.Equal(t, int64(1_000_000), summary.RevenueMicros)
+	assert.Zero(t, summary.RevenueMicros)
+	assert.Equal(t, int64(1_000_000), summary.LegacyConsumptionMicros)
 
 	require.NoError(t, logDB.Create(&clickHouseProfitLogFixture{
 		LogID: 3, CreatedAt: 200, Type: LogTypeConsume, RequestId: "new-same-second", ModelName: "video",
@@ -613,7 +747,8 @@ func TestCalculateProfitRecordWithoutCostRuleStaysUnpriced(t *testing.T) {
 
 	record, err := calculateProfitRecord(log, nil, true)
 	require.NoError(t, err)
-	assert.Equal(t, int64(100000), record.RevenueMicros)
+	assert.Zero(t, record.RevenueMicros)
+	assert.Equal(t, int64(100000), record.LegacyConsumptionMicros)
 	assert.Zero(t, record.CostMicros)
 	assert.False(t, record.CostKnown)
 	assert.True(t, record.Estimated)

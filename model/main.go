@@ -64,13 +64,15 @@ func createRootAccountIfNeed() error {
 			return err
 		}
 		rootUser := User{
-			Username:    "root",
-			Password:    hashedPassword,
-			Role:        common.RoleRootUser,
-			Status:      common.UserStatusEnabled,
-			DisplayName: "Root User",
-			AccessToken: nil,
-			Quota:       100000000,
+			Username:      "root",
+			Password:      hashedPassword,
+			Role:          common.RoleRootUser,
+			Status:        common.UserStatusEnabled,
+			DisplayName:   "Root User",
+			AccessToken:   nil,
+			Quota:         100000000,
+			PromoQuota:    100000000,
+			WalletVersion: CurrentWalletVersion,
 		}
 		DB.Create(&rootUser)
 	}
@@ -272,6 +274,7 @@ func migrateDB() error {
 		&Channel{},
 		&Token{},
 		&User{},
+		&QuotaLedger{},
 		&PasskeyCredential{},
 		&Option{},
 		&Redemption{},
@@ -309,6 +312,12 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
+	if err := migrateUserWallets(); err != nil {
+		return err
+	}
+	if err := migrateSubscriptionFundingAttribution(); err != nil {
+		return err
+	}
 	if err := migrateProfitRecordIndexes(); err != nil {
 		return err
 	}
@@ -335,6 +344,7 @@ func migrateDBFast() error {
 		{&Channel{}, "Channel"},
 		{&Token{}, "Token"},
 		{&User{}, "User"},
+		{&QuotaLedger{}, "QuotaLedger"},
 		{&PasskeyCredential{}, "PasskeyCredential"},
 		{&Option{}, "Option"},
 		{&Redemption{}, "Redemption"},
@@ -389,6 +399,12 @@ func migrateDBFast() error {
 		if err != nil {
 			return err
 		}
+	}
+	if err := migrateUserWallets(); err != nil {
+		return err
+	}
+	if err := migrateSubscriptionFundingAttribution(); err != nil {
+		return err
 	}
 	if err := migrateProfitRecordIndexes(); err != nil {
 		return err

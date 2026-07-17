@@ -372,15 +372,25 @@ func RequestWaffoPancakePay(c *gin.Context) {
 	}
 
 	tradeNo := fmt.Sprintf("WAFFO_PANCAKE-%d-%d-%s", id, time.Now().UnixMilli(), randstr.String(6))
+	normalizedAmount := normalizeWaffoPancakeTopUpAmount(req.Amount)
+	principalQuota, err := topUpPrincipalQuotaFromRequestAmount(req.Amount)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": err.Error()})
+		return
+	}
 	topUp := &model.TopUp{
 		UserId:          id,
-		Amount:          normalizeWaffoPancakeTopUpAmount(req.Amount),
+		Amount:          normalizedAmount,
 		Money:           payMoney,
 		TradeNo:         tradeNo,
 		PaymentMethod:   model.PaymentMethodWaffoPancake,
 		PaymentProvider: model.PaymentProviderWaffoPancake,
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
+	}
+	if err := setTopUpQuotaSnapshot(topUp, req.Amount, principalQuota); err != nil {
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": err.Error()})
+		return
 	}
 	if err := topUp.Insert(); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 创建充值订单失败 user_id=%d trade_no=%s amount=%d error=%q", id, tradeNo, req.Amount, err.Error()))
@@ -491,7 +501,14 @@ func WaffoPancakeWebhook(c *gin.Context) {
 		}
 		LockOrder(tradeNo)
 		defer UnlockOrder(tradeNo)
-		if err := model.CompleteSubscriptionOrder(tradeNo, string(bodyBytes), model.PaymentProviderWaffoPancake, ""); err != nil {
+		paidAmountDecimal, err := decimal.NewFromString(strings.TrimSpace(event.Data.Amount))
+		if err != nil || !paidAmountDecimal.IsPositive() {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅实付金额无效 trade_no=%s amount=%q event_id=%s", tradeNo, event.Data.Amount, event.ID))
+			c.String(http.StatusInternalServerError, "retry")
+			return
+		}
+		paidAmount, _ := paidAmountDecimal.Float64()
+		if err := model.CompleteSubscriptionOrderWithPaidAmount(tradeNo, string(bodyBytes), model.PaymentProviderWaffoPancake, "", paidAmount); err != nil {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅完成失败 trade_no=%s event_id=%s order_id=%s client_ip=%s error=%q", tradeNo, event.ID, event.Data.OrderID, c.ClientIP(), err.Error()))
 			c.String(http.StatusInternalServerError, "retry")
 			return

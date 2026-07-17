@@ -22,19 +22,61 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'
 
-import { formatProfitMoney, formatProfitPercent, getProfitTone } from '../lib'
+import {
+  formatProfitMoney,
+  formatProfitPercent,
+  getProfitTone,
+  normalizeProfitAggregate,
+} from '../lib'
 import type { ProfitAggregate } from '../types'
 
 export function ProfitSummary(props: { summary?: ProfitAggregate }) {
   const { t } = useTranslation()
   const summary = props.summary
+  const attributed = normalizeProfitAggregate(summary)
   const hasPricedRecords =
     (summary?.record_count ?? 0) > (summary?.unpriced_record_count ?? 0)
   const metrics = [
     {
-      label: t('Sales revenue'),
-      value: formatProfitMoney(summary?.revenue_micros ?? 0),
+      label: t('Nominal consumption'),
+      value: formatProfitMoney(attributed.nominalConsumptionMicros),
       tone: '',
+    },
+    {
+      label: t('Recognized revenue'),
+      value: formatProfitMoney(attributed.recognizedRevenueMicros),
+      tone: '',
+    },
+    {
+      label: t('Gift consumption'),
+      value: formatProfitMoney(attributed.promoConsumptionMicros),
+      tone: 'text-amber-600 dark:text-amber-400',
+    },
+    {
+      label: t('Gift cost'),
+      value:
+        summary && (summary.promo_unpriced_record_count ?? 0) === 0
+          ? formatProfitMoney(attributed.promoCostMicros)
+          : '--',
+      tone: 'text-rose-600 dark:text-rose-400',
+    },
+    {
+      label: t('Admin consumption'),
+      value: formatProfitMoney(attributed.adminConsumptionMicros),
+      tone: 'text-amber-600 dark:text-amber-400',
+    },
+    {
+      label: t('Admin cost'),
+      value:
+        summary && (summary.admin_unpriced_record_count ?? 0) === 0
+          ? formatProfitMoney(attributed.adminCostMicros)
+          : '--',
+      tone: 'text-rose-600 dark:text-rose-400',
+    },
+    {
+      label: t('Legacy unattributed consumption'),
+      value: formatProfitMoney(attributed.legacyUnknownConsumptionMicros),
+      tone: 'text-muted-foreground',
     },
     {
       label: t('Purchase cost'),
@@ -60,7 +102,7 @@ export function ProfitSummary(props: { summary?: ProfitAggregate }) {
   ]
 
   return (
-    <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
+    <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5'>
       {metrics.map((metric) => (
         <Card key={metric.label} size='sm'>
           <CardHeader>

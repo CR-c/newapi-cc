@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -22,7 +23,12 @@ type TopUp struct {
 	CreateTime      int64   `json:"create_time"`
 	CompleteTime    int64   `json:"complete_time"`
 	Status          string  `json:"status"`
+	PrincipalQuota  int     `json:"principal_quota" gorm:"type:int;default:0"`
+	PromoQuota      int     `json:"promo_quota" gorm:"type:int;default:0"`
+	SnapshotVersion int     `json:"snapshot_version" gorm:"type:int;default:0"`
 }
+
+const CurrentTopUpSnapshotVersion = 1
 
 const (
 	PaymentMethodStripe       = "stripe"
@@ -46,6 +52,127 @@ var (
 	ErrTopUpNotFound         = errors.New("topup not found")
 	ErrTopUpStatusInvalid    = errors.New("topup status invalid")
 )
+
+type topUpCompletionMetadata struct {
+	StripeCustomer string
+	CustomerEmail  string
+	PaymentMethod  string
+}
+
+func (topUp *TopUp) SetQuotaSnapshot(principalQuota int, promoQuota int) error {
+	if principalQuota <= 0 || principalQuota > common.MaxQuota {
+		return errors.New("无效的充值本金")
+	}
+	if promoQuota < 0 || promoQuota > common.MaxQuota-principalQuota {
+		return errors.New("无效的充值赠送额度")
+	}
+	topUp.PrincipalQuota = principalQuota
+	topUp.PromoQuota = promoQuota
+	topUp.SnapshotVersion = CurrentTopUpSnapshotVersion
+	return nil
+}
+
+func (topUp *TopUp) ensureQuotaSnapshot() error {
+	if topUp.SnapshotVersion > 0 {
+		return topUp.SetQuotaSnapshot(topUp.PrincipalQuota, topUp.PromoQuota)
+	}
+
+	var quotaDecimal decimal.Decimal
+	if topUp.PaymentProvider == PaymentProviderCreem {
+		quotaDecimal = decimal.NewFromInt(topUp.Amount)
+	} else if topUp.PaymentProvider == PaymentProviderStripe {
+		if math.IsNaN(topUp.Money) || math.IsInf(topUp.Money, 0) {
+			return errors.New("无效的充值额度")
+		}
+		quotaDecimal = decimal.NewFromFloat(topUp.Money).Mul(decimal.NewFromFloat(common.QuotaPerUnit))
+	} else {
+		quotaDecimal = decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit))
+	}
+	principalQuota, clamp := common.QuotaFromDecimalChecked(quotaDecimal)
+	if clamp != nil {
+		return errors.New("充值额度超出上限")
+	}
+	return topUp.SetQuotaSnapshot(principalQuota, 0)
+}
+
+func topUpWalletEventKey(tradeNo string, bucket WalletBucket) string {
+	eventKey := "topup:" + tradeNo + ":" + string(bucket)
+	if len(eventKey) <= 191 {
+		return eventKey
+	}
+	return "topup:" + common.Sha1([]byte(tradeNo)) + ":" + string(bucket)
+}
+
+func completeTopUp(tradeNo string, expectedPaymentProvider string, metadata topUpCompletionMetadata) (*TopUp, bool, error) {
+	if tradeNo == "" {
+		return nil, false, errors.New("未提供支付单号")
+	}
+
+	refCol := "`trade_no`"
+	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		refCol = `"trade_no"`
+	}
+
+	topUp := &TopUp{}
+	credited := false
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
+			return ErrTopUpNotFound
+		}
+		if expectedPaymentProvider != "" && topUp.PaymentProvider != expectedPaymentProvider {
+			return ErrPaymentMethodMismatch
+		}
+		if topUp.Status == common.TopUpStatusSuccess {
+			return nil
+		}
+		if topUp.Status != common.TopUpStatusPending {
+			return ErrTopUpStatusInvalid
+		}
+		if metadata.PaymentMethod != "" {
+			topUp.PaymentMethod = metadata.PaymentMethod
+		}
+		if err := topUp.ensureQuotaSnapshot(); err != nil {
+			return err
+		}
+
+		if _, err := CreditWalletTx(tx, topUp.UserId, topUp.PrincipalQuota, WalletBucketPaid, topUpWalletEventKey(topUp.TradeNo, WalletBucketPaid)); err != nil {
+			return err
+		}
+		if topUp.PromoQuota > 0 {
+			if _, err := CreditWalletTx(tx, topUp.UserId, topUp.PromoQuota, WalletBucketPromo, topUpWalletEventKey(topUp.TradeNo, WalletBucketPromo)); err != nil {
+				return err
+			}
+		}
+
+		if metadata.StripeCustomer != "" {
+			if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("stripe_customer", metadata.StripeCustomer).Error; err != nil {
+				return err
+			}
+		}
+		if metadata.CustomerEmail != "" {
+			if err := tx.Model(&User{}).Where("id = ? AND (email = '' OR email IS NULL)", topUp.UserId).Update("email", metadata.CustomerEmail).Error; err != nil {
+				return err
+			}
+		}
+
+		topUp.CompleteTime = common.GetTimestamp()
+		topUp.Status = common.TopUpStatusSuccess
+		if err := tx.Save(topUp).Error; err != nil {
+			return err
+		}
+		credited = true
+		return nil
+	})
+	if err != nil {
+		return topUp, false, err
+	}
+	if credited {
+		if err := InvalidateUserCache(topUp.UserId); err != nil {
+			common.SysLog(fmt.Sprintf("failed to invalidate user cache after topup %s: %s", tradeNo, err.Error()))
+		}
+	}
+	return topUp, credited, nil
+}
 
 func (topUp *TopUp) Insert() error {
 	var err error
@@ -107,55 +234,14 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 }
 
 func Recharge(referenceId string, customerId string, callerIp string) (err error) {
-	if referenceId == "" {
-		return errors.New("未提供支付单号")
-	}
-
-	var quota float64
-	topUp := &TopUp{}
-
-	refCol := "`trade_no`"
-	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
-		refCol = `"trade_no"`
-	}
-
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		err := lockForUpdate(tx).Where(refCol+" = ?", referenceId).First(topUp).Error
-		if err != nil {
-			return errors.New("充值订单不存在")
-		}
-
-		if topUp.PaymentProvider != PaymentProviderStripe {
-			return ErrPaymentMethodMismatch
-		}
-
-		if topUp.Status != common.TopUpStatusPending {
-			return errors.New("充值订单状态错误")
-		}
-
-		topUp.CompleteTime = common.GetTimestamp()
-		topUp.Status = common.TopUpStatusSuccess
-		err = tx.Save(topUp).Error
-		if err != nil {
-			return err
-		}
-
-		quota = topUp.Money * common.QuotaPerUnit
-		err = tx.Model(&User{}).Where("id = ?", topUp.UserId).Updates(map[string]interface{}{"stripe_customer": customerId, "quota": gorm.Expr("quota + ?", quota)}).Error
-		if err != nil {
-			return err
-		}
-
-		return nil
-	})
-
+	topUp, credited, err := completeTopUp(referenceId, PaymentProviderStripe, topUpCompletionMetadata{StripeCustomer: customerId})
 	if err != nil {
 		common.SysError("topup failed: " + err.Error())
 		return errors.New("充值失败，请稍后重试")
 	}
-
-	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%d", logger.FormatQuota(int(quota)), topUp.Amount), callerIp, topUp.PaymentMethod, PaymentMethodStripe)
-
+	if credited {
+		RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，赠送额度: %v，支付金额：%d", logger.FormatQuota(topUp.PrincipalQuota), logger.FormatQuota(topUp.PromoQuota), topUp.Amount), callerIp, topUp.PaymentMethod, PaymentMethodStripe)
+	}
 	return nil
 }
 
@@ -318,272 +404,59 @@ func SearchAllTopUps(keyword string, pageInfo *common.PageInfo) (topups []*TopUp
 
 // ManualCompleteTopUp 管理员手动完成订单并给用户充值
 func ManualCompleteTopUp(tradeNo string, callerIp string) error {
-	if tradeNo == "" {
-		return errors.New("未提供订单号")
-	}
-
-	refCol := "`trade_no`"
-	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
-		refCol = `"trade_no"`
-	}
-
-	var userId int
-	var quotaToAdd int
-	var payMoney float64
-	var paymentMethod string
-
-	err := DB.Transaction(func(tx *gorm.DB) error {
-		topUp := &TopUp{}
-		// 行级锁，避免并发补单
-		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
-			return errors.New("充值订单不存在")
-		}
-
-		// 幂等处理：已成功直接返回
-		if topUp.Status == common.TopUpStatusSuccess {
-			return nil
-		}
-
-		if topUp.Status != common.TopUpStatusPending {
-			return errors.New("订单状态不是待支付，无法补单")
-		}
-
-		// 计算应充值额度：
-		// - Stripe 订单：Money 代表经分组倍率换算后的美元数量，直接 * QuotaPerUnit
-		// - 其他订单（如易支付）：Amount 为美元数量，* QuotaPerUnit
-		if topUp.PaymentProvider == PaymentProviderStripe {
-			dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
-			quotaToAdd = int(decimal.NewFromFloat(topUp.Money).Mul(dQuotaPerUnit).IntPart())
-		} else {
-			dAmount := decimal.NewFromInt(topUp.Amount)
-			dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
-			quotaToAdd = int(dAmount.Mul(dQuotaPerUnit).IntPart())
-		}
-		if quotaToAdd <= 0 {
-			return errors.New("无效的充值额度")
-		}
-
-		// 标记完成
-		topUp.CompleteTime = common.GetTimestamp()
-		topUp.Status = common.TopUpStatusSuccess
-		if err := tx.Save(topUp).Error; err != nil {
-			return err
-		}
-
-		// 增加用户额度（立即写库，保持一致性）
-		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
-			return err
-		}
-
-		userId = topUp.UserId
-		payMoney = topUp.Money
-		paymentMethod = topUp.PaymentMethod
-		return nil
-	})
-
+	topUp, credited, err := completeTopUp(tradeNo, "", topUpCompletionMetadata{})
 	if err != nil {
 		return err
 	}
-
-	// 事务外记录日志，避免阻塞
-	RecordTopupLog(userId, fmt.Sprintf("管理员补单成功，充值金额: %v，支付金额：%f", logger.FormatQuota(quotaToAdd), payMoney), callerIp, paymentMethod, "admin")
+	if credited {
+		RecordTopupLog(topUp.UserId, fmt.Sprintf("管理员补单成功，充值金额: %v，赠送额度: %v，支付金额：%f", logger.FormatQuota(topUp.PrincipalQuota), logger.FormatQuota(topUp.PromoQuota), topUp.Money), callerIp, topUp.PaymentMethod, "admin")
+	}
 	return nil
 }
+
+func RechargeEpay(tradeNo string, paymentMethod string, callerIp string) error {
+	topUp, credited, err := completeTopUp(tradeNo, PaymentProviderEpay, topUpCompletionMetadata{PaymentMethod: paymentMethod})
+	if err != nil {
+		return err
+	}
+	if credited {
+		RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，赠送额度: %v，支付金额：%f", logger.LogQuota(topUp.PrincipalQuota), logger.LogQuota(topUp.PromoQuota), topUp.Money), callerIp, topUp.PaymentMethod, PaymentProviderEpay)
+	}
+	return nil
+}
+
 func RechargeCreem(referenceId string, customerEmail string, customerName string, callerIp string) (err error) {
-	if referenceId == "" {
-		return errors.New("未提供支付单号")
-	}
-
-	var quota int64
-	topUp := &TopUp{}
-
-	refCol := "`trade_no`"
-	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
-		refCol = `"trade_no"`
-	}
-
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		err := lockForUpdate(tx).Where(refCol+" = ?", referenceId).First(topUp).Error
-		if err != nil {
-			return errors.New("充值订单不存在")
-		}
-
-		if topUp.PaymentProvider != PaymentProviderCreem {
-			return ErrPaymentMethodMismatch
-		}
-
-		if topUp.Status != common.TopUpStatusPending {
-			return errors.New("充值订单状态错误")
-		}
-
-		topUp.CompleteTime = common.GetTimestamp()
-		topUp.Status = common.TopUpStatusSuccess
-		err = tx.Save(topUp).Error
-		if err != nil {
-			return err
-		}
-
-		// Creem 直接使用 Amount 作为充值额度（整数）
-		quota = topUp.Amount
-
-		// 构建更新字段，优先使用邮箱，如果邮箱为空则使用用户名
-		updateFields := map[string]interface{}{
-			"quota": gorm.Expr("quota + ?", quota),
-		}
-
-		// 如果有客户邮箱，尝试更新用户邮箱（仅当用户邮箱为空时）
-		if customerEmail != "" {
-			// 先检查用户当前邮箱是否为空
-			var user User
-			err = tx.Where("id = ?", topUp.UserId).First(&user).Error
-			if err != nil {
-				return err
-			}
-
-			// 如果用户邮箱为空，则更新为支付时使用的邮箱
-			if user.Email == "" {
-				updateFields["email"] = customerEmail
-			}
-		}
-
-		err = tx.Model(&User{}).Where("id = ?", topUp.UserId).Updates(updateFields).Error
-		if err != nil {
-			return err
-		}
-
-		return nil
-	})
-
+	topUp, credited, err := completeTopUp(referenceId, PaymentProviderCreem, topUpCompletionMetadata{CustomerEmail: customerEmail})
 	if err != nil {
 		common.SysError("creem topup failed: " + err.Error())
 		return errors.New("充值失败，请稍后重试")
 	}
-
-	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用Creem充值成功，充值额度: %v，支付金额：%.2f", quota, topUp.Money), callerIp, topUp.PaymentMethod, PaymentMethodCreem)
-
+	if credited {
+		RecordTopupLog(topUp.UserId, fmt.Sprintf("使用Creem充值成功，充值额度: %v，赠送额度: %v，支付金额：%.2f", logger.FormatQuota(topUp.PrincipalQuota), logger.FormatQuota(topUp.PromoQuota), topUp.Money), callerIp, topUp.PaymentMethod, PaymentMethodCreem)
+	}
 	return nil
 }
 
 func RechargeWaffo(tradeNo string, callerIp string) (err error) {
-	if tradeNo == "" {
-		return errors.New("未提供支付单号")
-	}
-
-	var quotaToAdd int
-	topUp := &TopUp{}
-
-	refCol := "`trade_no`"
-	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
-		refCol = `"trade_no"`
-	}
-
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error
-		if err != nil {
-			return errors.New("充值订单不存在")
-		}
-
-		if topUp.PaymentProvider != PaymentProviderWaffo {
-			return ErrPaymentMethodMismatch
-		}
-
-		if topUp.Status == common.TopUpStatusSuccess {
-			return nil // 幂等：已成功直接返回
-		}
-
-		if topUp.Status != common.TopUpStatusPending {
-			return errors.New("充值订单状态错误")
-		}
-
-		dAmount := decimal.NewFromInt(topUp.Amount)
-		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
-		quotaToAdd = int(dAmount.Mul(dQuotaPerUnit).IntPart())
-		if quotaToAdd <= 0 {
-			return errors.New("无效的充值额度")
-		}
-
-		topUp.CompleteTime = common.GetTimestamp()
-		topUp.Status = common.TopUpStatusSuccess
-		if err := tx.Save(topUp).Error; err != nil {
-			return err
-		}
-
-		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
-			return err
-		}
-
-		return nil
-	})
-
+	topUp, credited, err := completeTopUp(tradeNo, PaymentProviderWaffo, topUpCompletionMetadata{})
 	if err != nil {
 		common.SysError("waffo topup failed: " + err.Error())
 		return errors.New("充值失败，请稍后重试")
 	}
-
-	if quotaToAdd > 0 {
-		RecordTopupLog(topUp.UserId, fmt.Sprintf("Waffo充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money), callerIp, topUp.PaymentMethod, PaymentMethodWaffo)
+	if credited {
+		RecordTopupLog(topUp.UserId, fmt.Sprintf("Waffo充值成功，充值额度: %v，赠送额度: %v，支付金额: %.2f", logger.FormatQuota(topUp.PrincipalQuota), logger.FormatQuota(topUp.PromoQuota), topUp.Money), callerIp, topUp.PaymentMethod, PaymentMethodWaffo)
 	}
-
 	return nil
 }
 
 func RechargeWaffoPancake(tradeNo string) (err error) {
-	if tradeNo == "" {
-		return errors.New("未提供支付单号")
-	}
-
-	var quotaToAdd int
-	topUp := &TopUp{}
-
-	refCol := "`trade_no`"
-	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
-		refCol = `"trade_no"`
-	}
-
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error
-		if err != nil {
-			return errors.New("充值订单不存在")
-		}
-
-		if topUp.PaymentProvider != PaymentProviderWaffoPancake {
-			return ErrPaymentMethodMismatch
-		}
-
-		if topUp.Status == common.TopUpStatusSuccess {
-			return nil
-		}
-
-		if topUp.Status != common.TopUpStatusPending {
-			return errors.New("充值订单状态错误")
-		}
-
-		quotaToAdd = int(decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).IntPart())
-		if quotaToAdd <= 0 {
-			return errors.New("无效的充值额度")
-		}
-
-		topUp.CompleteTime = common.GetTimestamp()
-		topUp.Status = common.TopUpStatusSuccess
-		if err := tx.Save(topUp).Error; err != nil {
-			return err
-		}
-
-		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
-			return err
-		}
-
-		return nil
-	})
-
+	topUp, credited, err := completeTopUp(tradeNo, PaymentProviderWaffoPancake, topUpCompletionMetadata{})
 	if err != nil {
 		common.SysError("waffo pancake topup failed: " + err.Error())
 		return errors.New("充值失败，请稍后重试")
 	}
-
-	if quotaToAdd > 0 {
-		RecordLog(topUp.UserId, LogTypeTopup, fmt.Sprintf("Waffo Pancake充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money))
+	if credited {
+		RecordLog(topUp.UserId, LogTypeTopup, fmt.Sprintf("Waffo Pancake充值成功，充值额度: %v，赠送额度: %v，支付金额: %.2f", logger.FormatQuota(topUp.PrincipalQuota), logger.FormatQuota(topUp.PromoQuota), topUp.Money))
 	}
-
 	return nil
 }

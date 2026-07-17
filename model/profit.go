@@ -17,7 +17,10 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const profitMicrosPerUnit int64 = 1_000_000
+const (
+	profitMicrosPerUnit             int64 = 1_000_000
+	currentProfitAttributionVersion       = 1
+)
 
 var profitBackfillMutex sync.Mutex
 var profitEpochMutex sync.RWMutex
@@ -64,23 +67,33 @@ type ProfitResetLogKey struct {
 }
 
 type ProfitRecord struct {
-	Id              int64  `json:"id" gorm:"primaryKey"`
-	SourceLogKey    string `json:"source_log_key" gorm:"type:varchar(128);uniqueIndex:idx_profit_source_generation,priority:1"`
-	Generation      int64  `json:"-" gorm:"not null;default:0;uniqueIndex:idx_profit_source_generation,priority:2;index"`
-	SourceRequestId string `json:"source_request_id" gorm:"type:varchar(128);index"`
-	OccurredAt      int64  `json:"occurred_at" gorm:"index"`
-	UserId          int    `json:"user_id" gorm:"index"`
-	ModelName       string `json:"model_name" gorm:"type:varchar(191);index"`
-	CostModelName   string `json:"cost_model_name" gorm:"type:varchar(191);index"`
-	ChannelId       int    `json:"channel_id" gorm:"index"`
-	Group           string `json:"group" gorm:"type:varchar(64);index"`
-	RevenueMicros   int64  `json:"revenue_micros"`
-	CostMicros      int64  `json:"cost_micros"`
-	CostKnown       bool   `json:"cost_known" gorm:"index"`
-	Estimated       bool   `json:"estimated" gorm:"index"`
-	CostRuleId      int64  `json:"cost_rule_id" gorm:"index"`
-	CostRuleVersion int    `json:"cost_rule_version"`
-	BillingSnapshot string `json:"billing_snapshot" gorm:"type:text"`
+	Id                      int64  `json:"id" gorm:"primaryKey"`
+	SourceLogKey            string `json:"source_log_key" gorm:"type:varchar(128);uniqueIndex:idx_profit_source_generation,priority:1"`
+	Generation              int64  `json:"-" gorm:"not null;default:0;uniqueIndex:idx_profit_source_generation,priority:2;index"`
+	SourceRequestId         string `json:"source_request_id" gorm:"type:varchar(128);index"`
+	OccurredAt              int64  `json:"occurred_at" gorm:"index"`
+	UserId                  int    `json:"user_id" gorm:"index"`
+	ModelName               string `json:"model_name" gorm:"type:varchar(191);index"`
+	CostModelName           string `json:"cost_model_name" gorm:"type:varchar(191);index"`
+	ChannelId               int    `json:"channel_id" gorm:"index"`
+	Group                   string `json:"group" gorm:"type:varchar(64);index"`
+	GrossConsumptionMicros  int64  `json:"gross_consumption_micros"`
+	RevenueMicros           int64  `json:"revenue_micros"`
+	PromoConsumptionMicros  int64  `json:"promo_consumption_micros"`
+	LegacyConsumptionMicros int64  `json:"legacy_consumption_micros"`
+	AdminConsumptionMicros  int64  `json:"admin_consumption_micros"`
+	PromoCostMicros         int64  `json:"promo_cost_micros"`
+	AdminCostMicros         int64  `json:"admin_cost_micros"`
+	RevenueClass            string `json:"revenue_class" gorm:"type:varchar(32);index"`
+	UserRoleSnapshot        int    `json:"user_role_snapshot"`
+	AttributionKnown        bool   `json:"attribution_known" gorm:"index"`
+	AttributionVersion      int    `json:"-" gorm:"not null;default:0;index"`
+	CostMicros              int64  `json:"cost_micros"`
+	CostKnown               bool   `json:"cost_known" gorm:"index"`
+	Estimated               bool   `json:"estimated" gorm:"index"`
+	CostRuleId              int64  `json:"cost_rule_id" gorm:"index"`
+	CostRuleVersion         int    `json:"cost_rule_version"`
+	BillingSnapshot         string `json:"billing_snapshot" gorm:"type:text"`
 }
 
 type ProfitQuery struct {
@@ -95,20 +108,28 @@ type ProfitQuery struct {
 }
 
 type ProfitAggregate struct {
-	UserId              int      `json:"user_id,omitempty"`
-	Username            string   `json:"username,omitempty" gorm:"-"`
-	ModelName           string   `json:"model_name,omitempty"`
-	ChannelId           int      `json:"channel_id,omitempty"`
-	ChannelName         string   `json:"channel_name,omitempty" gorm:"-"`
-	Group               string   `json:"group,omitempty"`
-	RevenueMicros       int64    `json:"revenue_micros"`
-	KnownRevenueMicros  int64    `json:"known_revenue_micros"`
-	CostMicros          int64    `json:"cost_micros"`
-	ProfitMicros        int64    `json:"profit_micros"`
-	RecordCount         int64    `json:"record_count"`
-	UnpricedRecordCount int64    `json:"unpriced_record_count"`
-	ProfitMargin        *float64 `json:"profit_margin" gorm:"-"`
-	CostCoverage        float64  `json:"cost_coverage" gorm:"-"`
+	UserId                   int      `json:"user_id,omitempty"`
+	Username                 string   `json:"username,omitempty" gorm:"-"`
+	ModelName                string   `json:"model_name,omitempty"`
+	ChannelId                int      `json:"channel_id,omitempty"`
+	ChannelName              string   `json:"channel_name,omitempty" gorm:"-"`
+	Group                    string   `json:"group,omitempty"`
+	GrossConsumptionMicros   int64    `json:"gross_consumption_micros"`
+	RevenueMicros            int64    `json:"revenue_micros"`
+	KnownRevenueMicros       int64    `json:"known_revenue_micros"`
+	PromoConsumptionMicros   int64    `json:"promo_consumption_micros"`
+	LegacyConsumptionMicros  int64    `json:"legacy_consumption_micros"`
+	AdminConsumptionMicros   int64    `json:"admin_consumption_micros"`
+	PromoCostMicros          int64    `json:"promo_cost_micros"`
+	AdminCostMicros          int64    `json:"admin_cost_micros"`
+	PromoUnpricedRecordCount int64    `json:"promo_unpriced_record_count"`
+	AdminUnpricedRecordCount int64    `json:"admin_unpriced_record_count"`
+	CostMicros               int64    `json:"cost_micros"`
+	ProfitMicros             int64    `json:"profit_micros"`
+	RecordCount              int64    `json:"record_count"`
+	UnpricedRecordCount      int64    `json:"unpriced_record_count"`
+	ProfitMargin             *float64 `json:"profit_margin" gorm:"-"`
+	CostCoverage             float64  `json:"cost_coverage" gorm:"-"`
 }
 
 func (record *ProfitRecord) ProfitMicros() int64 {
@@ -124,6 +145,15 @@ type profitBillingSnapshot struct {
 	GroupRatio        float64 `json:"group_ratio"`
 	UpstreamModelName string  `json:"upstream_model_name"`
 	ProfitGeneration  *int64  `json:"profit_generation"`
+	BillingSource     string  `json:"billing_source"`
+	IsAdminUsage      bool    `json:"is_admin_usage"`
+	UserRoleSnapshot  int     `json:"user_role_snapshot"`
+	WalletFunding     struct {
+		Version     int `json:"version"`
+		PaidQuota   int `json:"paid_quota"`
+		PromoQuota  int `json:"promo_quota"`
+		LegacyQuota int `json:"legacy_quota"`
+	} `json:"wallet_funding"`
 }
 
 func attachProfitGeneration(log *Log, generation int64) (int64, error) {
@@ -224,23 +254,71 @@ func calculateProfitRecord(log *Log, rule *ModelCostRule, estimated bool) (*Prof
 	if log.Type == LogTypeRefund {
 		sign = -1
 	}
-	revenueMicros := decimal.NewFromInt(int64(log.Quota)).
+	grossConsumptionMicros := decimal.NewFromInt(int64(log.Quota)).
 		Mul(decimal.NewFromInt(profitMicrosPerUnit)).
 		Div(decimal.NewFromFloat(common.QuotaPerUnit)).
 		Round(0).
 		IntPart() * sign
+	revenueMicros := int64(0)
+	var snapshot profitBillingSnapshot
+	attributionKnown := false
+	revenueClass := "legacy_unknown"
+	promoConsumptionMicros := int64(0)
+	legacyConsumptionMicros := grossConsumptionMicros
+	adminConsumptionMicros := int64(0)
+	if log.Other != "" && common.UnmarshalJsonStr(log.Other, &snapshot) == nil {
+		if snapshot.WalletFunding.Version > 0 {
+			attributionKnown = true
+			legacyConsumptionMicros = 0
+			quotaMicros := func(quota int) int64 {
+				return decimal.NewFromInt(int64(quota)).
+					Mul(decimal.NewFromInt(profitMicrosPerUnit)).
+					Div(decimal.NewFromFloat(common.QuotaPerUnit)).
+					Round(0).IntPart() * sign
+			}
+			revenueMicros = quotaMicros(snapshot.WalletFunding.PaidQuota)
+			promoConsumptionMicros = quotaMicros(snapshot.WalletFunding.PromoQuota)
+			legacyConsumptionMicros = quotaMicros(snapshot.WalletFunding.LegacyQuota)
+			switch {
+			case snapshot.WalletFunding.PaidQuota > 0 && (snapshot.WalletFunding.PromoQuota > 0 || snapshot.WalletFunding.LegacyQuota > 0):
+				revenueClass = "mixed"
+			case snapshot.WalletFunding.PaidQuota > 0:
+				revenueClass = "paid"
+			case snapshot.WalletFunding.PromoQuota > 0:
+				revenueClass = "promo"
+			default:
+				revenueClass = "legacy_unknown"
+			}
+		}
+		if snapshot.IsAdminUsage {
+			revenueMicros = 0
+			promoConsumptionMicros = 0
+			legacyConsumptionMicros = 0
+			adminConsumptionMicros = grossConsumptionMicros
+			revenueClass = "admin"
+			attributionKnown = true
+		}
+	}
 	record := &ProfitRecord{
-		SourceLogKey:    profitSourceLogKey(log),
-		SourceRequestId: log.RequestId,
-		OccurredAt:      log.CreatedAt,
-		UserId:          log.UserId,
-		ModelName:       log.ModelName,
-		CostModelName:   profitCostModelName(log),
-		ChannelId:       log.ChannelId,
-		Group:           log.Group,
-		RevenueMicros:   revenueMicros,
-		Estimated:       estimated,
-		BillingSnapshot: log.Other,
+		SourceLogKey:            profitSourceLogKey(log),
+		SourceRequestId:         log.RequestId,
+		OccurredAt:              log.CreatedAt,
+		UserId:                  log.UserId,
+		ModelName:               log.ModelName,
+		CostModelName:           profitCostModelName(log),
+		ChannelId:               log.ChannelId,
+		Group:                   log.Group,
+		GrossConsumptionMicros:  grossConsumptionMicros,
+		RevenueMicros:           revenueMicros,
+		PromoConsumptionMicros:  promoConsumptionMicros,
+		LegacyConsumptionMicros: legacyConsumptionMicros,
+		AdminConsumptionMicros:  adminConsumptionMicros,
+		RevenueClass:            revenueClass,
+		UserRoleSnapshot:        snapshot.UserRoleSnapshot,
+		AttributionKnown:        attributionKnown,
+		AttributionVersion:      currentProfitAttributionVersion,
+		Estimated:               estimated,
+		BillingSnapshot:         log.Other,
 	}
 	if rule == nil {
 		return record, nil
@@ -248,7 +326,6 @@ func calculateProfitRecord(log *Log, rule *ModelCostRule, estimated bool) (*Prof
 	if err := validateModelCostRule(rule); err != nil {
 		return nil, err
 	}
-	var snapshot profitBillingSnapshot
 	if log.Other == "" || common.UnmarshalJsonStr(log.Other, &snapshot) != nil {
 		return record, nil
 	}
@@ -262,12 +339,20 @@ func calculateProfitRecord(log *Log, rule *ModelCostRule, estimated bool) (*Prof
 		return record, nil
 	}
 	costBase := rule.PurchasePriceCNY
-	costMicros := decimal.NewFromInt(revenueMicros).
+	costMicros := decimal.NewFromInt(grossConsumptionMicros).
 		Mul(decimal.NewFromFloat(costBase)).
 		Div(decimal.NewFromFloat(saleBase)).
 		Round(0).
 		IntPart()
 	record.CostMicros = costMicros
+	if adminConsumptionMicros != 0 {
+		record.AdminCostMicros = costMicros
+	} else if promoConsumptionMicros != 0 && grossConsumptionMicros != 0 {
+		record.PromoCostMicros = decimal.NewFromInt(costMicros).
+			Mul(decimal.NewFromInt(promoConsumptionMicros)).
+			Div(decimal.NewFromInt(grossConsumptionMicros)).
+			Round(0).IntPart()
+	}
 	record.CostKnown = true
 	record.CostRuleId = rule.Id
 	record.CostRuleVersion = rule.Version
@@ -576,7 +661,7 @@ func BackfillProfitRecords() error {
 				return existingQuery.Error
 			}
 			exists := existingQuery.RowsAffected > 0
-			if exists && existing.CostKnown {
+			if exists && existing.CostKnown && existing.AttributionVersion >= currentProfitAttributionVersion {
 				continue
 			}
 			costModelName := profitCostModelName(log)
@@ -732,8 +817,16 @@ func profitAggregateSelect(columns string) string {
 		prefix = columns + ", "
 	}
 	return prefix +
+		"COALESCE(SUM(gross_consumption_micros), 0) AS gross_consumption_micros, " +
 		"COALESCE(SUM(revenue_micros), 0) AS revenue_micros, " +
 		"COALESCE(SUM(CASE WHEN cost_known = ? THEN revenue_micros ELSE 0 END), 0) AS known_revenue_micros, " +
+		"COALESCE(SUM(promo_consumption_micros), 0) AS promo_consumption_micros, " +
+		"COALESCE(SUM(legacy_consumption_micros), 0) AS legacy_consumption_micros, " +
+		"COALESCE(SUM(admin_consumption_micros), 0) AS admin_consumption_micros, " +
+		"COALESCE(SUM(promo_cost_micros), 0) AS promo_cost_micros, " +
+		"COALESCE(SUM(admin_cost_micros), 0) AS admin_cost_micros, " +
+		"COALESCE(SUM(CASE WHEN promo_consumption_micros <> 0 AND cost_known = ? THEN 1 ELSE 0 END), 0) AS promo_unpriced_record_count, " +
+		"COALESCE(SUM(CASE WHEN admin_consumption_micros <> 0 AND cost_known = ? THEN 1 ELSE 0 END), 0) AS admin_unpriced_record_count, " +
 		"COALESCE(SUM(cost_micros), 0) AS cost_micros, " +
 		"COALESCE(SUM(CASE WHEN cost_known = ? THEN revenue_micros ELSE 0 END), 0) - COALESCE(SUM(cost_micros), 0) AS profit_micros, " +
 		"COUNT(*) AS record_count, " +
@@ -750,7 +843,7 @@ func GetProfitAggregate(query ProfitQuery) (*ProfitAggregate, error) {
 	}
 	row := &ProfitAggregate{}
 	tx := applyProfitQuery(DB.Model(&ProfitRecord{}), query)
-	err := tx.Select(profitAggregateSelect(""), true, true, true).Scan(row).Error
+	err := tx.Select(profitAggregateSelect(""), true, false, false, true, true).Scan(row).Error
 	if err != nil {
 		return nil, err
 	}
@@ -778,7 +871,7 @@ func GetProfitBreakdown(query ProfitQuery, dimension string) ([]*ProfitAggregate
 	}
 	rows := make([]*ProfitAggregate, 0)
 	tx := applyProfitQuery(DB.Model(&ProfitRecord{}), query)
-	if err := tx.Select(profitAggregateSelect(column), true, true, true).
+	if err := tx.Select(profitAggregateSelect(column), true, false, false, true, true).
 		Group(column).
 		Order("profit_micros DESC").
 		Scan(&rows).Error; err != nil {

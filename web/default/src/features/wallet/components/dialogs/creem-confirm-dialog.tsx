@@ -83,9 +83,25 @@ export function CreemConfirmDialog({
           </span>
         </div>
         <div className='flex items-center justify-between'>
-          <span className='text-muted-foreground'>{t('Quota')}</span>
+          <span className='text-muted-foreground'>{t('Principal')}</span>
           <span className='font-medium'>{formatNumber(product.quota)}</span>
         </div>
+        {(product.bonusQuota ?? 0) > 0 && (
+          <>
+            <div className='flex items-center justify-between'>
+              <span className='text-muted-foreground'>{t('Gift')}</span>
+              <span className='font-medium text-emerald-600 dark:text-emerald-400'>
+                +{formatNumber(product.bonusQuota ?? 0)}
+              </span>
+            </div>
+            <div className='flex items-center justify-between border-t pt-3'>
+              <span className='font-medium'>{t('Total credited')}</span>
+              <span className='font-semibold'>
+                {formatNumber(product.quota + (product.bonusQuota ?? 0))}
+              </span>
+            </div>
+          </>
+        )}
       </div>
     </Dialog>
   )

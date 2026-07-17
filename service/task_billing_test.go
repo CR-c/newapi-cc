@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -49,9 +50,12 @@ func TestMain(m *testing.M) {
 		&model.Log{},
 		&model.Channel{},
 		&model.TopUp{},
+		&model.SubscriptionPlan{},
 		&model.UserSubscription{},
+		&model.SubscriptionPreConsumeRecord{},
 		&model.SystemTask{},
 		&model.SystemTaskLock{},
+		&model.QuotaLedger{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -73,9 +77,169 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM channels")
 		model.DB.Exec("DELETE FROM top_ups")
 		model.DB.Exec("DELETE FROM user_subscriptions")
+		model.DB.Exec("DELETE FROM subscription_pre_consume_records")
+		model.DB.Exec("DELETE FROM subscription_plans")
 		model.DB.Exec("DELETE FROM system_task_locks")
 		model.DB.Exec("DELETE FROM system_tasks")
+		model.DB.Exec("DELETE FROM quota_ledgers")
 	})
+}
+
+func TestWalletFundingSettlementPreservesPromoFirstAllocation(t *testing.T) {
+	truncate(t)
+	user := &model.User{
+		Id: 991, Username: "wallet-funding", Status: common.UserStatusEnabled,
+		Quota: 100, PaidQuota: 50, PromoQuota: 50, WalletVersion: model.CurrentWalletVersion,
+	}
+	require.NoError(t, model.DB.Create(user).Error)
+
+	funding := &WalletFunding{userId: user.Id, requestId: "req-wallet-funding"}
+	require.NoError(t, funding.PreConsume(80))
+	assert.Equal(t, model.WalletAllocation{PaidQuota: 30, PromoQuota: 50}, funding.Allocation())
+
+	require.NoError(t, funding.Settle(-20))
+	assert.Equal(t, model.WalletAllocation{PaidQuota: 10, PromoQuota: 50}, funding.Allocation())
+
+	var stored model.User
+	require.NoError(t, model.DB.First(&stored, user.Id).Error)
+	assert.Equal(t, 40, stored.PaidQuota)
+	assert.Zero(t, stored.PromoQuota)
+	assert.Equal(t, 40, stored.Quota)
+}
+
+func TestFailedTaskSettlementRefundsOnlyConfirmedCharge(t *testing.T) {
+	truncate(t)
+	user := &model.User{
+		Id: 992, Username: "failed-task-settlement", Status: common.UserStatusEnabled,
+		Quota: 100, PaidQuota: 100, WalletVersion: model.CurrentWalletVersion,
+	}
+	require.NoError(t, model.DB.Create(user).Error)
+
+	funding := &WalletFunding{userId: user.Id, requestId: "req-failed-task-settlement"}
+	require.NoError(t, funding.PreConsume(80))
+	info := &relaycommon.RelayInfo{UserId: user.Id, IsPlayground: true}
+	session := &BillingSession{relayInfo: info, funding: funding, preConsumedQuota: 80}
+	info.Billing = session
+	session.syncRelayInfo()
+
+	gin.SetMode(gin.TestMode)
+	requestContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+	requestContext.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+	err := SettleBilling(requestContext, info, 120)
+	require.ErrorIs(t, err, model.ErrInsufficientWalletQuota)
+	assert.Equal(t, 80, info.FinalPreConsumedQuota)
+	assert.Equal(t, model.WalletAllocation{PaidQuota: 80}, funding.Allocation())
+
+	task := makeTask(user.Id, 0, info.FinalPreConsumedQuota, 0, BillingSourceWallet, 0)
+	task.PrivateData.WalletAllocation = funding.Allocation()
+	RefundTaskQuota(context.Background(), task, "settlement failed")
+
+	assert.Equal(t, 100, getUserQuota(t, user.Id))
+	assert.Zero(t, task.PrivateData.WalletAllocation.Total())
+	var refundLedger model.QuotaLedger
+	require.NoError(t, model.DB.Where("operation = ?", "refund").First(&refundLedger).Error)
+	assert.Equal(t, 80, refundLedger.Amount)
+}
+
+func TestLegacyPostConsumeRejectsRefundBeyondTrackedAllocation(t *testing.T) {
+	truncate(t)
+	user := &model.User{
+		Id: 993, Username: "legacy-post-refund", Status: common.UserStatusEnabled,
+		Quota: 20, PaidQuota: 20, WalletVersion: model.CurrentWalletVersion,
+	}
+	require.NoError(t, model.DB.Create(user).Error)
+	info := &relaycommon.RelayInfo{
+		RequestId: "req-legacy-post-refund", UserId: user.Id,
+		WalletPaidQuota: 30,
+	}
+
+	err := PostConsumeQuota(info, -50, 0, false)
+	require.ErrorContains(t, err, "refund exceeds consumed allocation")
+	assert.Equal(t, 20, getUserQuota(t, user.Id))
+	assert.Equal(t, 30, info.WalletPaidQuota)
+
+	var ledgerCount int64
+	require.NoError(t, model.DB.Model(&model.QuotaLedger{}).Count(&ledgerCount).Error)
+	assert.Zero(t, ledgerCount)
+}
+
+func TestBillingSessionTokenFailureKeepsConfirmedFundingAllocation(t *testing.T) {
+	truncate(t)
+	user := &model.User{
+		Id: 994, Username: "token-adjust-failure", Status: common.UserStatusEnabled,
+		Quota: 120, PaidQuota: 120, WalletVersion: model.CurrentWalletVersion,
+	}
+	require.NoError(t, model.DB.Create(user).Error)
+	funding := &WalletFunding{userId: user.Id, requestId: "req-token-adjust-failure"}
+	require.NoError(t, funding.PreConsume(80))
+
+	injectedErr := errors.New("injected token update failure")
+	callbackName := "test:fail-token-adjust"
+	require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register(callbackName, func(db *gorm.DB) {
+		if db.Statement.Schema != nil && db.Statement.Schema.Name == "Token" {
+			db.AddError(injectedErr)
+		}
+	}))
+	t.Cleanup(func() {
+		require.NoError(t, model.DB.Callback().Update().Remove(callbackName))
+	})
+
+	info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: 77, TokenKey: "sk-fail-token"}
+	session := &BillingSession{relayInfo: info, funding: funding, preConsumedQuota: 80, tokenConsumed: 80}
+	info.Billing = session
+	session.syncRelayInfo()
+
+	err := session.Settle(100)
+	require.ErrorIs(t, err, injectedErr)
+	assert.Equal(t, model.WalletAllocation{PaidQuota: 100}, funding.Allocation())
+	assert.Equal(t, 100, info.WalletPaidQuota+info.WalletPromoQuota+info.WalletLegacyQuota)
+	assert.Equal(t, 20, getUserQuota(t, user.Id))
+
+	task := makeTask(user.Id, 0, 100, 0, BillingSourceWallet, 0)
+	task.PrivateData.WalletAllocation = funding.Allocation()
+	RefundTaskQuota(context.Background(), task, "task failed after token adjustment error")
+	assert.Equal(t, 120, getUserQuota(t, user.Id))
+}
+
+func TestTaskSubscriptionAdjustmentPreservesMixedFundingAllocation(t *testing.T) {
+	truncate(t)
+	sub := &model.UserSubscription{
+		Id: 990, UserId: 991, AmountTotal: 1_000, AmountUsed: 100,
+		FundingPaidPPM: 500_000, FundingPromoPPM: 300_000,
+		FundingLegacyPPM: 200_000, FundingVersion: 1,
+	}
+	require.NoError(t, model.DB.Create(sub).Error)
+	task := &model.Task{
+		TaskID: "task-subscription-funding", UserId: sub.UserId, Quota: 100,
+		PrivateData: model.TaskPrivateData{
+			BillingSource: BillingSourceSubscription, SubscriptionId: sub.Id,
+			WalletAllocation: model.WalletAllocation{PaidQuota: 50, PromoQuota: 30, LegacyQuota: 20},
+		},
+	}
+
+	refunded, err := taskAdjustFunding(task, -40)
+	require.NoError(t, err)
+	assert.Equal(t, model.WalletAllocation{PaidQuota: 20, PromoQuota: 12, LegacyQuota: 8}, refunded)
+	assert.Equal(t, model.WalletAllocation{PaidQuota: 30, PromoQuota: 18, LegacyQuota: 12}, task.PrivateData.WalletAllocation)
+	assert.Equal(t, int64(60), getSubscriptionUsed(t, sub.Id))
+}
+
+func TestAppendBillingInfoIncludesSubscriptionFundingAndAdminUsage(t *testing.T) {
+	info := &relaycommon.RelayInfo{
+		BillingSource:   BillingSourceSubscription,
+		WalletPaidQuota: 20, WalletPromoQuota: 30, WalletLegacyQuota: 10,
+		UserRole: common.RoleAdminUser, IsAdminUsage: true,
+	}
+	other := map[string]interface{}{}
+
+	appendBillingInfo(info, other)
+
+	assert.Equal(t, BillingSourceSubscription, other["billing_source"])
+	assert.Equal(t, common.RoleAdminUser, other["user_role_snapshot"])
+	assert.Equal(t, true, other["is_admin_usage"])
+	assert.Equal(t, map[string]interface{}{
+		"version": 1, "paid_quota": 20, "promo_quota": 30, "legacy_quota": 10,
+	}, other["wallet_funding"])
 }
 
 func seedUser(t *testing.T, id int, quota int) {

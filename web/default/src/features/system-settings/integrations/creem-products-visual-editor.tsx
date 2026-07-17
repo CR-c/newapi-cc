@@ -218,6 +218,15 @@ export function CreemProductsVisualEditor({
                 ),
               },
               {
+                id: 'gift-quota',
+                header: t('Gift Quota'),
+                cell: (product) => (
+                  <span className='font-mono text-sm text-emerald-600 dark:text-emerald-400'>
+                    {formatQuotaShort(product.bonusQuota ?? 0)}
+                  </span>
+                ),
+              },
+              {
                 id: 'actions',
                 header: t('Actions'),
                 className: 'text-right',
@@ -280,6 +289,14 @@ export function CreemProductsVisualEditor({
                     </span>
                     <span className='font-mono'>
                       {formatCreemPrice(product.price, product.currency)}
+                    </span>
+                  </div>
+                  <div className='flex items-center gap-2'>
+                    <span className='text-muted-foreground min-w-16'>
+                      {t('Gift')}:
+                    </span>
+                    <span className='font-mono text-emerald-600 dark:text-emerald-400'>
+                      {formatQuotaShort(product.bonusQuota ?? 0)}
                     </span>
                   </div>
                   <div className='flex items-center gap-2'>

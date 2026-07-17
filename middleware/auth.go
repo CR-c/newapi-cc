@@ -148,7 +148,7 @@ func authHelper(c *gin.Context, minRole int) {
 	// 防止不同newapi版本冲突，导致数据不通用
 	c.Header("Auth-Version", "864b7076dbcd0a3c01b5520316720ebf")
 	c.Set("username", username)
-	c.Set("role", role)
+	common.SetContextKey(c, constant.ContextKeyUserRole, role.(int))
 	c.Set("id", id)
 	c.Set("group", session.Get("group"))
 	c.Set("user_group", session.Get("group"))

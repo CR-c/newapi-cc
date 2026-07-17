@@ -600,6 +600,13 @@ func RelayTask(c *gin.Context) {
 		task.Properties.Input = c.GetString("playground_prompt")
 		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
 		task.PrivateData.BillingSource = relayInfo.BillingSource
+		task.PrivateData.WalletAllocation = model.WalletAllocation{
+			PaidQuota:   relayInfo.WalletPaidQuota,
+			PromoQuota:  relayInfo.WalletPromoQuota,
+			LegacyQuota: relayInfo.WalletLegacyQuota,
+		}
+		task.PrivateData.UserRoleSnapshot = relayInfo.UserRole
+		task.PrivateData.IsAdminUsage = relayInfo.IsAdminUsage
 		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
 		task.PrivateData.TokenId = relayInfo.TokenId
 		task.PrivateData.NodeName = common.NodeName
@@ -612,15 +619,36 @@ func RelayTask(c *gin.Context) {
 			PerCallBilling:   common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
 			ProfitGeneration: relayInfo.ProfitGeneration,
 		}
-		task.Quota = result.Quota
+		// Persist the amount already charged first. If post-submit settlement fails,
+		// later task refunds must never exceed this proven allocation.
+		task.Quota = relayInfo.FinalPreConsumedQuota
 		task.Data = result.TaskData
 		task.Action = relayInfo.Action
 		if insertErr := task.Insert(); insertErr != nil {
 			common.SysError("insert task error: " + insertErr.Error())
 			taskErr = service.TaskErrorWrapperLocal(insertErr, "insert_task_failed", http.StatusInternalServerError)
 		} else {
-			if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
+			settleErr := service.SettleBilling(c, relayInfo, result.Quota)
+			if settleErr != nil {
 				common.SysError("settle task billing error: " + settleErr.Error())
+			}
+			confirmedQuota := relayInfo.WalletPaidQuota + relayInfo.WalletPromoQuota + relayInfo.WalletLegacyQuota
+			if confirmedQuota == 0 {
+				if settleErr == nil {
+					confirmedQuota = result.Quota
+				} else {
+					confirmedQuota = relayInfo.FinalPreConsumedQuota
+				}
+			}
+			task.Quota = confirmedQuota
+			relayInfo.PriceData.Quota = confirmedQuota
+			task.PrivateData.WalletAllocation = model.WalletAllocation{
+				PaidQuota:   relayInfo.WalletPaidQuota,
+				PromoQuota:  relayInfo.WalletPromoQuota,
+				LegacyQuota: relayInfo.WalletLegacyQuota,
+			}
+			if updateErr := task.Update(); updateErr != nil {
+				common.SysError("update task billing attribution error: " + updateErr.Error())
 			}
 			service.LogTaskConsumption(c, relayInfo)
 		}

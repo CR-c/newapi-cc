@@ -66,6 +66,17 @@ export const userSchema = z.object({
     .object({
       revenue_micros: z.number(),
       known_revenue_micros: z.number(),
+      gross_consumption_micros: z.number().optional(),
+      nominal_consumption_micros: z.number().optional(),
+      recognized_revenue_micros: z.number().optional(),
+      promo_consumption_micros: z.number().optional(),
+      promo_cost_micros: z.number().optional(),
+      admin_consumption_micros: z.number().optional(),
+      admin_cost_micros: z.number().optional(),
+      promo_unpriced_record_count: z.number().optional(),
+      admin_unpriced_record_count: z.number().optional(),
+      legacy_consumption_micros: z.number().optional(),
+      legacy_unknown_consumption_micros: z.number().optional(),
       cost_micros: z.number(),
       profit_micros: z.number(),
       record_count: z.number(),
@@ -135,12 +146,14 @@ export type ManageUserAction =
   | 'add_quota'
 
 export type QuotaAdjustMode = 'add' | 'subtract' | 'override'
+export type QuotaFundingSource = 'paid' | 'promo'
 
 export interface ManageUserQuotaPayload {
   id: number
   action: 'add_quota'
   mode: QuotaAdjustMode
   value: number
+  funding_source?: QuotaFundingSource
 }
 
 // ============================================================================

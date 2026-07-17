@@ -159,6 +159,18 @@ func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other map[string]interf
 	if relayInfo.BillingSource != "" {
 		other["billing_source"] = relayInfo.BillingSource
 	}
+	other["user_role_snapshot"] = relayInfo.UserRole
+	if relayInfo.IsAdminUsage {
+		other["is_admin_usage"] = true
+	}
+	if relayInfo.WalletPaidQuota != 0 || relayInfo.WalletPromoQuota != 0 || relayInfo.WalletLegacyQuota != 0 {
+		other["wallet_funding"] = map[string]interface{}{
+			"version":      1,
+			"paid_quota":   relayInfo.WalletPaidQuota,
+			"promo_quota":  relayInfo.WalletPromoQuota,
+			"legacy_quota": relayInfo.WalletLegacyQuota,
+		}
+	}
 	if relayInfo.UserSetting.BillingPreference != "" {
 		other["billing_preference"] = relayInfo.UserSetting.BillingPreference
 	}
@@ -297,6 +309,7 @@ func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData types.Price
 		other["user_group_ratio"] = priceData.GroupRatioInfo.GroupSpecialRatio
 	}
 	appendRequestPath(nil, relayInfo, other)
+	appendBillingInfo(relayInfo, other)
 	return other
 }
 

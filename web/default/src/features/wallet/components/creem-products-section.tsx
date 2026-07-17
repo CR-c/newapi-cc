@@ -41,8 +41,8 @@ export function CreemProductsSection({
   if (loading) {
     return (
       <div className='grid grid-cols-2 gap-2 sm:grid-cols-2 sm:gap-3 md:grid-cols-3'>
-        {Array.from({ length: 3 }).map((_, i) => (
-          <Skeleton key={i} className='h-24 rounded-lg' />
+        {['first', 'second', 'third'].map((key) => (
+          <Skeleton key={key} className='h-24 rounded-lg' />
         ))}
       </div>
     )
@@ -66,6 +66,16 @@ export function CreemProductsSection({
             <div className='text-muted-foreground mb-2 text-sm'>
               {t('Quota')}: {formatNumber(product.quota)}
             </div>
+            {(product.bonusQuota ?? 0) > 0 && (
+              <div className='mb-2 text-xs font-medium text-emerald-600 dark:text-emerald-400'>
+                {t('Gift {{bonus}} · Total {{total}}', {
+                  bonus: formatNumber(product.bonusQuota ?? 0),
+                  total: formatNumber(
+                    product.quota + (product.bonusQuota ?? 0)
+                  ),
+                })}
+              </div>
+            )}
             <div className='text-primary text-lg font-semibold'>
               {formatCreemPrice(product.price, product.currency)}
             </div>

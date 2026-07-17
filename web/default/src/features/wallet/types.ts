@@ -72,6 +72,8 @@ export interface CreemProduct {
   price: number
   /** Quota amount to credit */
   quota: number
+  /** Optional promotional quota credited in addition to paid quota */
+  bonusQuota?: number
   /** Currency (USD or EUR) */
   currency: 'USD' | 'EUR'
 }
@@ -134,6 +136,10 @@ export interface TopupInfo {
   amount_options: number[]
   /** Discount rates by amount */
   discount: Record<number, number>
+  /** Gift quota by exact recharge amount */
+  amount_bonus: Record<number, number>
+  /** Deprecated compatibility alias normalized by the client */
+  bonus?: Record<number, number>
   /** Optional topup link for purchasing codes */
   topup_link?: string
   /** Whether Creem topup is enabled */
@@ -166,6 +172,8 @@ export interface PresetAmount {
   value: number
   /** Optional discount rate (0-1) */
   discount?: number
+  /** Gift quota credited for this exact amount */
+  bonus?: number
 }
 
 /**

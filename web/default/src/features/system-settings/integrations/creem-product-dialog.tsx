@@ -46,15 +46,22 @@ import type { CreemProduct } from '@/features/wallet/types'
 
 import { safeNumberFieldProps } from '../utils/numeric-field'
 
-const creemProductDialogSchema = z.object({
-  name: z.string().min(1, 'Product name is required'),
-  productId: z.string().min(1, 'Product ID is required'),
-  price: z.number().min(0.01, 'Price must be greater than 0'),
-  quota: z.number().min(1, 'Quota must be at least 1'),
-  currency: z.enum(['USD', 'EUR']),
-})
+const createCreemProductDialogSchema = (t: (key: string) => string) =>
+  z.object({
+    name: z.string().min(1, 'Product name is required'),
+    productId: z.string().min(1, 'Product ID is required'),
+    price: z.number().min(0.01, 'Price must be greater than 0'),
+    quota: z.number().min(1, 'Quota must be at least 1'),
+    bonusQuota: z
+      .number()
+      .min(0, t('Gift quota cannot be negative'))
+      .optional(),
+    currency: z.enum(['USD', 'EUR']),
+  })
 
-type CreemProductDialogFormValues = z.infer<typeof creemProductDialogSchema>
+type CreemProductDialogFormValues = z.infer<
+  ReturnType<typeof createCreemProductDialogSchema>
+>
 
 const CREEM_PRODUCT_FORM_ID = 'creem-product-form'
 
@@ -76,6 +83,7 @@ export function CreemProductDialog({
 }: CreemProductDialogProps) {
   const { t } = useTranslation()
   const isEditMode = !!editData
+  const creemProductDialogSchema = createCreemProductDialogSchema(t)
 
   const form = useForm<CreemProductDialogFormValues>({
     resolver: zodResolver(creemProductDialogSchema),
@@ -84,6 +92,7 @@ export function CreemProductDialog({
       productId: '',
       price: 0,
       quota: 0,
+      bonusQuota: 0,
       currency: 'USD',
     },
   })
@@ -97,6 +106,7 @@ export function CreemProductDialog({
         productId: '',
         price: 0,
         quota: 0,
+        bonusQuota: 0,
         currency: 'USD',
       })
     }
@@ -108,6 +118,7 @@ export function CreemProductDialog({
       productId: values.productId,
       price: values.price,
       quota: values.quota,
+      bonusQuota: values.bonusQuota || undefined,
       currency: values.currency,
     }
     onSave(data)
@@ -156,6 +167,30 @@ export function CreemProductDialog({
                 </FormControl>
                 <FormDescription>
                   {t('Display name shown to users.')}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='bonusQuota'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Gift Quota')}</FormLabel>
+                <FormControl>
+                  <Input
+                    type='number'
+                    min={0}
+                    placeholder={t('e.g., 50000')}
+                    {...safeNumberFieldProps(field)}
+                  />
+                </FormControl>
+                <FormDescription>
+                  {t(
+                    'Optional promotional quota credited in addition to the paid quota.'
+                  )}
                 </FormDescription>
                 <FormMessage />
               </FormItem>

@@ -33,8 +33,8 @@ import type { PresetAmount, TopupInfo } from '../types'
  */
 function isSafariBrowser(): boolean {
   return (
-    navigator.userAgent.indexOf('Safari') > -1 &&
-    navigator.userAgent.indexOf('Chrome') < 1
+    navigator.userAgent.includes('Safari') &&
+    !navigator.userAgent.includes('Chrome')
   )
 }
 
@@ -155,7 +155,8 @@ export function generatePresetAmounts(minAmount: number): PresetAmount[] {
  */
 export function mergePresetAmounts(
   amountOptions: number[],
-  discounts: Record<number, number>
+  discounts: Record<number, number>,
+  bonuses: Record<number, number> = {}
 ): PresetAmount[] {
   if (!amountOptions || amountOptions.length === 0) {
     return []
@@ -164,5 +165,24 @@ export function mergePresetAmounts(
   return amountOptions.map((amount) => ({
     value: amount,
     discount: discounts[amount] || 1.0,
+    bonus: bonuses[amount] || 0,
   }))
+}
+
+export type TopupCredit = {
+  principal: number
+  bonus: number
+  total: number
+}
+
+export function getTopupCredit(
+  amount: number,
+  bonuses: Record<number, number> = {}
+): TopupCredit {
+  const bonus = bonuses[amount] || 0
+  return {
+    principal: amount,
+    bonus,
+    total: amount + bonus,
+  }
 }

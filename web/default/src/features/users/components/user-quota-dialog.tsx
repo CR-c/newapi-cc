@@ -24,12 +24,13 @@ import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { adjustUserQuota } from '../api'
-import type { QuotaAdjustMode } from '../types'
+import type { QuotaAdjustMode, QuotaFundingSource } from '../types'
 
 interface UserQuotaDialogProps {
   open: boolean
@@ -39,17 +40,25 @@ interface UserQuotaDialogProps {
   onSuccess: () => void
 }
 
+const QUOTA_MODE_LABELS: Record<QuotaAdjustMode, string> = {
+  add: 'Add',
+  subtract: 'Subtract',
+  override: 'Override',
+}
+
 export function UserQuotaDialog(props: UserQuotaDialogProps) {
   const { t } = useTranslation()
   const [mode, setMode] = useState<QuotaAdjustMode>('add')
   const [amount, setAmount] = useState('')
+  const [fundingSource, setFundingSource] =
+    useState<QuotaFundingSource>('promo')
   const [loading, setLoading] = useState(false)
 
   const { meta: currencyMeta } = getCurrencyDisplay()
   const currencyLabel = getCurrencyLabel()
   const tokensOnly = currencyMeta.kind === 'tokens'
 
-  const amountValue = parseFloat(amount) || 0
+  const amountValue = Number.parseFloat(amount) || 0
   const quotaValue = parseQuotaFromDollars(Math.abs(amountValue))
 
   const getPreviewText = () => {
@@ -82,11 +91,13 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
         action: 'add_quota',
         mode,
         value: mode === 'override' ? value : Math.abs(value),
+        funding_source: mode === 'add' ? fundingSource : undefined,
       })
       if (result.success) {
         toast.success(t('Quota adjusted successfully'))
         setAmount('')
         setMode('add')
+        setFundingSource('promo')
         props.onOpenChange(false)
         props.onSuccess()
       } else {
@@ -102,6 +113,7 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
   const handleCancel = () => {
     setAmount('')
     setMode('add')
+    setFundingSource('promo')
     props.onOpenChange(false)
   }
 
@@ -112,7 +124,14 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
   return (
     <Dialog
       open={props.open}
-      onOpenChange={props.onOpenChange}
+      onOpenChange={(open) => {
+        if (!open) {
+          setAmount('')
+          setMode('add')
+          setFundingSource('promo')
+        }
+        props.onOpenChange(open)
+      }}
       title={t('Adjust Quota')}
       description={t('Select an operation mode and enter the amount')}
       contentHeight='auto'
@@ -149,15 +168,44 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
                   setAmount('')
                 }}
               >
-                {m === 'add'
-                  ? t('Add')
-                  : m === 'subtract'
-                    ? t('Subtract')
-                    : t('Override')}
+                {t(QUOTA_MODE_LABELS[m])}
               </Button>
             ))}
           </div>
         </div>
+
+        {mode === 'add' && (
+          <div className='space-y-2'>
+            <Label>{t('Balance source')}</Label>
+            <ToggleGroup
+              value={[fundingSource]}
+              onValueChange={(value) => {
+                const nextSource = value.find((item) => item !== fundingSource)
+                if (nextSource === 'paid' || nextSource === 'promo') {
+                  setFundingSource(nextSource)
+                }
+              }}
+              variant='outline'
+              spacing={2}
+              className='grid w-full grid-cols-2 gap-2'
+              aria-label={t('Balance source')}
+            >
+              <ToggleGroupItem value='paid' className='w-full'>
+                {t('Paid balance')}
+              </ToggleGroupItem>
+              <ToggleGroupItem value='promo' className='w-full'>
+                {t('Gift balance')}
+              </ToggleGroupItem>
+            </ToggleGroup>
+            <p className='text-muted-foreground text-xs'>
+              {fundingSource === 'promo'
+                ? t('Gift balance produces no recognized revenue when spent.')
+                : t(
+                    'Use paid balance only after confirming payment was received.'
+                  )}
+            </p>
+          </div>
+        )}
 
         <div className='space-y-2'>
           <Label>

@@ -30,7 +30,11 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Skeleton } from '@/components/ui/skeleton'
-import { formatLocalCurrencyAmount } from '@/lib/currency'
+import {
+  formatLocalCurrencyAmount,
+  formatQuotaWithCurrency,
+  getCurrencyDisplay,
+} from '@/lib/currency'
 
 import { DEFAULT_DISCOUNT_RATE } from '../../constants'
 import { formatCurrency, getPaymentIcon } from '../../lib'
@@ -47,6 +51,7 @@ interface PaymentConfirmDialogProps {
   processing: boolean
   discountRate?: number
   usdExchangeRate?: number
+  bonusAmount?: number
 }
 
 export function PaymentConfirmDialog({
@@ -60,11 +65,24 @@ export function PaymentConfirmDialog({
   processing,
   discountRate = DEFAULT_DISCOUNT_RATE,
   usdExchangeRate = 1,
+  bonusAmount = 0,
 }: PaymentConfirmDialogProps) {
   const { t } = useTranslation()
   const hasDiscount = discountRate > 0 && discountRate < 1 && paymentAmount > 0
   const originalAmount = hasDiscount ? paymentAmount / discountRate : 0
   const discountAmount = hasDiscount ? originalAmount - paymentAmount : 0
+  const totalCredit = topupAmount + bonusAmount
+  const formatCreditAmount = (amount: number) => {
+    const { meta } = getCurrencyDisplay()
+    if (meta.kind === 'tokens') {
+      return formatQuotaWithCurrency(amount, { abbreviate: false })
+    }
+    return formatLocalCurrencyAmount(amount * usdExchangeRate, {
+      digitsLarge: 2,
+      digitsSmall: 2,
+      abbreviate: false,
+    })
+  }
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -81,16 +99,34 @@ export function PaymentConfirmDialog({
         <div className='space-y-3 py-3 sm:space-y-4 sm:py-4'>
           <div className='flex items-center justify-between'>
             <span className='text-muted-foreground text-sm'>
-              {t('Topup Amount')}
+              {t('Principal')}
             </span>
             <span className='text-lg font-semibold'>
-              {formatLocalCurrencyAmount(topupAmount * usdExchangeRate, {
-                digitsLarge: 2,
-                digitsSmall: 2,
-                abbreviate: false,
-              })}
+              {formatCreditAmount(topupAmount)}
             </span>
           </div>
+
+          {bonusAmount > 0 && (
+            <>
+              <div className='flex items-center justify-between'>
+                <span className='text-muted-foreground text-sm'>
+                  {t('Gift')}
+                </span>
+                <span className='font-semibold text-emerald-600 dark:text-emerald-400'>
+                  +
+                  {formatCreditAmount(bonusAmount)}
+                </span>
+              </div>
+              <div className='flex items-center justify-between border-t pt-3'>
+                <span className='text-sm font-medium'>
+                  {t('Total credited')}
+                </span>
+                <span className='text-lg font-semibold'>
+                  {formatCreditAmount(totalCredit)}
+                </span>
+              </div>
+            </>
+          )}
 
           <div className='flex items-center justify-between'>
             <span className='text-muted-foreground text-sm'>

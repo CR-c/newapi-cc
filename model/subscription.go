@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -262,7 +263,11 @@ type UserSubscription struct {
 	EndTime   int64  `json:"end_time" gorm:"bigint;index;index:idx_user_sub_active,priority:3"`
 	Status    string `json:"status" gorm:"type:varchar(32);index;index:idx_user_sub_active,priority:2"` // active/expired/cancelled
 
-	Source string `json:"source" gorm:"type:varchar(32);default:'order'"` // order/admin
+	Source           string `json:"source" gorm:"type:varchar(32);default:'order'"` // order/admin/balance
+	FundingPaidPPM   int    `json:"funding_paid_ppm" gorm:"type:int;not null;default:0"`
+	FundingPromoPPM  int    `json:"funding_promo_ppm" gorm:"type:int;not null;default:0"`
+	FundingLegacyPPM int    `json:"funding_legacy_ppm" gorm:"type:int;not null;default:0"`
+	FundingVersion   int    `json:"funding_version" gorm:"type:int;not null;default:0;index"`
 
 	LastResetTime int64 `json:"last_reset_time" gorm:"type:bigint;default:0"`
 	NextResetTime int64 `json:"next_reset_time" gorm:"type:bigint;default:0;index"`
@@ -278,6 +283,23 @@ type UserSubscription struct {
 
 	CreatedAt int64 `json:"created_at" gorm:"bigint"`
 	UpdatedAt int64 `json:"updated_at" gorm:"bigint"`
+}
+
+func migrateSubscriptionFundingAttribution() error {
+	if err := DB.Model(&UserSubscription{}).
+		Where("funding_version = ? AND source = ?", 0, "admin").
+		Updates(map[string]interface{}{
+			"funding_paid_ppm": 0, "funding_promo_ppm": 1_000_000,
+			"funding_legacy_ppm": 0, "funding_version": 1,
+		}).Error; err != nil {
+		return err
+	}
+	return DB.Model(&UserSubscription{}).
+		Where("funding_version = ?", 0).
+		Updates(map[string]interface{}{
+			"funding_paid_ppm": 0, "funding_promo_ppm": 0,
+			"funding_legacy_ppm": 1_000_000, "funding_version": 1,
+		}).Error
 }
 
 func (s *UserSubscription) BeforeCreate(tx *gorm.DB) error {
@@ -502,7 +524,7 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 			return nil, errors.New("已达到该套餐购买上限")
 		}
 	}
-	nowUnix := GetDBTimestamp()
+	nowUnix := getDBTimestamp(tx)
 	now := time.Unix(nowUnix, 0)
 	endUnix, err := calcPlanEndTime(now, plan)
 	if err != nil {
@@ -542,6 +564,8 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 		EndTime:             endUnix,
 		Status:              "active",
 		Source:              source,
+		FundingLegacyPPM:    1_000_000,
+		FundingVersion:      1,
 		LastResetTime:       lastReset,
 		NextResetTime:       nextReset,
 		UpgradeGroup:        upgradeGroup,
@@ -551,16 +575,62 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 		CreatedAt:           common.GetTimestamp(),
 		UpdatedAt:           common.GetTimestamp(),
 	}
+	if source == "admin" || plan.PriceAmount == 0 {
+		sub.FundingLegacyPPM = 0
+		sub.FundingPromoPPM = 1_000_000
+	} else if source == "order" {
+		sub.FundingLegacyPPM = 0
+		sub.FundingPaidPPM = 1_000_000
+	}
 	if err := tx.Create(sub).Error; err != nil {
 		return nil, err
 	}
 	return sub, nil
 }
 
+func setSubscriptionFundingFromPurchaseTx(tx *gorm.DB, sub *UserSubscription, plan *SubscriptionPlan, purchase WalletAllocation) error {
+	if tx == nil || sub == nil || plan == nil {
+		return errors.New("invalid subscription funding attribution")
+	}
+	paidPPM, legacyPPM := 0, 0
+	resetPeriod := strings.TrimSpace(plan.QuotaResetPeriod)
+	if plan.TotalAmount > 0 && (resetPeriod == "" || resetPeriod == SubscriptionResetNever) {
+		denominator := plan.TotalAmount
+		if purchaseTotal := int64(purchase.Total()); purchaseTotal > denominator {
+			denominator = purchaseTotal
+		}
+		paidPPM = int(int64(purchase.PaidQuota) * 1_000_000 / denominator)
+		legacyPPM = int(int64(purchase.LegacyQuota) * 1_000_000 / denominator)
+	}
+	promoPPM := 1_000_000 - paidPPM - legacyPPM
+	if promoPPM < 0 {
+		promoPPM = 0
+	}
+	sub.FundingPaidPPM = paidPPM
+	sub.FundingPromoPPM = promoPPM
+	sub.FundingLegacyPPM = legacyPPM
+	sub.FundingVersion = 1
+	return tx.Model(sub).Updates(map[string]interface{}{
+		"funding_paid_ppm": paidPPM, "funding_promo_ppm": promoPPM,
+		"funding_legacy_ppm": legacyPPM, "funding_version": 1,
+	}).Error
+}
+
 // Complete a subscription order (idempotent). Creates a UserSubscription snapshot from the plan.
 // expectedPaymentProvider guards against cross-gateway callback attacks (empty skips the check).
 // actualPaymentMethod updates the order's PaymentMethod to reflect the real payment type used (empty skips update).
 func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedPaymentProvider string, actualPaymentMethod string) error {
+	return completeSubscriptionOrder(tradeNo, providerPayload, expectedPaymentProvider, actualPaymentMethod, nil)
+}
+
+func CompleteSubscriptionOrderWithPaidAmount(tradeNo string, providerPayload string, expectedPaymentProvider string, actualPaymentMethod string, paidAmount float64) error {
+	if paidAmount <= 0 || math.IsNaN(paidAmount) || math.IsInf(paidAmount, 0) {
+		return errors.New("invalid subscription paid amount")
+	}
+	return completeSubscriptionOrder(tradeNo, providerPayload, expectedPaymentProvider, actualPaymentMethod, &paidAmount)
+}
+
+func completeSubscriptionOrder(tradeNo string, providerPayload string, expectedPaymentProvider string, actualPaymentMethod string, paidAmount *float64) error {
 	if tradeNo == "" {
 		return errors.New("tradeNo is empty")
 	}
@@ -587,16 +657,32 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 		if order.Status != common.TopUpStatusPending {
 			return ErrSubscriptionOrderStatusInvalid
 		}
-		plan, err := GetSubscriptionPlanById(order.PlanId)
-		if err != nil {
+		var plan SubscriptionPlan
+		if err := tx.Where("id = ?", order.PlanId).First(&plan).Error; err != nil {
 			return err
 		}
 		if !plan.Enabled {
 			// still allow completion for already purchased orders
 		}
 		upgradeGroup = strings.TrimSpace(plan.UpgradeGroup)
-		_, err = CreateUserSubscriptionFromPlanTx(tx, order.UserId, plan, "order")
+		sub, err := CreateUserSubscriptionFromPlanTx(tx, order.UserId, &plan, "order")
 		if err != nil {
+			return err
+		}
+		attributedPaidAmount := order.Money
+		if paidAmount != nil {
+			attributedPaidAmount = *paidAmount
+			order.Money = attributedPaidAmount
+		}
+		purchaseQuota, clamp := common.QuotaFromFloatChecked(attributedPaidAmount * common.QuotaPerUnit)
+		if clamp != nil {
+			return errors.New("subscription payment amount exceeds supported quota")
+		}
+		purchase := WalletAllocation{}
+		if purchaseQuota > 0 {
+			purchase.PaidQuota = purchaseQuota
+		}
+		if err := setSubscriptionFundingFromPurchaseTx(tx, sub, &plan, purchase); err != nil {
 			return err
 		}
 		if err := upsertSubscriptionTopUpTx(tx, &order); err != nil {
@@ -760,26 +846,27 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 			return err
 		}
 
-		var user User
-		if err := lockForUpdate(tx).Where("id = ?", userId).First(&user).Error; err != nil {
-			return err
-		}
-		if requiredQuota > 0 && user.Quota < requiredQuota {
-			return errors.New("余额不足")
-		}
+		now := common.GetTimestamp()
+		tradeNo := fmt.Sprintf("SUBBALUSR%dNO%s%d", userId, common.GetRandomString(6), time.Now().UnixNano())
+		fundingAllocation := WalletAllocation{}
 		if requiredQuota > 0 {
-			if err := tx.Model(&User{}).Where("id = ?", userId).
-				Update("quota", gorm.Expr("quota - ?", requiredQuota)).Error; err != nil {
+			fundingAllocation, err = DebitWalletTx(tx, userId, requiredQuota, "subscription:"+tradeNo+":purchase")
+			if errors.Is(err, ErrInsufficientWalletQuota) {
+				return errors.New("余额不足")
+			}
+			if err != nil {
 				return err
 			}
 		}
 
-		if _, err := CreateUserSubscriptionFromPlanTx(tx, userId, plan, PaymentMethodBalance); err != nil {
+		sub, err := CreateUserSubscriptionFromPlanTx(tx, userId, plan, PaymentMethodBalance)
+		if err != nil {
+			return err
+		}
+		if err := setSubscriptionFundingFromPurchaseTx(tx, sub, plan, fundingAllocation); err != nil {
 			return err
 		}
 
-		now := common.GetTimestamp()
-		tradeNo := fmt.Sprintf("SUBBALUSR%dNO%s%d", userId, common.GetRandomString(6), time.Now().UnixNano())
 		order := &SubscriptionOrder{
 			UserId:          userId,
 			PlanId:          plan.Id,
@@ -807,9 +894,7 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 	}
 
 	if chargedQuota > 0 {
-		if err := cacheDecrUserQuota(userId, int64(chargedQuota)); err != nil {
-			common.SysLog("failed to decrease user quota cache after subscription balance purchase: " + err.Error())
-		}
+		_ = invalidateUserCache(userId)
 	}
 	if upgradeGroup != "" {
 		_ = UpdateUserGroupCache(userId, upgradeGroup)
@@ -1109,6 +1194,7 @@ type SubscriptionPreConsumeResult struct {
 	AmountTotal        int64
 	AmountUsedBefore   int64
 	AmountUsedAfter    int64
+	FundingAllocation  WalletAllocation
 }
 
 // ExpireDueSubscriptions marks expired subscriptions and handles group downgrade.
@@ -1216,9 +1302,48 @@ type SubscriptionPreConsumeRecord struct {
 	UserId             int    `json:"user_id" gorm:"index"`
 	UserSubscriptionId int    `json:"user_subscription_id" gorm:"index"`
 	PreConsumed        int64  `json:"pre_consumed" gorm:"type:bigint;not null;default:0"`
+	PaidQuota          int    `json:"paid_quota" gorm:"type:int;not null;default:0"`
+	PromoQuota         int    `json:"promo_quota" gorm:"type:int;not null;default:0"`
+	LegacyQuota        int    `json:"legacy_quota" gorm:"type:int;not null;default:0"`
 	Status             string `json:"status" gorm:"type:varchar(32);index"` // consumed/refunded
 	CreatedAt          int64  `json:"created_at" gorm:"bigint"`
 	UpdatedAt          int64  `json:"updated_at" gorm:"bigint;index"`
+}
+
+func subscriptionFundingAllocation(sub *UserSubscription, amount int64) WalletAllocation {
+	if sub == nil || amount <= 0 {
+		return WalletAllocation{}
+	}
+	if sub.FundingVersion == 0 {
+		if sub.Source == "admin" {
+			return WalletAllocation{PromoQuota: int(amount)}
+		}
+		return WalletAllocation{PaidQuota: int(amount)}
+	}
+	paidPPM := max(0, min(sub.FundingPaidPPM, 1_000_000))
+	promoPPM := max(0, min(sub.FundingPromoPPM, 1_000_000-paidPPM))
+	paid := int(amount * int64(paidPPM) / 1_000_000)
+	legacy := int(amount * int64(max(0, min(sub.FundingLegacyPPM, 1_000_000-paidPPM-promoPPM))) / 1_000_000)
+	promo := int(amount) - paid - legacy
+	return WalletAllocation{PaidQuota: paid, PromoQuota: promo, LegacyQuota: legacy}
+}
+
+func GetSubscriptionFundingAllocation(userSubscriptionId int, amount int64) (WalletAllocation, error) {
+	if userSubscriptionId <= 0 {
+		return WalletAllocation{}, errors.New("invalid userSubscriptionId")
+	}
+	if amount < 0 || amount > int64(common.MaxQuota) {
+		return WalletAllocation{}, errors.New("invalid subscription funding amount")
+	}
+	if amount == 0 {
+		return WalletAllocation{}, nil
+	}
+	var sub UserSubscription
+	if err := DB.Select("id", "source", "funding_paid_ppm", "funding_promo_ppm", "funding_legacy_ppm", "funding_version").
+		Where("id = ?", userSubscriptionId).First(&sub).Error; err != nil {
+		return WalletAllocation{}, err
+	}
+	return subscriptionFundingAllocation(&sub, amount), nil
 }
 
 func (r *SubscriptionPreConsumeRecord) BeforeCreate(tx *gorm.DB) error {
@@ -1303,6 +1428,12 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 			returnValue.AmountTotal = sub.AmountTotal
 			returnValue.AmountUsedBefore = sub.AmountUsed
 			returnValue.AmountUsedAfter = sub.AmountUsed
+			returnValue.FundingAllocation = WalletAllocation{
+				PaidQuota: existing.PaidQuota, PromoQuota: existing.PromoQuota, LegacyQuota: existing.LegacyQuota,
+			}
+			if returnValue.FundingAllocation.Total() == 0 {
+				returnValue.FundingAllocation = subscriptionFundingAllocation(&sub, existing.PreConsumed)
+			}
 			return nil
 		}
 
@@ -1332,11 +1463,15 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 					continue
 				}
 			}
+			fundingAllocation := subscriptionFundingAllocation(&sub, amount)
 			record := &SubscriptionPreConsumeRecord{
 				RequestId:          requestId,
 				UserId:             userId,
 				UserSubscriptionId: sub.Id,
 				PreConsumed:        amount,
+				PaidQuota:          fundingAllocation.PaidQuota,
+				PromoQuota:         fundingAllocation.PromoQuota,
+				LegacyQuota:        fundingAllocation.LegacyQuota,
 				Status:             "consumed",
 			}
 			if err := tx.Create(record).Error; err != nil {
@@ -1350,6 +1485,9 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 					returnValue.AmountTotal = sub.AmountTotal
 					returnValue.AmountUsedBefore = sub.AmountUsed
 					returnValue.AmountUsedAfter = sub.AmountUsed
+					returnValue.FundingAllocation = WalletAllocation{
+						PaidQuota: dup.PaidQuota, PromoQuota: dup.PromoQuota, LegacyQuota: dup.LegacyQuota,
+					}
 					return nil
 				}
 				return err
@@ -1363,6 +1501,7 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 			returnValue.AmountTotal = sub.AmountTotal
 			returnValue.AmountUsedBefore = usedBefore
 			returnValue.AmountUsedAfter = sub.AmountUsed
+			returnValue.FundingAllocation = fundingAllocation
 			return nil
 		}
 		return fmt.Errorf("subscription quota insufficient, need=%d", amount)
@@ -1391,7 +1530,7 @@ func RefundSubscriptionPreConsume(requestId string) error {
 			record.Status = "refunded"
 			return tx.Save(&record).Error
 		}
-		if err := PostConsumeUserSubscriptionDelta(record.UserSubscriptionId, -record.PreConsumed); err != nil {
+		if _, err := postConsumeUserSubscriptionDeltaTx(tx, record.UserSubscriptionId, -record.PreConsumed); err != nil {
 			return err
 		}
 		record.Status = "refunded"
@@ -1481,29 +1620,56 @@ func GetSubscriptionPlanInfoByUserSubscriptionId(userSubscriptionId int) (*Subsc
 	return info, nil
 }
 
-// Update subscription used amount by delta (positive consume more, negative refund).
-func PostConsumeUserSubscriptionDelta(userSubscriptionId int, delta int64) error {
+func postConsumeUserSubscriptionDeltaTx(tx *gorm.DB, userSubscriptionId int, delta int64) (WalletAllocation, error) {
+	if tx == nil {
+		return WalletAllocation{}, errors.New("tx is nil")
+	}
 	if userSubscriptionId <= 0 {
-		return errors.New("invalid userSubscriptionId")
+		return WalletAllocation{}, errors.New("invalid userSubscriptionId")
 	}
 	if delta == 0 {
-		return nil
+		return WalletAllocation{}, nil
 	}
-	return DB.Transaction(func(tx *gorm.DB) error {
-		var sub UserSubscription
-		if err := lockForUpdate(tx).
-			Where("id = ?", userSubscriptionId).
-			First(&sub).Error; err != nil {
-			return err
-		}
-		newUsed := sub.AmountUsed + delta
-		if newUsed < 0 {
-			newUsed = 0
-		}
-		if sub.AmountTotal > 0 && newUsed > sub.AmountTotal {
-			return fmt.Errorf("subscription used exceeds total, used=%d total=%d", newUsed, sub.AmountTotal)
-		}
-		sub.AmountUsed = newUsed
-		return tx.Save(&sub).Error
+	var sub UserSubscription
+	if err := lockForUpdate(tx).
+		Where("id = ?", userSubscriptionId).
+		First(&sub).Error; err != nil {
+		return WalletAllocation{}, err
+	}
+	newUsed := sub.AmountUsed + delta
+	if newUsed < 0 {
+		newUsed = 0
+	}
+	if sub.AmountTotal > 0 && newUsed > sub.AmountTotal {
+		return WalletAllocation{}, fmt.Errorf("subscription used exceeds total, used=%d total=%d", newUsed, sub.AmountTotal)
+	}
+	actualDelta := newUsed - sub.AmountUsed
+	allocationAmount := actualDelta
+	if allocationAmount < 0 {
+		allocationAmount = -allocationAmount
+	}
+	allocation := subscriptionFundingAllocation(&sub, allocationAmount)
+	sub.AmountUsed = newUsed
+	if err := tx.Save(&sub).Error; err != nil {
+		return WalletAllocation{}, err
+	}
+	return allocation, nil
+}
+
+// AdjustUserSubscriptionDeltaWithFunding updates subscription usage and returns
+// the funding allocation represented by the absolute applied delta.
+func AdjustUserSubscriptionDeltaWithFunding(userSubscriptionId int, delta int64) (WalletAllocation, error) {
+	var allocation WalletAllocation
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var err error
+		allocation, err = postConsumeUserSubscriptionDeltaTx(tx, userSubscriptionId, delta)
+		return err
 	})
+	return allocation, err
+}
+
+// Update subscription used amount by delta (positive consume more, negative refund).
+func PostConsumeUserSubscriptionDelta(userSubscriptionId int, delta int64) error {
+	_, err := AdjustUserSubscriptionDeltaWithFunding(userSubscriptionId, delta)
+	return err
 }

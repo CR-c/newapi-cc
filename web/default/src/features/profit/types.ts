@@ -25,6 +25,17 @@ export type ProfitAggregate = {
   group?: string
   revenue_micros: number
   known_revenue_micros: number
+  gross_consumption_micros?: number
+  nominal_consumption_micros?: number
+  recognized_revenue_micros?: number
+  promo_consumption_micros?: number
+  promo_cost_micros?: number
+  admin_consumption_micros?: number
+  admin_cost_micros?: number
+  promo_unpriced_record_count?: number
+  admin_unpriced_record_count?: number
+  legacy_consumption_micros?: number
+  legacy_unknown_consumption_micros?: number
   cost_micros: number
   profit_micros: number
   record_count: number

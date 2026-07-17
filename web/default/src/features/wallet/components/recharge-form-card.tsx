@@ -33,6 +33,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import {
+  formatLocalCurrencyAmount,
+  formatQuotaWithCurrency,
+  getCurrencyDisplay,
+} from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -42,6 +47,7 @@ import {
   getPaymentIcon,
   getMinTopupAmount,
   calculatePresetPricing,
+  getTopupCredit,
 } from '../lib'
 import type {
   PaymentMethod,
@@ -120,7 +126,7 @@ export function RechargeFormCard({
 
   const handleAmountChange = (value: string) => {
     setLocalAmount(value)
-    const numValue = parseInt(value) || 0
+    const numValue = Number.parseInt(value) || 0
     if (numValue >= 0) {
       onTopupAmountChange(numValue)
     }
@@ -138,6 +144,16 @@ export function RechargeFormCard({
     Array.isArray(waffoPayMethods) && waffoPayMethods.length > 0
   const minTopup = getMinTopupAmount(topupInfo)
   const redemptionEnabled = topupInfo?.enable_redemption !== false
+  const currentCredit = getTopupCredit(topupAmount, topupInfo?.amount_bonus)
+  const formatCreditAmount = (amount: number) => {
+    const { meta } = getCurrencyDisplay()
+    if (meta.kind === 'tokens') {
+      return formatQuotaWithCurrency(amount, { abbreviate: false })
+    }
+    return formatLocalCurrencyAmount(amount * usdExchangeRate, {
+      abbreviate: false,
+    })
+  }
 
   if (loading) {
     return (
@@ -152,8 +168,17 @@ export function RechargeFormCard({
             <div className='space-y-3'>
               <Skeleton className='h-3 w-16' />
               <div className='grid grid-cols-2 gap-3 sm:grid-cols-4'>
-                {Array.from({ length: 8 }).map((_, i) => (
-                  <Skeleton key={i} className='h-[72px] rounded-lg' />
+                {[
+                  'one',
+                  'two',
+                  'three',
+                  'four',
+                  'five',
+                  'six',
+                  'seven',
+                  'eight',
+                ].map((key) => (
+                  <Skeleton key={key} className='h-[72px] rounded-lg' />
                 ))}
               </div>
             </div>
@@ -168,8 +193,8 @@ export function RechargeFormCard({
             <div className='space-y-3'>
               <Skeleton className='h-3 w-32' />
               <div className='flex flex-wrap gap-3'>
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <Skeleton key={i} className='h-10 w-24 rounded-lg' />
+                {['first', 'second', 'third'].map((key) => (
+                  <Skeleton key={key} className='h-10 w-24 rounded-lg' />
                 ))}
               </div>
             </div>
@@ -220,7 +245,7 @@ export function RechargeFormCard({
                     {t('Amount')}
                   </Label>
                   <div className='grid grid-cols-2 gap-1.5 sm:gap-3 md:grid-cols-4'>
-                    {presetAmounts.map((preset, index) => {
+                    {presetAmounts.map((preset) => {
                       const discount =
                         preset.discount ||
                         topupInfo?.discount?.[preset.value] ||
@@ -236,9 +261,13 @@ export function RechargeFormCard({
                         discount,
                         usdExchangeRate
                       )
+                      const credit = getTopupCredit(
+                        preset.value,
+                        topupInfo?.amount_bonus
+                      )
                       return (
                         <Button
-                          key={index}
+                          key={preset.value}
                           variant='outline'
                           className={cn(
                             'flex min-h-16 flex-col items-start rounded-lg px-3 py-2.5 text-left whitespace-normal sm:min-h-[72px] sm:p-4',
@@ -259,14 +288,22 @@ export function RechargeFormCard({
                             )}
                           </div>
                           <div className='text-muted-foreground mt-1.5 w-full text-xs sm:mt-2'>
-                            Pay {formatCurrency(actualPrice)}
+                            {t('Pay')} {formatCurrency(actualPrice)}
                             {hasDiscount && savedAmount > 0 && (
                               <span className='text-green-600'>
                                 {' '}
-                                • Save {formatCurrency(savedAmount)}
+                                • {t('Save')} {formatCurrency(savedAmount)}
                               </span>
                             )}
                           </div>
+                          {credit.bonus > 0 && (
+                            <div className='mt-1 w-full text-xs font-medium text-emerald-600 dark:text-emerald-400'>
+                              {t('Gift {{bonus}} · Total {{total}}', {
+                                bonus: formatCreditAmount(credit.bonus),
+                                total: formatCreditAmount(credit.total),
+                              })}
+                            </div>
+                          )}
                         </Button>
                       )
                     })}
@@ -304,6 +341,22 @@ export function RechargeFormCard({
                     )}
                   </div>
                 </div>
+                {currentCredit.bonus > 0 && (
+                  <div className='flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs'>
+                    <span>
+                      {t('Principal')}:{' '}
+                      {formatCreditAmount(currentCredit.principal)}
+                    </span>
+                    <span className='text-emerald-600 dark:text-emerald-400'>
+                      {t('Gift')}: +
+                      {formatCreditAmount(currentCredit.bonus)}
+                    </span>
+                    <span className='font-medium'>
+                      {t('Total credited')}:{' '}
+                      {formatCreditAmount(currentCredit.total)}
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div className='space-y-2.5 sm:space-y-3'>
@@ -364,7 +417,7 @@ export function RechargeFormCard({
                       return disabled ? (
                         <TooltipProvider key={method.type}>
                           <Tooltip>
-                            <TooltipTrigger render={button}></TooltipTrigger>
+                            <TooltipTrigger render={button} />
                             <TooltipContent>{disabledReason}</TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
@@ -373,14 +426,16 @@ export function RechargeFormCard({
                       )
                     })}
                   </div>
-                ) : hasWaffoPaymentMethods ? null : (
-                  <Alert>
-                    <AlertDescription>
-                      {t(
-                        'No payment methods available. Please contact administrator.'
-                      )}
-                    </AlertDescription>
-                  </Alert>
+                ) : (
+                  !hasWaffoPaymentMethods && (
+                    <Alert>
+                      <AlertDescription>
+                        {t(
+                          'No payment methods available. Please contact administrator.'
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                  )
                 )}
               </div>
 
@@ -404,10 +459,26 @@ export function RechargeFormCard({
                         const disabledLabel = belowMin
                           ? `${t('Minimum:')} ${waffoMin}`
                           : undefined
+                        const methodKey = `${method.name}-${method.payMethodType ?? method.payMethodName ?? 'default'}`
+                        let methodIcon = getPaymentIcon('waffo')
+                        if (method.icon) {
+                          methodIcon = (
+                            <img
+                              src={method.icon}
+                              alt={method.name}
+                              className='h-4 w-4 object-contain'
+                            />
+                          )
+                        }
+                        if (paymentLoading === loadingKey) {
+                          methodIcon = (
+                            <Loader2 className='h-4 w-4 animate-spin' />
+                          )
+                        }
 
                         const button = (
                           <Button
-                            key={`${method.name}-${index}`}
+                            key={methodKey}
                             variant='outline'
                             onClick={() => onWaffoMethodSelect(method, index)}
                             disabled={belowMin || !!paymentLoading}
@@ -419,17 +490,7 @@ export function RechargeFormCard({
                             }
                             className='min-h-14 min-w-0 justify-start gap-2 rounded-lg px-3 py-2 text-left'
                           >
-                            {paymentLoading === loadingKey ? (
-                              <Loader2 className='h-4 w-4 animate-spin' />
-                            ) : method.icon ? (
-                              <img
-                                src={method.icon}
-                                alt={method.name}
-                                className='h-4 w-4 object-contain'
-                              />
-                            ) : (
-                              getPaymentIcon('waffo')
-                            )}
+                            {methodIcon}
                             <span className='flex min-w-0 flex-col items-start gap-0.5'>
                               <span className='max-w-full truncate'>
                                 {method.name}
@@ -444,9 +505,9 @@ export function RechargeFormCard({
                         )
 
                         return belowMin ? (
-                          <TooltipProvider key={`${method.name}-${index}`}>
+                          <TooltipProvider key={methodKey}>
                             <Tooltip>
-                              <TooltipTrigger render={button}></TooltipTrigger>
+                              <TooltipTrigger render={button} />
                               <TooltipContent>{disabledReason}</TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
@@ -516,6 +577,11 @@ export function RechargeFormCard({
               {t('Redeem')}
             </Button>
           </div>
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'Redemption codes add gift balance. Gift balance is promotional credit and does not count as paid recharge.'
+            )}
+          </p>
           {topupLink && (
             <p className='text-muted-foreground text-xs'>
               {t('Need a redemption code?')}{' '}

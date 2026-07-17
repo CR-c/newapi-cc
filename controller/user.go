@@ -1071,10 +1071,22 @@ func updateAdminPermissionsForUserInTx(c *gin.Context, tx *gorm.DB, userID int, 
 }
 
 type ManageRequest struct {
-	Id     int    `json:"id"`
-	Action string `json:"action"`
-	Value  int    `json:"value"`
-	Mode   string `json:"mode"`
+	Id            int    `json:"id"`
+	Action        string `json:"action"`
+	Value         int    `json:"value"`
+	Mode          string `json:"mode"`
+	FundingSource string `json:"funding_source"`
+}
+
+func resolveAdminQuotaCreditBucket(fundingSource string) (model.WalletBucket, error) {
+	switch strings.ToLower(strings.TrimSpace(fundingSource)) {
+	case "", string(model.WalletBucketPromo):
+		return model.WalletBucketPromo, nil
+	case string(model.WalletBucketPaid):
+		return model.WalletBucketPaid, nil
+	default:
+		return "", errors.New("funding_source must be paid or promo")
+	}
 }
 
 // ManageUser Only admin user can do this
@@ -1147,25 +1159,44 @@ func ManageUser(c *gin.Context) {
 		}
 		user.Role = common.RoleCommonUser
 	case "add_quota":
+		requestID := c.GetString(common.RequestIdKey)
+		if requestID == "" {
+			requestID = common.NewRequestId()
+		}
+		eventKey := fmt.Sprintf("admin-quota:%s:%s", common.Sha1([]byte(fmt.Sprintf("%s:%d", requestID, user.Id))), req.Mode)
 		switch req.Mode {
 		case "add":
 			if req.Value <= 0 {
 				common.ApiErrorI18n(c, i18n.MsgUserQuotaChangeZero)
 				return
 			}
-			if err := model.IncreaseUserQuota(user.Id, req.Value, true); err != nil {
+			if req.Value > common.MaxQuota {
+				common.ApiError(c, model.ErrWalletQuotaOverflow)
+				return
+			}
+			bucket, err := resolveAdminQuotaCreditBucket(req.FundingSource)
+			if err != nil {
+				common.ApiError(c, err)
+				return
+			}
+			if _, err := model.CreditWallet(user.Id, req.Value, bucket, eventKey); err != nil {
 				common.ApiError(c, err)
 				return
 			}
 			recordManageAuditFor(c, user.Id, "user.quota_add", map[string]interface{}{
-				"quota": logger.LogQuota(req.Value),
+				"quota":          logger.LogQuota(req.Value),
+				"funding_source": string(bucket),
 			})
 		case "subtract":
 			if req.Value <= 0 {
 				common.ApiErrorI18n(c, i18n.MsgUserQuotaChangeZero)
 				return
 			}
-			if err := model.DecreaseUserQuota(user.Id, req.Value, true); err != nil {
+			if req.Value > common.MaxQuota {
+				common.ApiError(c, model.ErrWalletQuotaOverflow)
+				return
+			}
+			if _, err := model.DebitWallet(user.Id, req.Value, eventKey); err != nil {
 				common.ApiError(c, err)
 				return
 			}
@@ -1173,14 +1204,19 @@ func ManageUser(c *gin.Context) {
 				"quota": logger.LogQuota(req.Value),
 			})
 		case "override":
-			oldQuota := user.Quota
-			if err := model.DB.Model(&model.User{}).Where("id = ?", user.Id).Update("quota", req.Value).Error; err != nil {
+			if req.Value < 0 || req.Value > common.MaxQuota {
+				common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+				return
+			}
+			oldQuota, _, err := model.OverrideWalletQuota(user.Id, req.Value, model.WalletBucketPromo, eventKey)
+			if err != nil {
 				common.ApiError(c, err)
 				return
 			}
 			recordManageAuditFor(c, user.Id, "user.quota_override", map[string]interface{}{
-				"from": logger.LogQuota(oldQuota),
-				"to":   logger.LogQuota(req.Value),
+				"from":           logger.LogQuota(oldQuota),
+				"to":             logger.LogQuota(req.Value),
+				"funding_source": string(model.WalletBucketPromo),
 			})
 		default:
 			common.ApiErrorI18n(c, i18n.MsgInvalidParams)

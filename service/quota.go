@@ -417,17 +417,53 @@ func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQu
 		}
 		delta := int64(quota)
 		if delta != 0 {
+			currentAmount := relayInfo.WalletPaidQuota + relayInfo.WalletPromoQuota + relayInfo.WalletLegacyQuota
+			targetAmount := currentAmount + quota
+			if targetAmount < 0 {
+				return errors.New("subscription refund exceeds consumed allocation")
+			}
+			allocation, allocationErr := model.GetSubscriptionFundingAllocation(relayInfo.SubscriptionId, int64(targetAmount))
+			if allocationErr != nil {
+				return allocationErr
+			}
 			if err := model.PostConsumeUserSubscriptionDelta(relayInfo.SubscriptionId, delta); err != nil {
 				return err
 			}
+			relayInfo.WalletPaidQuota = allocation.PaidQuota
+			relayInfo.WalletPromoQuota = allocation.PromoQuota
+			relayInfo.WalletLegacyQuota = allocation.LegacyQuota
 			relayInfo.SubscriptionPostDelta += delta
 		}
 	} else {
 		// Wallet
 		if quota > 0 {
-			err = model.DecreaseUserQuota(relayInfo.UserId, quota, false)
-		} else {
-			err = model.IncreaseUserQuota(relayInfo.UserId, -quota, false)
+			allocation, debitErr := model.DebitWallet(relayInfo.UserId, quota,
+				fmt.Sprintf("billing:%s:legacy-post:%d", relayInfo.RequestId, quota))
+			err = debitErr
+			if debitErr == nil {
+				relayInfo.WalletPaidQuota += allocation.PaidQuota
+				relayInfo.WalletPromoQuota += allocation.PromoQuota
+				relayInfo.WalletLegacyQuota += allocation.LegacyQuota
+			}
+		} else if quota < 0 {
+			current := model.WalletAllocation{
+				PaidQuota: relayInfo.WalletPaidQuota, PromoQuota: relayInfo.WalletPromoQuota,
+				LegacyQuota: relayInfo.WalletLegacyQuota,
+			}
+			trackedAmount := current.Total()
+			refund := takeWalletRefund(&current, -quota)
+			if trackedAmount == 0 {
+				refund.LegacyQuota = -quota
+			} else if refund.Total() != -quota {
+				return errors.New("wallet refund exceeds consumed allocation")
+			}
+			_, err = model.RefundWallet(relayInfo.UserId, refund,
+				fmt.Sprintf("billing:%s:legacy-refund:%d", relayInfo.RequestId, -quota))
+			if err == nil {
+				relayInfo.WalletPaidQuota = current.PaidQuota
+				relayInfo.WalletPromoQuota = current.PromoQuota
+				relayInfo.WalletLegacyQuota = current.LegacyQuota
+			}
 		}
 		if err != nil {
 			return err

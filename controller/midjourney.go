@@ -212,10 +212,32 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 			won, err := task.UpdateWithStatus(preStatus)
 			if err != nil {
 				logger.LogError(ctx, "UpdateMidjourneyTask task error: "+err.Error())
-			} else if won && shouldReturnQuota {
-				err = model.IncreaseUserQuota(task.UserId, task.Quota, false)
+			} else if won && shouldReturnQuota && task.Quota > 0 {
+				allocation := model.WalletAllocation{
+					PaidQuota: task.PaidQuota, PromoQuota: task.PromoQuota, LegacyQuota: task.LegacyQuota,
+				}
+				if allocation.Total() == 0 {
+					allocation.LegacyQuota = task.Quota
+				}
+				if task.BillingSource == service.BillingSourceSubscription && task.SubscriptionId > 0 {
+					err = model.PostConsumeUserSubscriptionDelta(task.SubscriptionId, -int64(task.Quota))
+				} else {
+					_, err = model.RefundWallet(task.UserId, allocation, "midjourney:"+task.MjId+":refund")
+				}
 				if err != nil {
 					logger.LogError(ctx, "fail to increase user quota: "+err.Error())
+				}
+				other := map[string]interface{}{
+					"task_id":            task.MjId,
+					"reason":             "构图失败",
+					"user_role_snapshot": task.UserRoleSnapshot,
+					"wallet_funding": map[string]interface{}{
+						"version": 1, "paid_quota": allocation.PaidQuota,
+						"promo_quota": allocation.PromoQuota, "legacy_quota": allocation.LegacyQuota,
+					},
+				}
+				if task.IsAdminUsage {
+					other["is_admin_usage"] = true
 				}
 				model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 					UserId:    task.UserId,
@@ -224,10 +246,7 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 					ChannelId: task.ChannelId,
 					ModelName: service.CovertMjpActionToModelName(task.Action),
 					Quota:     task.Quota,
-					Other: map[string]interface{}{
-						"task_id": task.MjId,
-						"reason":  "构图失败",
-					},
+					Other:     other,
 				})
 			}
 		}

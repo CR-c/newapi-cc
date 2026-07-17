@@ -77,6 +77,7 @@ export interface RedemptionFormData {
   expired_time: number
   count?: number // Only for create
   status?: number // Only for status update
+  funding_source: 'promo'
 }
 
 // ============================================================================
