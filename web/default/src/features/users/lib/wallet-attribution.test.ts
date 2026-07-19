@@ -19,40 +19,40 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
-import { attributeLegacyWallet } from './wallet-attribution'
+import { allocateWalletBalance } from './wallet-attribution'
 
-describe('legacy wallet attribution', () => {
-  test('adds only the verified legacy portion to paid balance', () => {
-    const result = attributeLegacyWallet(
+describe('wallet attribution', () => {
+  test('sets the final paid balance and moves the remainder to gift balance', () => {
+    const result = allocateWalletBalance(
       { paid_quota: 10, promo_quota: 20, legacy_quota: 70 },
       30
     )
 
     assert.deepEqual(result, {
-      paid_quota: 40,
-      promo_quota: 60,
+      paid_quota: 30,
+      promo_quota: 70,
       legacy_quota: 0,
     })
   })
 
-  test('allows classifying all legacy balance as gift balance', () => {
-    const result = attributeLegacyWallet(
+  test('allows classifying the entire balance as gift balance', () => {
+    const result = allocateWalletBalance(
       { paid_quota: 10, promo_quota: 20, legacy_quota: 70 },
       0
     )
 
     assert.deepEqual(result, {
-      paid_quota: 10,
-      promo_quota: 90,
+      paid_quota: 0,
+      promo_quota: 100,
       legacy_quota: 0,
     })
   })
 
-  test('rejects amounts outside the legacy balance', () => {
+  test('rejects paid amounts outside the total balance', () => {
     assert.equal(
-      attributeLegacyWallet(
+      allocateWalletBalance(
         { paid_quota: 10, promo_quota: 20, legacy_quota: 70 },
-        71
+        101
       ),
       null
     )

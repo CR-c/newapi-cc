@@ -26,11 +26,15 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
-import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
+import {
+  formatQuota,
+  parseQuotaFromDollars,
+  quotaUnitsToDollars,
+} from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { adjustUserQuota } from '../api'
-import { attributeLegacyWallet } from '../lib'
+import { allocateWalletBalance } from '../lib'
 import type { QuotaAdjustMode, QuotaFundingSource } from '../types'
 
 interface UserQuotaDialogProps {
@@ -52,7 +56,7 @@ const QUOTA_MODE_LABELS: Record<QuotaDialogMode, string> = {
   add: 'Add',
   subtract: 'Subtract',
   override: 'Override',
-  attribute: 'Attribute balance',
+  attribute: 'Set paid balance',
 }
 
 export function UserQuotaDialog(props: UserQuotaDialogProps) {
@@ -76,17 +80,26 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
     promo_quota: props.currentPromoQuota,
     legacy_quota: props.currentLegacyQuota,
   }
-  const legacyPaidQuota = parseQuotaFromDollars(amountValue)
-  const targetWallet = attributeLegacyWallet(currentWallet, legacyPaidQuota)
+  const finalPaidQuota = parseQuotaFromDollars(amountValue)
+  const targetWallet = allocateWalletBalance(currentWallet, finalPaidQuota)
   const reasonLength = [...reason.trim()].length
   let attributionError = ''
   if (mode === 'attribute') {
     if (!amount.trim() || !Number.isFinite(Number.parseFloat(amount))) {
-      attributionError = t('Enter the paid portion of the legacy balance.')
+      attributionError = t('Enter the final paid balance.')
     } else if (!targetWallet) {
-      attributionError = t('Paid portion must be between 0 and {{amount}}.', {
-        amount: formatQuota(props.currentLegacyQuota),
-      })
+      attributionError = t(
+        'Final paid balance must be between 0 and {{amount}}.',
+        {
+          amount: formatQuota(props.currentQuota),
+        }
+      )
+    } else if (
+      targetWallet.paid_quota === props.currentPaidQuota &&
+      targetWallet.promo_quota === props.currentPromoQuota &&
+      props.currentLegacyQuota === 0
+    ) {
+      attributionError = t('The balance allocation is unchanged.')
     } else if (reasonLength < 3 || reasonLength > 200) {
       attributionError = t('Reason must be between 3 and 200 characters.')
     }
@@ -242,7 +255,11 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
                 )}
                 onClick={() => {
                   setMode(m)
-                  setAmount(m === 'attribute' ? '0' : '')
+                  setAmount(
+                    m === 'attribute'
+                      ? String(quotaUnitsToDollars(props.currentPaidQuota))
+                      : ''
+                  )
                 }}
               >
                 {t(QUOTA_MODE_LABELS[m])}
@@ -326,7 +343,7 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
             </div>
             <p className='text-muted-foreground text-xs'>
               {t(
-                'Choose how much of the legacy unattributed balance came from verified payments. The remainder becomes gift balance.'
+                'The remaining balance becomes gift balance and legacy attribution is cleared.'
               )}
             </p>
           </div>
@@ -334,10 +351,8 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
 
         <div className='space-y-2'>
           <Label>
-            {mode === 'attribute'
-              ? t('Paid portion of legacy balance')
-              : t('Amount')}{' '}
-            ({currencyLabel})
+            {mode === 'attribute' ? t('Final paid balance') : t('Amount')} (
+            {currencyLabel})
           </Label>
           <Input
             type='number'

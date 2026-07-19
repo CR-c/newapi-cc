@@ -1,10 +1,13 @@
 package controller
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,8 +48,7 @@ func TestNormalizeNewRedemptionFundingSource(t *testing.T) {
 		source string
 		want   string
 	}{
-		{name: "missing defaults to gift", source: "", want: model.RedemptionFundingSourcePromo},
-		{name: "gift", source: model.RedemptionFundingSourcePromo, want: model.RedemptionFundingSourcePromo},
+		{name: "missing defaults to paid", source: "", want: model.RedemptionFundingSourcePaid},
 		{name: "paid card", source: model.RedemptionFundingSourcePaid, want: model.RedemptionFundingSourcePaid},
 	}
 	for _, tt := range tests {
@@ -57,8 +59,40 @@ func TestNormalizeNewRedemptionFundingSource(t *testing.T) {
 		})
 	}
 
-	for _, source := range []string{model.RedemptionFundingSourceLegacyUnknown, "cash", "PAID"} {
+	for _, source := range []string{model.RedemptionFundingSourcePromo, model.RedemptionFundingSourceLegacyUnknown, "cash", "PAID"} {
 		_, err := normalizeNewRedemptionFundingSource(source)
 		require.Error(t, err)
+	}
+}
+
+func TestRedemptionMutationsRequireRoot(t *testing.T) {
+	confirmPaymentComplianceForTest(t)
+	handlers := []struct {
+		name    string
+		handler gin.HandlerFunc
+	}{
+		{name: "create", handler: AddRedemption},
+		{name: "update", handler: UpdateRedemption},
+		{name: "delete", handler: DeleteRedemption},
+		{name: "delete invalid", handler: DeleteInvalidRedemption},
+	}
+
+	for _, tt := range handlers {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/api/redemption", nil)
+			ctx.Set("role", common.RoleAdminUser)
+
+			tt.handler(ctx)
+
+			var response struct {
+				Success bool   `json:"success"`
+				Message string `json:"message"`
+			}
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+			assert.False(t, response.Success)
+			assert.NotEmpty(t, response.Message)
+		})
 	}
 }

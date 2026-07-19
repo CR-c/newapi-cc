@@ -18,21 +18,24 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { WalletAllocationPayload } from '../types'
 
-export function attributeLegacyWallet(
+export function allocateWalletBalance(
   current: WalletAllocationPayload,
-  legacyPaidQuota: number
+  finalPaidQuota: number
 ): WalletAllocationPayload | null {
+  const totalQuota =
+    current.paid_quota + current.promo_quota + current.legacy_quota
   if (
-    !Number.isInteger(legacyPaidQuota) ||
-    legacyPaidQuota < 0 ||
-    legacyPaidQuota > current.legacy_quota
+    !Number.isInteger(finalPaidQuota) ||
+    !Number.isInteger(totalQuota) ||
+    finalPaidQuota < 0 ||
+    finalPaidQuota > totalQuota
   ) {
     return null
   }
 
   return {
-    paid_quota: current.paid_quota + legacyPaidQuota,
-    promo_quota: current.promo_quota + current.legacy_quota - legacyPaidQuota,
+    paid_quota: finalPaidQuota,
+    promo_quota: totalQuota - finalPaidQuota,
     legacy_quota: 0,
   }
 }

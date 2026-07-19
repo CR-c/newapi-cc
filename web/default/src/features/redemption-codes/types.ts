@@ -30,10 +30,7 @@ export const redemptionFundingSourceSchema = z.enum([
 export type RedemptionFundingSource = z.infer<
   typeof redemptionFundingSourceSchema
 >
-export const newRedemptionFundingSourceSchema = z.enum(['paid', 'promo'])
-export type NewRedemptionFundingSource = z.infer<
-  typeof newRedemptionFundingSourceSchema
->
+export type NewRedemptionFundingSource = 'paid'
 
 export const redemptionSchema = z.object({
   id: z.number(),
@@ -46,7 +43,7 @@ export const redemptionSchema = z.object({
   redeemed_time: z.number(),
   expired_time: z.number(), // 0 for never expires
   used_user_id: z.number(),
-  funding_source: redemptionFundingSourceSchema.default('legacy_unknown'),
+  funding_source: redemptionFundingSourceSchema.default('paid'),
 })
 
 export type Redemption = z.infer<typeof redemptionSchema>
@@ -91,15 +88,10 @@ export interface RedemptionFormData {
   expired_time: number
   count?: number // Only for create
   status?: number // Only for status update
-  funding_source: RedemptionFundingSource
-}
-
-export interface NewRedemptionFormData extends Omit<
-  RedemptionFormData,
-  'funding_source'
-> {
   funding_source: NewRedemptionFundingSource
 }
+
+export type NewRedemptionFormData = RedemptionFormData
 
 // ============================================================================
 // Dialog Types

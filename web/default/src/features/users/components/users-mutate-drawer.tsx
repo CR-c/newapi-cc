@@ -603,8 +603,7 @@ export function UsersMutateDrawer({
           currentPromoQuota={quotaUser.promo_quota}
           currentLegacyQuota={quotaUser.legacy_unknown_quota}
           canAttribute={
-            currentUser?.role === ROLE.SUPER_ADMIN &&
-            quotaUser.legacy_unknown_quota > 0
+            currentUser?.role === ROLE.SUPER_ADMIN && quotaUser.quota > 0
           }
           canCreditPaid={currentUser?.role === ROLE.SUPER_ADMIN}
           onSuccess={refreshUserData}

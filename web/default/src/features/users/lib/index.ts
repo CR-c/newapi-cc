@@ -31,4 +31,4 @@ export {
   transformFormDataToPayload,
   transformUserToFormDefaults,
 } from './user-form'
-export { attributeLegacyWallet } from './wallet-attribution'
+export { allocateWalletBalance } from './wallet-attribution'

@@ -49,21 +49,28 @@ func requireWallet(t *testing.T, db *gorm.DB, userID int, paid, promo, legacy in
 	return user
 }
 
-func TestMigrateUserWalletsMovesLegacyQuotaExactlyOnce(t *testing.T) {
+func TestMigrateUserWalletsMovesHistoricalQuotaToPaidExactlyOnce(t *testing.T) {
 	db := setupWalletTestDB(t)
 	legacy := User{Username: "legacy", Password: "password", Quota: 900, AffCode: "legacy"}
+	versionOne := User{
+		Username: "version-one", Password: "password", Quota: 600,
+		PaidQuota: 100, PromoQuota: 200, LegacyUnknownQuota: 300, WalletVersion: 1, AffCode: "version-one",
+	}
 	initialized := User{
 		Username: "initialized", Password: "password", Quota: 600,
 		PaidQuota: 500, PromoQuota: 100, WalletVersion: CurrentWalletVersion, AffCode: "initialized",
 	}
 	require.NoError(t, db.Create(&legacy).Error)
+	require.NoError(t, db.Create(&versionOne).Error)
 	require.NoError(t, db.Create(&initialized).Error)
 
 	require.NoError(t, migrateUserWallets())
 	require.NoError(t, migrateUserWallets())
 
-	migrated := requireWallet(t, db, legacy.Id, 0, 0, 900)
+	migrated := requireWallet(t, db, legacy.Id, 900, 0, 0)
 	assert.Equal(t, CurrentWalletVersion, migrated.WalletVersion)
+	migratedV1 := requireWallet(t, db, versionOne.Id, 600, 0, 0)
+	assert.Equal(t, CurrentWalletVersion, migratedV1.WalletVersion)
 	unchanged := requireWallet(t, db, initialized.Id, 500, 100, 0)
 	assert.Equal(t, CurrentWalletVersion, unchanged.WalletVersion)
 }
@@ -289,7 +296,7 @@ func TestReclassifyWalletRejectsStaleSnapshotAndConflictingReplay(t *testing.T) 
 	requireWallet(t, db, user.Id, 30, 50, 0)
 }
 
-func TestReclassifyWalletRejectsKnownPromoToPaidRewrite(t *testing.T) {
+func TestReclassifyWalletAllowsRootAuditedManualSplit(t *testing.T) {
 	db := setupWalletTestDB(t)
 	user := User{
 		Username: "misclassified-card", Password: "password", Quota: 25,
@@ -297,7 +304,7 @@ func TestReclassifyWalletRejectsKnownPromoToPaidRewrite(t *testing.T) {
 	}
 	require.NoError(t, db.Create(&user).Error)
 
-	_, _, err := ReclassifyWallet(
+	before, after, err := ReclassifyWallet(
 		user.Id,
 		WalletAllocation{PromoQuota: 25},
 		WalletAllocation{PaidQuota: 25},
@@ -305,8 +312,15 @@ func TestReclassifyWalletRejectsKnownPromoToPaidRewrite(t *testing.T) {
 		"invalid known balance rewrite",
 		1,
 	)
-	require.ErrorIs(t, err, ErrInvalidWalletReclassification)
-	requireWallet(t, db, user.Id, 0, 25, 0)
+	require.NoError(t, err)
+	assert.Equal(t, WalletAllocation{PromoQuota: 25}, before)
+	assert.Equal(t, WalletAllocation{PaidQuota: 25}, after)
+	requireWallet(t, db, user.Id, 25, 0, 0)
+
+	var ledger QuotaLedger
+	require.NoError(t, db.Where("event_key = ?", "reclassify:sold-card").First(&ledger).Error)
+	assert.Equal(t, "manual", ledger.Bucket)
+	assert.Equal(t, 25, ledger.Amount)
 }
 
 func TestReclassifyWalletConcurrentReplayAppliesOnce(t *testing.T) {

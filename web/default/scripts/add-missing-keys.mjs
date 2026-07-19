@@ -1306,6 +1306,101 @@ Object.assign(newKeys.vi, {
   'Select paid or gift balance.': 'Chọn số dư đã thanh toán hoặc số dư tặng.',
 })
 
+Object.assign(newKeys.en, {
+  'All redemption codes add paid balance.':
+    'All redemption codes add paid balance.',
+  'Enter the final paid balance.': 'Enter the final paid balance.',
+  'Final paid balance': 'Final paid balance',
+  'Final paid balance must be between 0 and {{amount}}.':
+    'Final paid balance must be between 0 and {{amount}}.',
+  'Redemption codes add paid balance.': 'Redemption codes add paid balance.',
+  'Set paid balance': 'Set paid balance',
+  'The balance allocation is unchanged.':
+    'The balance allocation is unchanged.',
+  'The remaining balance becomes gift balance and legacy attribution is cleared.':
+    'The remaining balance becomes gift balance and legacy attribution is cleared.',
+})
+Object.assign(newKeys.zh, {
+  'All redemption codes add paid balance.': '所有兑换码均计入付费余额。',
+  'Enter the final paid balance.': '请输入最终付费余额。',
+  'Final paid balance': '最终付费余额',
+  'Final paid balance must be between 0 and {{amount}}.':
+    '最终付费余额必须在 0 到 {{amount}} 之间。',
+  'Redemption codes add paid balance.': '兑换码将计入付费余额。',
+  'Set paid balance': '设置付费余额',
+  'The balance allocation is unchanged.': '余额分配未发生变化。',
+  'The remaining balance becomes gift balance and legacy attribution is cleared.':
+    '剩余额度将转为赠送余额，历史未归因余额将清零。',
+})
+Object.assign(newKeys['zh-TW'], {
+  'All redemption codes add paid balance.': '所有兌換碼均計入付費餘額。',
+  'Enter the final paid balance.': '請輸入最終付費餘額。',
+  'Final paid balance': '最終付費餘額',
+  'Final paid balance must be between 0 and {{amount}}.':
+    '最終付費餘額必須在 0 到 {{amount}} 之間。',
+  'Redemption codes add paid balance.': '兌換碼將計入付費餘額。',
+  'Set paid balance': '設定付費餘額',
+  'The balance allocation is unchanged.': '餘額分配未發生變化。',
+  'The remaining balance becomes gift balance and legacy attribution is cleared.':
+    '剩餘額度將轉為贈送餘額，歷史未歸因餘額將清零。',
+})
+Object.assign(newKeys.fr, {
+  'All redemption codes add paid balance.':
+    'Tous les codes alimentent le solde payé.',
+  'Enter the final paid balance.': 'Saisissez le solde payé final.',
+  'Final paid balance': 'Solde payé final',
+  'Final paid balance must be between 0 and {{amount}}.':
+    'Le solde payé final doit être compris entre 0 et {{amount}}.',
+  'Redemption codes add paid balance.': 'Les codes alimentent le solde payé.',
+  'Set paid balance': 'Définir le solde payé',
+  'The balance allocation is unchanged.':
+    "La répartition du solde n'a pas changé.",
+  'The remaining balance becomes gift balance and legacy attribution is cleared.':
+    "Le solde restant devient un solde offert et l'ancienne attribution est effacée.",
+})
+Object.assign(newKeys.ja, {
+  'All redemption codes add paid balance.':
+    'すべての引換コードは支払済み残高に追加されます。',
+  'Enter the final paid balance.': '最終的な支払済み残高を入力してください。',
+  'Final paid balance': '最終支払済み残高',
+  'Final paid balance must be between 0 and {{amount}}.':
+    '最終支払済み残高は 0 から {{amount}} の範囲で入力してください。',
+  'Redemption codes add paid balance.':
+    '引換コードは支払済み残高に追加されます。',
+  'Set paid balance': '支払済み残高を設定',
+  'The balance allocation is unchanged.': '残高の配分は変更されていません。',
+  'The remaining balance becomes gift balance and legacy attribution is cleared.':
+    '残りは特典残高となり、過去の未帰属残高は消去されます。',
+})
+Object.assign(newKeys.ru, {
+  'All redemption codes add paid balance.':
+    'Все коды пополняют оплаченный баланс.',
+  'Enter the final paid balance.': 'Введите итоговый оплаченный баланс.',
+  'Final paid balance': 'Итоговый оплаченный баланс',
+  'Final paid balance must be between 0 and {{amount}}.':
+    'Итоговый оплаченный баланс должен быть от 0 до {{amount}}.',
+  'Redemption codes add paid balance.': 'Коды пополняют оплаченный баланс.',
+  'Set paid balance': 'Задать оплаченный баланс',
+  'The balance allocation is unchanged.':
+    'Распределение баланса не изменилось.',
+  'The remaining balance becomes gift balance and legacy attribution is cleared.':
+    'Остаток станет подарочным балансом, прежнее распределение будет очищено.',
+})
+Object.assign(newKeys.vi, {
+  'All redemption codes add paid balance.':
+    'Mọi mã đổi thưởng đều cộng vào số dư đã thanh toán.',
+  'Enter the final paid balance.': 'Nhập số dư đã thanh toán cuối cùng.',
+  'Final paid balance': 'Số dư đã thanh toán cuối cùng',
+  'Final paid balance must be between 0 and {{amount}}.':
+    'Số dư đã thanh toán cuối cùng phải từ 0 đến {{amount}}.',
+  'Redemption codes add paid balance.':
+    'Mã đổi thưởng cộng vào số dư đã thanh toán.',
+  'Set paid balance': 'Đặt số dư đã thanh toán',
+  'The balance allocation is unchanged.': 'Phân bổ số dư không thay đổi.',
+  'The remaining balance becomes gift balance and legacy attribution is cleared.':
+    'Phần còn lại thành số dư tặng và phân loại cũ sẽ được xóa.',
+})
+
 async function main() {
   let totalAdded = 0
 

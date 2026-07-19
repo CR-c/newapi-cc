@@ -24,7 +24,7 @@ type Redemption struct {
 	UsedUserId    int            `json:"used_user_id"`
 	DeletedAt     gorm.DeletedAt `gorm:"index"`
 	ExpiredTime   int64          `json:"expired_time" gorm:"bigint"` // 过期时间，0 表示不过期
-	FundingSource string         `json:"funding_source" gorm:"type:varchar(32);not null;default:'legacy_unknown';index"`
+	FundingSource string         `json:"funding_source" gorm:"type:varchar(32);not null;default:'paid';index"`
 }
 
 const (
@@ -36,23 +36,25 @@ const (
 var ErrRedemptionStateChanged = errors.New("redemption state changed, refresh and try again")
 
 func ValidateNewRedemptionFundingSource(source string) error {
-	if source != RedemptionFundingSourcePaid && source != RedemptionFundingSourcePromo {
-		return errors.New("funding_source must be paid or promo")
+	if source != RedemptionFundingSourcePaid {
+		return errors.New("funding_source must be paid")
 	}
 	return nil
 }
 
 func redemptionWalletBucket(source string) (WalletBucket, error) {
-	switch source {
-	case RedemptionFundingSourcePaid:
+	if source == RedemptionFundingSourcePaid {
 		return WalletBucketPaid, nil
-	case RedemptionFundingSourcePromo:
-		return WalletBucketPromo, nil
-	case "", RedemptionFundingSourceLegacyUnknown:
-		return WalletBucketLegacyUnknown, nil
-	default:
-		return "", errors.New("兑换码资金来源无效")
 	}
+	return "", errors.New("兑换码资金来源无效")
+}
+
+// migrateRedemptionFundingSources normalizes the complete historical
+// inventory, including used, disabled, and soft-deleted codes.
+func migrateRedemptionFundingSources() error {
+	return DB.Unscoped().Model(&Redemption{}).
+		Where("funding_source IS NULL OR funding_source <> ?", RedemptionFundingSourcePaid).
+		Update("funding_source", RedemptionFundingSourcePaid).Error
 }
 
 func GetAllRedemptions(startIdx int, num int) (redemptions []*Redemption, total int64, err error) {
@@ -237,25 +239,10 @@ func (redemption *Redemption) SelectUpdate() error {
 }
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
-func (redemption *Redemption) UpdateDetails(expectedStatus int, expectedFundingSource string, resolveLegacyFunding bool) error {
+func (redemption *Redemption) UpdateDetails(expectedStatus int, expectedFundingSource string) error {
 	return DB.Transaction(func(tx *gorm.DB) error {
-		persistedFundingSource := expectedFundingSource
-		if resolveLegacyFunding {
-			result := tx.Model(&Redemption{}).
-				Where("id = ? AND status = ? AND used_user_id = ? AND funding_source = ?",
-					redemption.Id, common.RedemptionCodeStatusEnabled, 0, RedemptionFundingSourceLegacyUnknown).
-				Update("funding_source", redemption.FundingSource)
-			if result.Error != nil {
-				return result.Error
-			}
-			if result.RowsAffected != 1 {
-				return ErrRedemptionStateChanged
-			}
-			persistedFundingSource = redemption.FundingSource
-		}
-
 		result := tx.Model(&Redemption{}).
-			Where("id = ? AND status = ? AND funding_source = ?", redemption.Id, expectedStatus, persistedFundingSource).
+			Where("id = ? AND status = ? AND funding_source = ?", redemption.Id, expectedStatus, expectedFundingSource).
 			Select("name", "quota", "expired_time").
 			Updates(redemption)
 		if result.Error != nil {
@@ -264,7 +251,7 @@ func (redemption *Redemption) UpdateDetails(expectedStatus int, expectedFundingS
 		if result.RowsAffected != 1 {
 			var count int64
 			if err := tx.Model(&Redemption{}).
-				Where("id = ? AND status = ? AND funding_source = ?", redemption.Id, expectedStatus, persistedFundingSource).
+				Where("id = ? AND status = ? AND funding_source = ?", redemption.Id, expectedStatus, expectedFundingSource).
 				Count(&count).Error; err != nil {
 				return err
 			}

@@ -605,6 +605,7 @@ func RelayTask(c *gin.Context) {
 			PromoQuota:  relayInfo.WalletPromoQuota,
 			LegacyQuota: relayInfo.WalletLegacyQuota,
 		}
+		task.PrivateData.WalletAllocationVersion = model.CurrentWalletVersion
 		task.PrivateData.UserRoleSnapshot = relayInfo.UserRole
 		task.PrivateData.IsAdminUsage = relayInfo.IsAdminUsage
 		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId

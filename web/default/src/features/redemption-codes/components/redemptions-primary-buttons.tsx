@@ -23,6 +23,8 @@ import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Button } from '@/components/ui/button'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { deleteInvalidRedemptions } from '../api'
 import { ERROR_MESSAGES } from '../constants'
@@ -31,9 +33,14 @@ import { useRedemptions } from './redemptions-provider'
 export function RedemptionsPrimaryButtons() {
   const { t } = useTranslation()
   const { setOpen, triggerRefresh } = useRedemptions()
+  const currentUser = useAuthStore((state) => state.auth.user)
   const [showDeleteInvalidConfirm, setShowDeleteInvalidConfirm] =
     useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+
+  if (currentUser?.role !== ROLE.SUPER_ADMIN) {
+    return null
+  }
 
   const handleDeleteInvalid = async () => {
     setIsDeleting(true)

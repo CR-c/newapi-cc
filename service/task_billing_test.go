@@ -224,6 +224,61 @@ func TestTaskSubscriptionAdjustmentPreservesMixedFundingAllocation(t *testing.T)
 	assert.Equal(t, int64(60), getSubscriptionUsed(t, sub.Id))
 }
 
+func TestPreV2TaskRefundReturnsHistoricalAllocationAsPaid(t *testing.T) {
+	truncate(t)
+	user := &model.User{
+		Id: 993, Username: "pre-v2-task-refund", Status: common.UserStatusEnabled,
+		Quota: 70, PaidQuota: 70, WalletVersion: model.CurrentWalletVersion,
+	}
+	require.NoError(t, model.DB.Create(user).Error)
+	task := makeTask(user.Id, 0, 30, 0, BillingSourceWallet, 0)
+	task.PrivateData.WalletAllocationVersion = 1
+	task.PrivateData.WalletAllocation = model.WalletAllocation{PromoQuota: 30}
+
+	refunded, err := taskAdjustFunding(task, -30)
+	require.NoError(t, err)
+	assert.Equal(t, model.WalletAllocation{PaidQuota: 30}, refunded)
+	assert.Zero(t, task.PrivateData.WalletAllocation.Total())
+
+	var stored model.User
+	require.NoError(t, model.DB.First(&stored, user.Id).Error)
+	assert.Equal(t, 100, stored.Quota)
+	assert.Equal(t, 100, stored.PaidQuota)
+	assert.Zero(t, stored.PromoQuota)
+	assert.Zero(t, stored.LegacyUnknownQuota)
+}
+
+func TestPreV2TaskNormalizesBeforePostV2DebitAndRefund(t *testing.T) {
+	truncate(t)
+	user := &model.User{
+		Id: 994, Username: "mixed-version-task", Status: common.UserStatusEnabled,
+		Quota: 20, PromoQuota: 20, WalletVersion: model.CurrentWalletVersion,
+	}
+	require.NoError(t, model.DB.Create(user).Error)
+	task := makeTask(user.Id, 0, 30, 0, BillingSourceWallet, 0)
+	task.PrivateData.WalletAllocationVersion = 1
+	task.PrivateData.WalletAllocation = model.WalletAllocation{PromoQuota: 30}
+
+	debited, err := taskAdjustFunding(task, 20)
+	require.NoError(t, err)
+	assert.Equal(t, model.WalletAllocation{PromoQuota: 20}, debited)
+	assert.Equal(t, model.CurrentWalletVersion, task.PrivateData.WalletAllocationVersion)
+	assert.Equal(t, model.WalletAllocation{PaidQuota: 30, PromoQuota: 20}, task.PrivateData.WalletAllocation)
+	task.Quota = 50
+
+	refunded, err := taskAdjustFunding(task, -50)
+	require.NoError(t, err)
+	assert.Equal(t, model.WalletAllocation{PaidQuota: 30, PromoQuota: 20}, refunded)
+	assert.Zero(t, task.PrivateData.WalletAllocation.Total())
+
+	var stored model.User
+	require.NoError(t, model.DB.First(&stored, user.Id).Error)
+	assert.Equal(t, 50, stored.Quota)
+	assert.Equal(t, 30, stored.PaidQuota)
+	assert.Equal(t, 20, stored.PromoQuota)
+	assert.Zero(t, stored.LegacyUnknownQuota)
+}
+
 func TestAppendBillingInfoIncludesSubscriptionFundingAndAdminUsage(t *testing.T) {
 	info := &relaycommon.RelayInfo{
 		BillingSource:   BillingSourceSubscription,
@@ -297,9 +352,10 @@ func makeTask(userId, channelId, quota, tokenId int, billingSource string, subsc
 			OriginModelName: "test-model",
 		},
 		PrivateData: model.TaskPrivateData{
-			BillingSource:  billingSource,
-			SubscriptionId: subscriptionId,
-			TokenId:        tokenId,
+			BillingSource:           billingSource,
+			WalletAllocationVersion: model.CurrentWalletVersion,
+			SubscriptionId:          subscriptionId,
+			TokenId:                 tokenId,
 			BillingContext: &model.TaskBillingContext{
 				ModelPrice:      0.02,
 				GroupRatio:      1.0,

@@ -315,6 +315,9 @@ func migrateDB() error {
 	if err := migrateUserWallets(); err != nil {
 		return err
 	}
+	if err := migrateRedemptionFundingSources(); err != nil {
+		return err
+	}
 	if err := migrateSubscriptionFundingAttribution(); err != nil {
 		return err
 	}
@@ -401,6 +404,9 @@ func migrateDBFast() error {
 		}
 	}
 	if err := migrateUserWallets(); err != nil {
+		return err
+	}
+	if err := migrateRedemptionFundingSources(); err != nil {
 		return err
 	}
 	if err := migrateSubscriptionFundingAttribution(); err != nil {

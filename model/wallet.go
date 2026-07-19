@@ -6,13 +6,14 @@ import (
 	"math"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 
 	"gorm.io/gorm"
 )
 
-const CurrentWalletVersion = 1
+const CurrentWalletVersion = 2
 
 type WalletBucket string
 
@@ -38,7 +39,7 @@ var (
 	ErrWalletBalanceCorrupt          = errors.New("wallet bucket total does not match user quota")
 	ErrWalletQuotaOverflow           = errors.New("wallet quota exceeds supported range")
 	ErrWalletSnapshotChanged         = errors.New("wallet balance snapshot changed")
-	ErrInvalidWalletReclassification = errors.New("wallet reclassification may only attribute legacy balance")
+	ErrInvalidWalletReclassification = errors.New("wallet reclassification must preserve total quota and clear legacy balance")
 )
 
 // WalletAllocation records the exact balance buckets used by a mutation.
@@ -90,11 +91,11 @@ func (ledger QuotaLedger) beforeAllocation() WalletAllocation {
 	}
 }
 
-// migrateUserWallets attributes pre-wallet balances to the conservative
-// legacy_unknown bucket. wallet_version makes the migration idempotent.
+// migrateUserWallets treats every pre-v2 balance as paid. Versioning keeps the
+// migration idempotent and preserves later Root-managed paid/gift splits.
 func migrateUserWallets() error {
 	if err := DB.Unscoped().Model(&User{}).
-		Where("wallet_version = ? AND quota < ?", 0, 0).
+		Where("wallet_version < ? AND quota < ?", CurrentWalletVersion, 0).
 		Updates(map[string]interface{}{
 			"quota": 0, "paid_quota": 0, "promo_quota": 0,
 			"legacy_unknown_quota": 0, "wallet_version": CurrentWalletVersion,
@@ -102,11 +103,11 @@ func migrateUserWallets() error {
 		return err
 	}
 	return DB.Unscoped().Model(&User{}).
-		Where("wallet_version = ? AND quota >= ?", 0, 0).
+		Where("wallet_version < ? AND quota >= ?", CurrentWalletVersion, 0).
 		Updates(map[string]interface{}{
-			"paid_quota":           0,
+			"paid_quota":           gorm.Expr("quota"),
 			"promo_quota":          0,
-			"legacy_unknown_quota": gorm.Expr("quota"),
+			"legacy_unknown_quota": 0,
 			"wallet_version":       CurrentWalletVersion,
 		}).Error
 }
@@ -163,13 +164,13 @@ func loadWalletForUpdate(tx *gorm.DB, userID int) (*User, error) {
 	if err := lockForUpdate(tx).Where("id = ?", userID).First(&user).Error; err != nil {
 		return nil, err
 	}
-	if user.WalletVersion == 0 {
+	if user.WalletVersion < CurrentWalletVersion {
 		if user.Quota < 0 {
 			user.Quota = 0
 		}
-		user.PaidQuota = 0
+		user.PaidQuota = user.Quota
 		user.PromoQuota = 0
-		user.LegacyUnknownQuota = user.Quota
+		user.LegacyUnknownQuota = 0
 		user.WalletVersion = CurrentWalletVersion
 	}
 	total := int64(user.PaidQuota) + int64(user.PromoQuota) + int64(user.LegacyUnknownQuota)
@@ -460,28 +461,40 @@ func getWalletReclassificationReplay(tx *gorm.DB, expected QuotaLedger) (WalletA
 	return existing.beforeAllocation(), existing.allocation(), true, nil
 }
 
-// ReclassifyWallet attributes only legacy balance. Existing paid and promo
-// balances cannot be rewritten, and total quota is preserved.
+// ReclassifyWallet lets Root redistribute an existing wallet between paid and
+// gift balances. Total quota is preserved and legacy attribution is cleared.
 func ReclassifyWallet(userID int, expected, target WalletAllocation, eventKey, reason string, operatorID int) (WalletAllocation, WalletAllocation, error) {
 	if !walletAllocationValid(expected) || !walletAllocationValid(target) || expected.Total() != target.Total() {
 		return WalletAllocation{}, WalletAllocation{}, ErrInvalidWalletAmount
 	}
-	moved := expected.LegacyQuota - target.LegacyQuota
-	paidIncrease := target.PaidQuota - expected.PaidQuota
-	promoIncrease := target.PromoQuota - expected.PromoQuota
-	if moved <= 0 || paidIncrease < 0 || promoIncrease < 0 || paidIncrease+promoIncrease != moved {
+	if target.LegacyQuota != 0 {
+		return WalletAllocation{}, WalletAllocation{}, ErrInvalidWalletReclassification
+	}
+	deltaPaid := int64(target.PaidQuota) - int64(expected.PaidQuota)
+	deltaPromo := int64(target.PromoQuota) - int64(expected.PromoQuota)
+	deltaLegacy := int64(target.LegacyQuota) - int64(expected.LegacyQuota)
+	moved := int64(0)
+	for _, delta := range []int64{deltaPaid, deltaPromo, deltaLegacy} {
+		if delta < 0 {
+			moved -= delta
+		} else {
+			moved += delta
+		}
+	}
+	moved /= 2
+	if moved <= 0 || moved > math.MaxInt32 {
 		return WalletAllocation{}, WalletAllocation{}, ErrInvalidWalletReclassification
 	}
 	reason = strings.TrimSpace(reason)
-	if reason == "" || len(reason) > 255 || operatorID <= 0 {
+	if reason == "" || utf8.RuneCountInString(reason) > 200 || operatorID <= 0 {
 		return WalletAllocation{}, WalletAllocation{}, ErrInvalidWalletReclassification
 	}
-	if err := validateWalletMutation(moved, eventKey); err != nil {
+	if err := validateWalletMutation(int(moved), eventKey); err != nil {
 		return WalletAllocation{}, WalletAllocation{}, err
 	}
 	ledger := QuotaLedger{
 		UserId: userID, EventKey: eventKey, Operation: walletOperationReclassify,
-		Bucket: string(WalletBucketLegacyUnknown), Amount: moved,
+		Bucket: "manual", Amount: int(moved),
 		PaidQuota: target.PaidQuota, PromoQuota: target.PromoQuota, LegacyUnknownQuota: target.LegacyQuota,
 		BeforePaidQuota: expected.PaidQuota, BeforePromoQuota: expected.PromoQuota,
 		BeforeLegacyUnknownQuota: expected.LegacyQuota, Reason: reason, OperatorId: operatorID,

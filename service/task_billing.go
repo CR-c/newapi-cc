@@ -129,6 +129,14 @@ func taskAdjustFunding(task *model.Task, delta int) (model.WalletAllocation, err
 		task.PrivateData.WalletAllocation = target
 		return event, nil
 	}
+	preV2Allocation := task.PrivateData.WalletAllocationVersion < model.CurrentWalletVersion
+	if preV2Allocation {
+		historicalTotal := task.PrivateData.WalletAllocation.Total()
+		if historicalTotal > 0 {
+			task.PrivateData.WalletAllocation = model.WalletAllocation{PaidQuota: historicalTotal}
+		}
+		task.PrivateData.WalletAllocationVersion = model.CurrentWalletVersion
+	}
 	if delta > 0 {
 		allocation, err := model.DebitWallet(task.UserId, delta,
 			fmt.Sprintf("task:%s:quota:%d:debit", task.TaskID, task.Quota+delta))
@@ -140,21 +148,26 @@ func taskAdjustFunding(task *model.Task, delta int) (model.WalletAllocation, err
 		task.PrivateData.WalletAllocation.LegacyQuota += allocation.LegacyQuota
 		return allocation, nil
 	}
-	refund := model.WalletAllocation{}
+	consumedRefund := model.WalletAllocation{}
 	if task.PrivateData.WalletAllocation.Total() == 0 {
-		refund.LegacyQuota = -delta
+		if preV2Allocation {
+			consumedRefund.PaidQuota = -delta
+		} else {
+			consumedRefund.LegacyQuota = -delta
+		}
 	} else {
-		refund = takeWalletRefund(&task.PrivateData.WalletAllocation, -delta)
+		consumedRefund = takeWalletRefund(&task.PrivateData.WalletAllocation, -delta)
 	}
-	if refund.Total() != -delta {
+	if consumedRefund.Total() != -delta {
 		return model.WalletAllocation{}, fmt.Errorf("task wallet refund exceeds consumed allocation")
 	}
+	refund := consumedRefund
 	_, err := model.RefundWallet(task.UserId, refund,
 		fmt.Sprintf("task:%s:quota:%d:refund", task.TaskID, task.Quota+delta))
 	if err != nil {
-		task.PrivateData.WalletAllocation.PaidQuota += refund.PaidQuota
-		task.PrivateData.WalletAllocation.PromoQuota += refund.PromoQuota
-		task.PrivateData.WalletAllocation.LegacyQuota += refund.LegacyQuota
+		task.PrivateData.WalletAllocation.PaidQuota += consumedRefund.PaidQuota
+		task.PrivateData.WalletAllocation.PromoQuota += consumedRefund.PromoQuota
+		task.PrivateData.WalletAllocation.LegacyQuota += consumedRefund.LegacyQuota
 	}
 	return refund, err
 }
