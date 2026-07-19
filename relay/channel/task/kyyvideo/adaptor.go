@@ -204,7 +204,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	clientResponse.ID = info.PublicTaskID
 	clientResponse.TaskID = info.PublicTaskID
 	clientResponse.Model = info.OriginModelName
-	clientResponse.CreatedAt = upstream.Created
+	clientResponse.CreatedAt = int64(upstream.Created)
 	clientResponse.Status = mapKyyVideoStatus(upstream.Status)
 	c.JSON(http.StatusOK, clientResponse)
 	return upstream.ID, a.SanitizeTaskData(responseBody), nil
@@ -306,7 +306,7 @@ func (a *TaskAdaptor) SanitizeTaskData(body []byte) []byte {
 		Status  string `json:"status,omitempty"`
 	}{
 		Object:  upstream.Object,
-		Created: upstream.Created,
+		Created: int64(upstream.Created),
 		Model:   upstream.Model,
 		Status:  upstream.Status,
 	}

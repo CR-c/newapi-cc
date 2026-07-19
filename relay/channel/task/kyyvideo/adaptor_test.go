@@ -200,7 +200,7 @@ func TestDoResponseHidesUpstreamTaskID(t *testing.T) {
 		Body: io.NopCloser(strings.NewReader(`{
 			"id":"upstream-video-id",
 			"object":"video",
-			"created":1761635478,
+			"created":"1761635478",
 			"model":"videos",
 			"status":"queued",
 			"error":null
