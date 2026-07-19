@@ -228,8 +228,8 @@ func TestParseTaskResultMapsCompletedVideoURL(t *testing.T) {
 		"model":"videos_stable_fast",
 		"status":"completed",
 		"video_url":"https://example.com/result.mp4",
-		"actualDuration":10,
-		"amount":0.32,
+		"actualDuration":"10",
+		"amount":"0.32",
 		"error":null
 	}`))
 

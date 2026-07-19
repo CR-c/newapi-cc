@@ -1,5 +1,7 @@
 package kyyvideo
 
+import "encoding/json"
+
 type requestPayload struct {
 	Model           string   `json:"model"`
 	Prompt          string   `json:"prompt"`
@@ -15,13 +17,13 @@ type requestPayload struct {
 }
 
 type taskResponse struct {
-	ID             string  `json:"id"`
-	Object         string  `json:"object"`
-	Created        int64   `json:"created"`
-	Model          string  `json:"model"`
-	Status         string  `json:"status"`
-	VideoURL       string  `json:"video_url"`
-	ActualDuration float64 `json:"actualDuration"`
-	Amount         float64 `json:"amount"`
-	Error          *string `json:"error"`
+	ID             string          `json:"id"`
+	Object         string          `json:"object"`
+	Created        int64           `json:"created"`
+	Model          string          `json:"model"`
+	Status         string          `json:"status"`
+	VideoURL       string          `json:"video_url"`
+	ActualDuration json.RawMessage `json:"actualDuration"`
+	Amount         json.RawMessage `json:"amount"`
+	Error          *string         `json:"error"`
 }
