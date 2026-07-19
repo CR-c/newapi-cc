@@ -33,6 +33,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { updateRedemptionStatus } from '../api'
 import { REDEMPTION_STATUS, SUCCESS_MESSAGES } from '../constants'
@@ -49,6 +51,10 @@ export function DataTableRowActions<TData>({
 }: DataTableRowActionsProps<TData>) {
   const { t } = useTranslation()
   const redemption = redemptionSchema.parse(row.original)
+  const currentUser = useAuthStore((state) => state.auth.user)
+  const canManagePaid =
+    redemption.funding_source !== 'paid' ||
+    currentUser?.role === ROLE.SUPER_ADMIN
   const { setOpen, setCurrentRow, triggerRefresh } = useRedemptions()
   const isEnabled = redemption.status === REDEMPTION_STATUS.ENABLED
   const isUsed = redemption.status === REDEMPTION_STATUS.USED
@@ -72,8 +78,8 @@ export function DataTableRowActions<TData>({
     }
   }
 
-  const canEdit = isEnabled && !isExpired
-  const canToggle = !isUsed && !isExpired
+  const canEdit = isEnabled && !isExpired && canManagePaid
+  const canToggle = !isUsed && !isExpired && canManagePaid
 
   return (
     <div className='-ml-1.5 flex items-center gap-1'>
@@ -118,18 +124,20 @@ export function DataTableRowActions<TData>({
           </DropdownMenuItem>
         )}
         {canToggle && <DropdownMenuSeparator />}
-        <DropdownMenuItem
-          onClick={() => {
-            setCurrentRow(redemption)
-            setOpen('delete')
-          }}
-          className='text-destructive focus:text-destructive'
-        >
-          {t('Delete')}
-          <DropdownMenuShortcut>
-            <Trash2 size={16} />
-          </DropdownMenuShortcut>
-        </DropdownMenuItem>
+        {canManagePaid && (
+          <DropdownMenuItem
+            onClick={() => {
+              setCurrentRow(redemption)
+              setOpen('delete')
+            }}
+            className='text-destructive focus:text-destructive'
+          >
+            {t('Delete')}
+            <DropdownMenuShortcut>
+              <Trash2 size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+        )}
       </DataTableRowActionMenu>
     </div>
   )

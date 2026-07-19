@@ -348,8 +348,7 @@ export function RechargeFormCard({
                       {formatCreditAmount(currentCredit.principal)}
                     </span>
                     <span className='text-emerald-600 dark:text-emerald-400'>
-                      {t('Gift')}: +
-                      {formatCreditAmount(currentCredit.bonus)}
+                      {t('Gift')}: +{formatCreditAmount(currentCredit.bonus)}
                     </span>
                     <span className='font-medium'>
                       {t('Total credited')}:{' '}
@@ -579,7 +578,7 @@ export function RechargeFormCard({
           </div>
           <p className='text-muted-foreground text-xs'>
             {t(
-              'Redemption codes add gift balance. Gift balance is promotional credit and does not count as paid recharge.'
+              'The redemption card type determines whether quota is added to paid or gift balance.'
             )}
           </p>
           {topupLink && (

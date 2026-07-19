@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -1071,11 +1072,14 @@ func updateAdminPermissionsForUserInTx(c *gin.Context, tx *gorm.DB, userID int, 
 }
 
 type ManageRequest struct {
-	Id            int    `json:"id"`
-	Action        string `json:"action"`
-	Value         int    `json:"value"`
-	Mode          string `json:"mode"`
-	FundingSource string `json:"funding_source"`
+	Id             int                    `json:"id"`
+	Action         string                 `json:"action"`
+	Value          int                    `json:"value"`
+	Mode           string                 `json:"mode"`
+	FundingSource  string                 `json:"funding_source"`
+	ExpectedWallet model.WalletAllocation `json:"expected_wallet"`
+	TargetWallet   model.WalletAllocation `json:"target_wallet"`
+	Reason         string                 `json:"reason"`
 }
 
 func resolveAdminQuotaCreditBucket(fundingSource string) (model.WalletBucket, error) {
@@ -1179,6 +1183,10 @@ func ManageUser(c *gin.Context) {
 				common.ApiError(c, err)
 				return
 			}
+			if bucket == model.WalletBucketPaid && myRole != common.RoleRootUser {
+				common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
+				return
+			}
 			if _, err := model.CreditWallet(user.Id, req.Value, bucket, eventKey); err != nil {
 				common.ApiError(c, err)
 				return
@@ -1225,6 +1233,37 @@ func ManageUser(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": "",
+		})
+		return
+	case "reclassify_wallet":
+		if myRole != common.RoleRootUser {
+			common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
+			return
+		}
+		reason := strings.TrimSpace(req.Reason)
+		if utf8.RuneCountInString(reason) < 3 || utf8.RuneCountInString(reason) > 200 {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+		requestID := c.GetString(common.RequestIdKey)
+		if requestID == "" {
+			requestID = common.NewRequestId()
+		}
+		eventKey := "admin-wallet-reclassify:" + common.Sha1([]byte(fmt.Sprintf("%s:%d", requestID, user.Id)))
+		before, after, err := model.ReclassifyWallet(user.Id, req.ExpectedWallet, req.TargetWallet, eventKey, reason, c.GetInt("id"))
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		recordManageAuditFor(c, user.Id, "user.wallet_reclassify", map[string]interface{}{
+			"before": before,
+			"after":  after,
+			"reason": reason,
+		})
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "",
+			"data":    after,
 		})
 		return
 	}

@@ -23,19 +23,22 @@ const (
 )
 
 const (
-	walletOperationCredit = "credit"
-	walletOperationDebit  = "debit"
-	walletOperationRefund = "refund"
+	walletOperationCredit     = "credit"
+	walletOperationDebit      = "debit"
+	walletOperationRefund     = "refund"
+	walletOperationReclassify = "reclassify"
 )
 
 var (
-	ErrInvalidWalletAmount     = errors.New("wallet amount must be positive")
-	ErrInvalidWalletBucket     = errors.New("invalid wallet bucket")
-	ErrInvalidWalletEventKey   = errors.New("wallet event key is required")
-	ErrInsufficientWalletQuota = errors.New("insufficient wallet quota")
-	ErrWalletEventConflict     = errors.New("wallet event key conflicts with an existing mutation")
-	ErrWalletBalanceCorrupt    = errors.New("wallet bucket total does not match user quota")
-	ErrWalletQuotaOverflow     = errors.New("wallet quota exceeds supported range")
+	ErrInvalidWalletAmount           = errors.New("wallet amount must be positive")
+	ErrInvalidWalletBucket           = errors.New("invalid wallet bucket")
+	ErrInvalidWalletEventKey         = errors.New("wallet event key is required")
+	ErrInsufficientWalletQuota       = errors.New("insufficient wallet quota")
+	ErrWalletEventConflict           = errors.New("wallet event key conflicts with an existing mutation")
+	ErrWalletBalanceCorrupt          = errors.New("wallet bucket total does not match user quota")
+	ErrWalletQuotaOverflow           = errors.New("wallet quota exceeds supported range")
+	ErrWalletSnapshotChanged         = errors.New("wallet balance snapshot changed")
+	ErrInvalidWalletReclassification = errors.New("wallet reclassification may only attribute legacy balance")
 )
 
 // WalletAllocation records the exact balance buckets used by a mutation.
@@ -54,16 +57,21 @@ func (a WalletAllocation) Total() int {
 // retrying the same mutation returns its original allocation without applying
 // the balance change again.
 type QuotaLedger struct {
-	Id                 int64  `json:"id"`
-	UserId             int    `json:"user_id" gorm:"not null;index"`
-	EventKey           string `json:"event_key" gorm:"type:varchar(191);not null;uniqueIndex"`
-	Operation          string `json:"operation" gorm:"type:varchar(16);not null;index"`
-	Bucket             string `json:"bucket" gorm:"type:varchar(32);not null;default:''"`
-	Amount             int    `json:"amount" gorm:"type:int;not null"`
-	PaidQuota          int    `json:"paid_quota" gorm:"type:int;not null;default:0"`
-	PromoQuota         int    `json:"promo_quota" gorm:"type:int;not null;default:0"`
-	LegacyUnknownQuota int    `json:"legacy_unknown_quota" gorm:"type:int;not null;default:0"`
-	CreatedAt          int64  `json:"created_at" gorm:"autoCreateTime;column:created_at"`
+	Id                       int64  `json:"id"`
+	UserId                   int    `json:"user_id" gorm:"not null;index"`
+	EventKey                 string `json:"event_key" gorm:"type:varchar(191);not null;uniqueIndex"`
+	Operation                string `json:"operation" gorm:"type:varchar(16);not null;index"`
+	Bucket                   string `json:"bucket" gorm:"type:varchar(32);not null;default:''"`
+	Amount                   int    `json:"amount" gorm:"type:int;not null"`
+	PaidQuota                int    `json:"paid_quota" gorm:"type:int;not null;default:0"`
+	PromoQuota               int    `json:"promo_quota" gorm:"type:int;not null;default:0"`
+	LegacyUnknownQuota       int    `json:"legacy_unknown_quota" gorm:"type:int;not null;default:0"`
+	BeforePaidQuota          int    `json:"before_paid_quota" gorm:"type:int;not null;default:0"`
+	BeforePromoQuota         int    `json:"before_promo_quota" gorm:"type:int;not null;default:0"`
+	BeforeLegacyUnknownQuota int    `json:"before_legacy_unknown_quota" gorm:"type:int;not null;default:0"`
+	Reason                   string `json:"reason" gorm:"type:varchar(255);not null;default:''"`
+	OperatorId               int    `json:"operator_id" gorm:"type:int;not null;default:0;index"`
+	CreatedAt                int64  `json:"created_at" gorm:"autoCreateTime;column:created_at"`
 }
 
 func (ledger QuotaLedger) allocation() WalletAllocation {
@@ -71,6 +79,14 @@ func (ledger QuotaLedger) allocation() WalletAllocation {
 		PaidQuota:   ledger.PaidQuota,
 		PromoQuota:  ledger.PromoQuota,
 		LegacyQuota: ledger.LegacyUnknownQuota,
+	}
+}
+
+func (ledger QuotaLedger) beforeAllocation() WalletAllocation {
+	return WalletAllocation{
+		PaidQuota:   ledger.BeforePaidQuota,
+		PromoQuota:  ledger.BeforePromoQuota,
+		LegacyQuota: ledger.BeforeLegacyUnknownQuota,
 	}
 }
 
@@ -420,6 +436,98 @@ func RefundWallet(userID int, allocation WalletAllocation, eventKey string) (Wal
 		}
 	}
 	return refunded, err
+}
+
+func getWalletReclassificationReplay(tx *gorm.DB, expected QuotaLedger) (WalletAllocation, WalletAllocation, bool, error) {
+	var existing QuotaLedger
+	err := tx.Where("event_key = ?", expected.EventKey).First(&existing).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return WalletAllocation{}, WalletAllocation{}, false, nil
+	}
+	if err != nil {
+		return WalletAllocation{}, WalletAllocation{}, false, err
+	}
+	if existing.UserId != expected.UserId || existing.Operation != walletOperationReclassify ||
+		existing.Bucket != expected.Bucket || existing.Amount != expected.Amount ||
+		existing.PaidQuota != expected.PaidQuota || existing.PromoQuota != expected.PromoQuota ||
+		existing.LegacyUnknownQuota != expected.LegacyUnknownQuota ||
+		existing.BeforePaidQuota != expected.BeforePaidQuota ||
+		existing.BeforePromoQuota != expected.BeforePromoQuota ||
+		existing.BeforeLegacyUnknownQuota != expected.BeforeLegacyUnknownQuota ||
+		existing.Reason != expected.Reason || existing.OperatorId != expected.OperatorId {
+		return WalletAllocation{}, WalletAllocation{}, false, ErrWalletEventConflict
+	}
+	return existing.beforeAllocation(), existing.allocation(), true, nil
+}
+
+// ReclassifyWallet attributes only legacy balance. Existing paid and promo
+// balances cannot be rewritten, and total quota is preserved.
+func ReclassifyWallet(userID int, expected, target WalletAllocation, eventKey, reason string, operatorID int) (WalletAllocation, WalletAllocation, error) {
+	if !walletAllocationValid(expected) || !walletAllocationValid(target) || expected.Total() != target.Total() {
+		return WalletAllocation{}, WalletAllocation{}, ErrInvalidWalletAmount
+	}
+	moved := expected.LegacyQuota - target.LegacyQuota
+	paidIncrease := target.PaidQuota - expected.PaidQuota
+	promoIncrease := target.PromoQuota - expected.PromoQuota
+	if moved <= 0 || paidIncrease < 0 || promoIncrease < 0 || paidIncrease+promoIncrease != moved {
+		return WalletAllocation{}, WalletAllocation{}, ErrInvalidWalletReclassification
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" || len(reason) > 255 || operatorID <= 0 {
+		return WalletAllocation{}, WalletAllocation{}, ErrInvalidWalletReclassification
+	}
+	if err := validateWalletMutation(moved, eventKey); err != nil {
+		return WalletAllocation{}, WalletAllocation{}, err
+	}
+	ledger := QuotaLedger{
+		UserId: userID, EventKey: eventKey, Operation: walletOperationReclassify,
+		Bucket: string(WalletBucketLegacyUnknown), Amount: moved,
+		PaidQuota: target.PaidQuota, PromoQuota: target.PromoQuota, LegacyUnknownQuota: target.LegacyQuota,
+		BeforePaidQuota: expected.PaidQuota, BeforePromoQuota: expected.PromoQuota,
+		BeforeLegacyUnknownQuota: expected.LegacyQuota, Reason: reason, OperatorId: operatorID,
+	}
+	if before, after, found, err := getWalletReclassificationReplay(DB, ledger); found || err != nil {
+		return before, after, err
+	}
+
+	err := runWalletTransaction(func(tx *gorm.DB) error {
+		if _, _, found, err := getWalletReclassificationReplay(tx, ledger); found || err != nil {
+			return err
+		}
+		user, err := loadWalletForUpdate(tx, userID)
+		if err != nil {
+			return err
+		}
+		current := WalletAllocation{
+			PaidQuota: user.PaidQuota, PromoQuota: user.PromoQuota,
+			LegacyQuota: user.LegacyUnknownQuota,
+		}
+		if current != expected || user.Quota != expected.Total() {
+			return ErrWalletSnapshotChanged
+		}
+		if _, _, found, err := getWalletReclassificationReplay(tx, ledger); found || err != nil {
+			return err
+		}
+		if err := tx.Create(&ledger).Error; err != nil {
+			return err
+		}
+		user.PaidQuota = target.PaidQuota
+		user.PromoQuota = target.PromoQuota
+		user.LegacyUnknownQuota = target.LegacyQuota
+		return saveWallet(tx, user)
+	})
+	if err != nil {
+		if before, after, found, replayErr := getWalletReclassificationReplay(DB, ledger); found || replayErr != nil {
+			return before, after, replayErr
+		}
+	}
+	if err != nil {
+		return WalletAllocation{}, WalletAllocation{}, err
+	}
+	if cacheErr := invalidateUserCache(userID); cacheErr != nil {
+		common.SysLog("failed to invalidate user cache after wallet reclassification: " + cacheErr.Error())
+	}
+	return expected, target, nil
 }
 
 // OverrideWalletQuota atomically moves a wallet to targetQuota. Increases are

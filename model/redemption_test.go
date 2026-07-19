@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -100,7 +101,7 @@ func TestSearchRedemptionsFiltersAndPaginates(t *testing.T) {
 	}
 }
 
-func setupRedeemFixture(t *testing.T, quota int) (userId int, key string) {
+func setupRedeemFixture(t *testing.T, quota int, fundingSource string) (userId int, key string) {
 	t.Helper()
 	require.NoError(t, DB.AutoMigrate(&Redemption{}))
 	require.NoError(t, DB.Session(&gorm.Session{AllowGlobalUpdate: true}).Unscoped().Delete(&Redemption{}).Error)
@@ -117,18 +118,19 @@ func setupRedeemFixture(t *testing.T, quota int) (userId int, key string) {
 
 	key = "10000000000000000000000000000001"
 	redemption := &Redemption{
-		Name:        "redeem-test",
-		Key:         key,
-		Status:      common.RedemptionCodeStatusEnabled,
-		Quota:       quota,
-		CreatedTime: common.GetTimestamp(),
+		Name:          "redeem-test",
+		Key:           key,
+		Status:        common.RedemptionCodeStatusEnabled,
+		Quota:         quota,
+		FundingSource: fundingSource,
+		CreatedTime:   common.GetTimestamp(),
 	}
 	require.NoError(t, DB.Create(redemption).Error)
 	return user.Id, key
 }
 
 func TestRedeemCreditsQuotaExactlyOnce(t *testing.T) {
-	userId, key := setupRedeemFixture(t, 500)
+	userId, key := setupRedeemFixture(t, 500, RedemptionFundingSourcePromo)
 
 	quota, err := Redeem(key, userId)
 	require.NoError(t, err)
@@ -156,7 +158,7 @@ func TestRedeemCreditsQuotaExactlyOnce(t *testing.T) {
 // Exactly one of several concurrent redeems of the same code may win, and
 // quota must be credited exactly once.
 func TestRedeemConcurrentSingleSuccess(t *testing.T) {
-	userId, key := setupRedeemFixture(t, 300)
+	userId, key := setupRedeemFixture(t, 300, RedemptionFundingSourcePromo)
 
 	const goroutines = 5
 	successes := make([]bool, goroutines)
@@ -185,4 +187,137 @@ func TestRedeemConcurrentSingleSuccess(t *testing.T) {
 	assert.Equal(t, 300, user.Quota, "quota must be credited exactly once")
 	assert.Zero(t, user.PaidQuota)
 	assert.Equal(t, 300, user.PromoQuota)
+}
+
+func TestRedeemCreditsConfiguredFundingBucket(t *testing.T) {
+	tests := []struct {
+		name          string
+		fundingSource string
+		want          WalletAllocation
+	}{
+		{name: "paid card", fundingSource: RedemptionFundingSourcePaid, want: WalletAllocation{PaidQuota: 400}},
+		{name: "gift code", fundingSource: RedemptionFundingSourcePromo, want: WalletAllocation{PromoQuota: 400}},
+		{name: "historical unknown code", fundingSource: RedemptionFundingSourceLegacyUnknown, want: WalletAllocation{LegacyQuota: 400}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userID, key := setupRedeemFixture(t, 400, tt.fundingSource)
+
+			quota, err := Redeem(key, userID)
+			require.NoError(t, err)
+			assert.Equal(t, 400, quota)
+			requireWallet(t, DB, userID, tt.want.PaidQuota, tt.want.PromoQuota, tt.want.LegacyQuota)
+		})
+	}
+}
+
+func TestRedemptionFundingSourceValidation(t *testing.T) {
+	for _, source := range []string{RedemptionFundingSourcePaid, RedemptionFundingSourcePromo} {
+		assert.NoError(t, ValidateNewRedemptionFundingSource(source))
+	}
+	for _, source := range []string{"", RedemptionFundingSourceLegacyUnknown, "cash", "PAID"} {
+		assert.Error(t, ValidateNewRedemptionFundingSource(source))
+	}
+}
+
+func TestRedemptionMigrationMarksExistingRowsLegacyUnknown(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:redemption_source_migration?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE redemptions (id INTEGER PRIMARY KEY, "key" CHAR(32))`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO redemptions (id, "key") VALUES (1, 'legacy-code')`).Error)
+
+	require.NoError(t, db.AutoMigrate(&Redemption{}))
+
+	var redemption Redemption
+	require.NoError(t, db.First(&redemption, 1).Error)
+	assert.Equal(t, RedemptionFundingSourceLegacyUnknown, redemption.FundingSource)
+}
+
+func TestRedeemRejectsInvalidStoredFundingSourceWithoutConsumingCode(t *testing.T) {
+	userID, key := setupRedeemFixture(t, 300, "cash")
+
+	_, err := Redeem(key, userID)
+	require.Error(t, err)
+	requireWallet(t, DB, userID, 0, 0, 0)
+
+	var redemption Redemption
+	require.NoError(t, DB.Where("key = ?", key).First(&redemption).Error)
+	assert.Equal(t, common.RedemptionCodeStatusEnabled, redemption.Status)
+}
+
+func TestLegacyFundingResolutionCannotResurrectRedeemedCode(t *testing.T) {
+	userID, key := setupRedeemFixture(t, 300, RedemptionFundingSourceLegacyUnknown)
+
+	var stale Redemption
+	require.NoError(t, DB.Where("key = ?", key).First(&stale).Error)
+	_, err := Redeem(key, userID)
+	require.NoError(t, err)
+
+	stale.FundingSource = RedemptionFundingSourcePaid
+	err = stale.UpdateDetails(common.RedemptionCodeStatusEnabled, RedemptionFundingSourceLegacyUnknown, true)
+	require.ErrorIs(t, err, ErrRedemptionStateChanged)
+
+	var stored Redemption
+	require.NoError(t, DB.Where("key = ?", key).First(&stored).Error)
+	assert.Equal(t, common.RedemptionCodeStatusUsed, stored.Status)
+	assert.Equal(t, RedemptionFundingSourceLegacyUnknown, stored.FundingSource)
+	requireWallet(t, DB, userID, 0, 0, 300)
+
+	_, err = Redeem(key, userID)
+	require.Error(t, err)
+	requireWallet(t, DB, userID, 0, 0, 300)
+}
+
+func TestNonRootMutationsRejectStaleLegacySourceAfterPaidResolution(t *testing.T) {
+	_, key := setupRedeemFixture(t, 300, RedemptionFundingSourceLegacyUnknown)
+
+	var stale Redemption
+	require.NoError(t, DB.Where("key = ?", key).First(&stale).Error)
+	require.NoError(t, DB.Model(&Redemption{}).
+		Where("id = ? AND funding_source = ?", stale.Id, RedemptionFundingSourceLegacyUnknown).
+		Update("funding_source", RedemptionFundingSourcePaid).Error)
+
+	stale.Name = "stale update"
+	require.ErrorIs(t,
+		stale.UpdateDetails(common.RedemptionCodeStatusEnabled, RedemptionFundingSourceLegacyUnknown, false),
+		ErrRedemptionStateChanged,
+	)
+	require.ErrorIs(t,
+		UpdateRedemptionStatus(
+			stale.Id,
+			common.RedemptionCodeStatusEnabled,
+			common.RedemptionCodeStatusDisabled,
+			RedemptionFundingSourceLegacyUnknown,
+			false,
+		),
+		ErrRedemptionStateChanged,
+	)
+	require.ErrorIs(t,
+		DeleteRedemptionById(stale.Id, RedemptionFundingSourceLegacyUnknown, false),
+		ErrRedemptionStateChanged,
+	)
+
+	var stored Redemption
+	require.NoError(t, DB.First(&stored, stale.Id).Error)
+	assert.Equal(t, RedemptionFundingSourcePaid, stored.FundingSource)
+	assert.NotEqual(t, "stale update", stored.Name)
+	assert.Equal(t, common.RedemptionCodeStatusEnabled, stored.Status)
+}
+
+func TestUsedRedemptionStatusIsTerminal(t *testing.T) {
+	_, key := setupRedeemFixture(t, 300, RedemptionFundingSourcePromo)
+	var redemption Redemption
+	require.NoError(t, DB.Where("key = ?", key).First(&redemption).Error)
+	require.NoError(t, DB.Model(&Redemption{}).Where("id = ?", redemption.Id).
+		Update("status", common.RedemptionCodeStatusUsed).Error)
+
+	err := UpdateRedemptionStatus(
+		redemption.Id,
+		common.RedemptionCodeStatusUsed,
+		common.RedemptionCodeStatusEnabled,
+		RedemptionFundingSourcePromo,
+		true,
+	)
+	require.ErrorIs(t, err, ErrRedemptionStateChanged)
 }

@@ -25,6 +25,7 @@ import type {
   GetRedemptionsResponse,
   SearchRedemptionsParams,
   RedemptionFormData,
+  NewRedemptionFormData,
 } from './types'
 
 // ============================================================================
@@ -64,7 +65,7 @@ export async function getRedemption(
 
 // Create redemption code(s)
 export async function createRedemption(
-  data: RedemptionFormData
+  data: NewRedemptionFormData
 ): Promise<ApiResponse<string[]>> {
   const res = await api.post('/api/redemption/', data)
   return res.data

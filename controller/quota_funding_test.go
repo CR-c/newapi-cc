@@ -38,3 +38,27 @@ func TestValidateRedemptionQuotaBounds(t *testing.T) {
 	require.NoError(t, validateRedemptionQuota(common.MaxQuota))
 	require.Error(t, validateRedemptionQuota(common.MaxQuota+1))
 }
+
+func TestNormalizeNewRedemptionFundingSource(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{name: "missing defaults to gift", source: "", want: model.RedemptionFundingSourcePromo},
+		{name: "gift", source: model.RedemptionFundingSourcePromo, want: model.RedemptionFundingSourcePromo},
+		{name: "paid card", source: model.RedemptionFundingSourcePaid, want: model.RedemptionFundingSourcePaid},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizeNewRedemptionFundingSource(tt.source)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	for _, source := range []string{model.RedemptionFundingSourceLegacyUnknown, "cash", "PAID"} {
+		_, err := normalizeNewRedemptionFundingSource(source)
+		require.Error(t, err)
+	}
+}

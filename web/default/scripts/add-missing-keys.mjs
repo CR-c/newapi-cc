@@ -1129,6 +1129,183 @@ Object.assign(newKeys.vi, {
   'Gift quota cannot be negative': 'Hạn mức tặng không được âm',
 })
 
+Object.assign(newKeys.en, {
+  'The redemption card type determines whether quota is added to paid or gift balance.':
+    'The redemption card type determines whether quota is added to paid or gift balance.',
+})
+Object.assign(newKeys.zh, {
+  'The redemption card type determines whether quota is added to paid or gift balance.':
+    '兑换卡类型决定额度计入付费余额还是赠送余额。',
+})
+Object.assign(newKeys['zh-TW'], {
+  'The redemption card type determines whether quota is added to paid or gift balance.':
+    '兌換卡類型決定額度計入付費餘額或贈送餘額。',
+})
+Object.assign(newKeys.fr, {
+  'The redemption card type determines whether quota is added to paid or gift balance.':
+    'Le type de carte détermine si le quota est ajouté au solde payé ou offert.',
+})
+Object.assign(newKeys.ja, {
+  'The redemption card type determines whether quota is added to paid or gift balance.':
+    '引換カードの種類により、クォータが支払済み残高または特典残高のどちらに追加されるかが決まります。',
+})
+Object.assign(newKeys.ru, {
+  'The redemption card type determines whether quota is added to paid or gift balance.':
+    'Тип карты определяет, будет ли квота зачислена на оплаченный или подарочный баланс.',
+})
+Object.assign(newKeys.vi, {
+  'The redemption card type determines whether quota is added to paid or gift balance.':
+    'Loại thẻ đổi thưởng quyết định hạn mức được cộng vào số dư đã thanh toán hay số dư tặng.',
+})
+
+Object.assign(newKeys.en, {
+  'Attribute balance': 'Attribute balance',
+  'Attribution reason': 'Attribution reason',
+  'Balance attribution updated': 'Balance attribution updated',
+  'Enter attribution reason': 'Enter attribution reason',
+  'Paid balance after attribution': 'Paid balance after attribution',
+  'Reclassification keeps total quota unchanged.':
+    'Reclassification keeps total quota unchanged.',
+})
+Object.assign(newKeys.zh, {
+  'Attribute balance': '归纳余额',
+  'Attribution reason': '归因原因',
+  'Balance attribution updated': '余额归因已更新',
+  'Enter attribution reason': '请输入归因原因',
+  'Paid balance after attribution': '归因后的付费余额',
+  'Reclassification keeps total quota unchanged.': '重新归因不会改变总额度。',
+})
+Object.assign(newKeys['zh-TW'], {
+  'Attribute balance': '歸納餘額',
+  'Attribution reason': '歸因原因',
+  'Balance attribution updated': '餘額歸因已更新',
+  'Enter attribution reason': '請輸入歸因原因',
+  'Paid balance after attribution': '歸因後的付費餘額',
+  'Reclassification keeps total quota unchanged.': '重新歸因不會改變總額度。',
+})
+Object.assign(newKeys.fr, {
+  'Attribute balance': 'Attribuer le solde',
+  'Attribution reason': "Motif de l'attribution",
+  'Balance attribution updated': "L'attribution du solde a été mise à jour",
+  'Enter attribution reason': "Saisissez le motif de l'attribution",
+  'Paid balance after attribution': 'Solde payé après attribution',
+  'Reclassification keeps total quota unchanged.':
+    'La réattribution ne modifie pas le quota total.',
+})
+Object.assign(newKeys.ja, {
+  'Attribute balance': '残高を帰属',
+  'Attribution reason': '帰属理由',
+  'Balance attribution updated': '残高の帰属を更新しました',
+  'Enter attribution reason': '帰属理由を入力',
+  'Paid balance after attribution': '帰属後の支払済み残高',
+  'Reclassification keeps total quota unchanged.':
+    '再帰属しても合計クォータは変わりません。',
+})
+Object.assign(newKeys.ru, {
+  'Attribute balance': 'Распределить баланс',
+  'Attribution reason': 'Причина распределения',
+  'Balance attribution updated': 'Распределение баланса обновлено',
+  'Enter attribution reason': 'Укажите причину распределения',
+  'Paid balance after attribution': 'Оплаченный баланс после распределения',
+  'Reclassification keeps total quota unchanged.':
+    'Перераспределение не изменяет общий лимит.',
+})
+Object.assign(newKeys.vi, {
+  'Attribute balance': 'Phân loại số dư',
+  'Attribution reason': 'Lý do phân loại',
+  'Balance attribution updated': 'Đã cập nhật phân loại số dư',
+  'Enter attribution reason': 'Nhập lý do phân loại',
+  'Paid balance after attribution': 'Số dư đã thanh toán sau khi phân loại',
+  'Reclassification keeps total quota unchanged.':
+    'Việc phân loại lại không làm thay đổi tổng hạn mức.',
+})
+
+Object.assign(newKeys.en, {
+  'Choose how much of the legacy unattributed balance came from verified payments. The remainder becomes gift balance.':
+    'Choose how much of the legacy unattributed balance came from verified payments. The remainder becomes gift balance.',
+  'Enter the paid portion of the legacy balance.':
+    'Enter the paid portion of the legacy balance.',
+  'Paid portion must be between 0 and {{amount}}.':
+    'Paid portion must be between 0 and {{amount}}.',
+  'Paid portion of legacy balance': 'Paid portion of legacy balance',
+  'Reason must be between 3 and 200 characters.':
+    'Reason must be between 3 and 200 characters.',
+  'Select paid or gift balance.': 'Select paid or gift balance.',
+})
+Object.assign(newKeys.zh, {
+  'Choose how much of the legacy unattributed balance came from verified payments. The remainder becomes gift balance.':
+    '请选择历史未归因余额中已确认收款的部分，剩余额度将归为赠送余额。',
+  'Enter the paid portion of the legacy balance.':
+    '请输入历史未归因余额中的付费部分。',
+  'Paid portion must be between 0 and {{amount}}.':
+    '付费部分必须在 0 到 {{amount}} 之间。',
+  'Paid portion of legacy balance': '历史未归因余额中的付费部分',
+  'Reason must be between 3 and 200 characters.':
+    '归因原因必须为 3 到 200 个字符。',
+  'Select paid or gift balance.': '请选择付费余额或赠送余额。',
+})
+Object.assign(newKeys['zh-TW'], {
+  'Choose how much of the legacy unattributed balance came from verified payments. The remainder becomes gift balance.':
+    '請選擇歷史未歸因餘額中已確認收款的部分，剩餘額度將歸為贈送餘額。',
+  'Enter the paid portion of the legacy balance.':
+    '請輸入歷史未歸因餘額中的付費部分。',
+  'Paid portion must be between 0 and {{amount}}.':
+    '付費部分必須在 0 到 {{amount}} 之間。',
+  'Paid portion of legacy balance': '歷史未歸因餘額中的付費部分',
+  'Reason must be between 3 and 200 characters.':
+    '歸因原因必須為 3 到 200 個字元。',
+  'Select paid or gift balance.': '請選擇付費餘額或贈送餘額。',
+})
+Object.assign(newKeys.fr, {
+  'Choose how much of the legacy unattributed balance came from verified payments. The remainder becomes gift balance.':
+    'Choisissez la part du solde historique non attribué provenant de paiements vérifiés. Le reste devient un solde offert.',
+  'Enter the paid portion of the legacy balance.':
+    'Saisissez la part payée du solde historique.',
+  'Paid portion must be between 0 and {{amount}}.':
+    'La part payée doit être comprise entre 0 et {{amount}}.',
+  'Paid portion of legacy balance': 'Part payée du solde historique',
+  'Reason must be between 3 and 200 characters.':
+    'Le motif doit contenir entre 3 et 200 caractères.',
+  'Select paid or gift balance.': 'Sélectionnez le solde payé ou offert.',
+})
+Object.assign(newKeys.ja, {
+  'Choose how much of the legacy unattributed balance came from verified payments. The remainder becomes gift balance.':
+    '過去の未帰属残高のうち、入金確認済みの金額を選択してください。残りは特典残高になります。',
+  'Enter the paid portion of the legacy balance.':
+    '過去の残高のうち支払済みの金額を入力してください。',
+  'Paid portion must be between 0 and {{amount}}.':
+    '支払済み部分は 0 から {{amount}} の範囲で入力してください。',
+  'Paid portion of legacy balance': '過去の残高の支払済み部分',
+  'Reason must be between 3 and 200 characters.':
+    '帰属理由は3文字以上200文字以内で入力してください。',
+  'Select paid or gift balance.':
+    '支払済み残高または特典残高を選択してください。',
+})
+Object.assign(newKeys.ru, {
+  'Choose how much of the legacy unattributed balance came from verified payments. The remainder becomes gift balance.':
+    'Укажите часть прежнего нераспределенного баланса, подтвержденную оплатой. Остаток станет подарочным балансом.',
+  'Enter the paid portion of the legacy balance.':
+    'Введите оплаченную часть прежнего баланса.',
+  'Paid portion must be between 0 and {{amount}}.':
+    'Оплаченная часть должна быть от 0 до {{amount}}.',
+  'Paid portion of legacy balance': 'Оплаченная часть прежнего баланса',
+  'Reason must be between 3 and 200 characters.':
+    'Причина должна содержать от 3 до 200 символов.',
+  'Select paid or gift balance.': 'Выберите оплаченный или подарочный баланс.',
+})
+Object.assign(newKeys.vi, {
+  'Choose how much of the legacy unattributed balance came from verified payments. The remainder becomes gift balance.':
+    'Chọn phần số dư cũ chưa phân loại đã được xác nhận thanh toán. Phần còn lại sẽ thành số dư tặng.',
+  'Enter the paid portion of the legacy balance.':
+    'Nhập phần đã thanh toán của số dư cũ.',
+  'Paid portion must be between 0 and {{amount}}.':
+    'Phần đã thanh toán phải nằm trong khoảng từ 0 đến {{amount}}.',
+  'Paid portion of legacy balance': 'Phần đã thanh toán của số dư cũ',
+  'Reason must be between 3 and 200 characters.':
+    'Lý do phải có từ 3 đến 200 ký tự.',
+  'Select paid or gift balance.': 'Chọn số dư đã thanh toán hoặc số dư tặng.',
+})
+
 async function main() {
   let totalAdded = 0
 

@@ -22,6 +22,19 @@ import { z } from 'zod'
 // Redemption Schema & Types
 // ============================================================================
 
+export const redemptionFundingSourceSchema = z.enum([
+  'paid',
+  'promo',
+  'legacy_unknown',
+])
+export type RedemptionFundingSource = z.infer<
+  typeof redemptionFundingSourceSchema
+>
+export const newRedemptionFundingSourceSchema = z.enum(['paid', 'promo'])
+export type NewRedemptionFundingSource = z.infer<
+  typeof newRedemptionFundingSourceSchema
+>
+
 export const redemptionSchema = z.object({
   id: z.number(),
   user_id: z.number(),
@@ -33,6 +46,7 @@ export const redemptionSchema = z.object({
   redeemed_time: z.number(),
   expired_time: z.number(), // 0 for never expires
   used_user_id: z.number(),
+  funding_source: redemptionFundingSourceSchema.default('legacy_unknown'),
 })
 
 export type Redemption = z.infer<typeof redemptionSchema>
@@ -77,7 +91,14 @@ export interface RedemptionFormData {
   expired_time: number
   count?: number // Only for create
   status?: number // Only for status update
-  funding_source: 'promo'
+  funding_source: RedemptionFundingSource
+}
+
+export interface NewRedemptionFormData extends Omit<
+  RedemptionFormData,
+  'funding_source'
+> {
+  funding_source: NewRedemptionFundingSource
 }
 
 // ============================================================================

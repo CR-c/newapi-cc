@@ -43,6 +43,9 @@ export const userSchema = z.object({
   telegram_id: z.string().optional(),
   email: z.string().optional(),
   quota: z.number(),
+  paid_quota: z.number().default(0),
+  promo_quota: z.number().default(0),
+  legacy_unknown_quota: z.number().default(0),
   used_quota: z.number(),
   request_count: z.number(),
   group: z.string(),
@@ -154,6 +157,20 @@ export interface ManageUserQuotaPayload {
   mode: QuotaAdjustMode
   value: number
   funding_source?: QuotaFundingSource
+}
+
+export interface WalletAllocationPayload {
+  paid_quota: number
+  promo_quota: number
+  legacy_quota: number
+}
+
+export interface ManageUserWalletReclassifyPayload {
+  id: number
+  action: 'reclassify_wallet'
+  expected_wallet: WalletAllocationPayload
+  target_wallet: WalletAllocationPayload
+  reason: string
 }
 
 // ============================================================================

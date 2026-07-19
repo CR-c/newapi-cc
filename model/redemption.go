@@ -12,18 +12,47 @@ import (
 )
 
 type Redemption struct {
-	Id           int            `json:"id"`
-	UserId       int            `json:"user_id"`
-	Key          string         `json:"key" gorm:"type:char(32);uniqueIndex"`
-	Status       int            `json:"status" gorm:"default:1"`
-	Name         string         `json:"name" gorm:"index"`
-	Quota        int            `json:"quota" gorm:"default:100"`
-	CreatedTime  int64          `json:"created_time" gorm:"bigint"`
-	RedeemedTime int64          `json:"redeemed_time" gorm:"bigint"`
-	Count        int            `json:"count" gorm:"-:all"` // only for api request
-	UsedUserId   int            `json:"used_user_id"`
-	DeletedAt    gorm.DeletedAt `gorm:"index"`
-	ExpiredTime  int64          `json:"expired_time" gorm:"bigint"` // 过期时间，0 表示不过期
+	Id            int            `json:"id"`
+	UserId        int            `json:"user_id"`
+	Key           string         `json:"key" gorm:"type:char(32);uniqueIndex"`
+	Status        int            `json:"status" gorm:"default:1"`
+	Name          string         `json:"name" gorm:"index"`
+	Quota         int            `json:"quota" gorm:"default:100"`
+	CreatedTime   int64          `json:"created_time" gorm:"bigint"`
+	RedeemedTime  int64          `json:"redeemed_time" gorm:"bigint"`
+	Count         int            `json:"count" gorm:"-:all"` // only for api request
+	UsedUserId    int            `json:"used_user_id"`
+	DeletedAt     gorm.DeletedAt `gorm:"index"`
+	ExpiredTime   int64          `json:"expired_time" gorm:"bigint"` // 过期时间，0 表示不过期
+	FundingSource string         `json:"funding_source" gorm:"type:varchar(32);not null;default:'legacy_unknown';index"`
+}
+
+const (
+	RedemptionFundingSourcePaid          = "paid"
+	RedemptionFundingSourcePromo         = "promo"
+	RedemptionFundingSourceLegacyUnknown = "legacy_unknown"
+)
+
+var ErrRedemptionStateChanged = errors.New("redemption state changed, refresh and try again")
+
+func ValidateNewRedemptionFundingSource(source string) error {
+	if source != RedemptionFundingSourcePaid && source != RedemptionFundingSourcePromo {
+		return errors.New("funding_source must be paid or promo")
+	}
+	return nil
+}
+
+func redemptionWalletBucket(source string) (WalletBucket, error) {
+	switch source {
+	case RedemptionFundingSourcePaid:
+		return WalletBucketPaid, nil
+	case RedemptionFundingSourcePromo:
+		return WalletBucketPromo, nil
+	case "", RedemptionFundingSourceLegacyUnknown:
+		return WalletBucketLegacyUnknown, nil
+	default:
+		return "", errors.New("兑换码资金来源无效")
+	}
 }
 
 func GetAllRedemptions(startIdx int, num int) (redemptions []*Redemption, total int64, err error) {
@@ -162,6 +191,10 @@ func Redeem(key string, userId int) (quota int, err error) {
 		if redemption.Quota <= 0 || redemption.Quota > common.MaxQuota {
 			return errors.New("兑换码额度无效")
 		}
+		bucket, err := redemptionWalletBucket(redemption.FundingSource)
+		if err != nil {
+			return err
+		}
 		// Compare-and-swap on status: only the transaction that flips
 		// enabled -> used may credit quota, so a concurrent redeem of the
 		// same code loses here even without a row lock (e.g. on SQLite).
@@ -178,7 +211,7 @@ func Redeem(key string, userId int) (quota int, err error) {
 		if result.RowsAffected == 0 {
 			return errors.New("该兑换码已被使用")
 		}
-		_, err = CreditWalletTx(tx, userId, redemption.Quota, WalletBucketPromo, fmt.Sprintf("redemption:%d:promo", redemption.Id))
+		_, err = CreditWalletTx(tx, userId, redemption.Quota, bucket, fmt.Sprintf("redemption:%d:%s", redemption.Id, bucket))
 		return err
 	})
 	if err != nil {
@@ -188,7 +221,7 @@ func Redeem(key string, userId int) (quota int, err error) {
 	if err := InvalidateUserCache(userId); err != nil {
 		common.SysLog(fmt.Sprintf("failed to invalidate user cache after redemption %d: %s", redemption.Id, err.Error()))
 	}
-	RecordLog(userId, LogTypeTopup, fmt.Sprintf("通过兑换码充值 %s，兑换码ID %d", logger.LogQuota(redemption.Quota), redemption.Id))
+	RecordLog(userId, LogTypeTopup, fmt.Sprintf("通过兑换码充值 %s，兑换码ID %d，资金来源 %s", logger.LogQuota(redemption.Quota), redemption.Id, redemption.FundingSource))
 	return redemption.Quota, nil
 }
 
@@ -204,10 +237,75 @@ func (redemption *Redemption) SelectUpdate() error {
 }
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
-func (redemption *Redemption) Update() error {
-	var err error
-	err = DB.Model(redemption).Select("name", "status", "quota", "redeemed_time", "expired_time").Updates(redemption).Error
-	return err
+func (redemption *Redemption) UpdateDetails(expectedStatus int, expectedFundingSource string, resolveLegacyFunding bool) error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		persistedFundingSource := expectedFundingSource
+		if resolveLegacyFunding {
+			result := tx.Model(&Redemption{}).
+				Where("id = ? AND status = ? AND used_user_id = ? AND funding_source = ?",
+					redemption.Id, common.RedemptionCodeStatusEnabled, 0, RedemptionFundingSourceLegacyUnknown).
+				Update("funding_source", redemption.FundingSource)
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return ErrRedemptionStateChanged
+			}
+			persistedFundingSource = redemption.FundingSource
+		}
+
+		result := tx.Model(&Redemption{}).
+			Where("id = ? AND status = ? AND funding_source = ?", redemption.Id, expectedStatus, persistedFundingSource).
+			Select("name", "quota", "expired_time").
+			Updates(redemption)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			var count int64
+			if err := tx.Model(&Redemption{}).
+				Where("id = ? AND status = ? AND funding_source = ?", redemption.Id, expectedStatus, persistedFundingSource).
+				Count(&count).Error; err != nil {
+				return err
+			}
+			if count != 1 {
+				return ErrRedemptionStateChanged
+			}
+		}
+		return nil
+	})
+}
+
+func UpdateRedemptionStatus(id, expectedStatus, targetStatus int, expectedFundingSource string, allowPaid bool) error {
+	if expectedStatus == common.RedemptionCodeStatusUsed ||
+		(targetStatus != common.RedemptionCodeStatusEnabled && targetStatus != common.RedemptionCodeStatusDisabled) {
+		return ErrRedemptionStateChanged
+	}
+	query := DB.Model(&Redemption{}).
+		Where("id = ? AND status = ? AND funding_source = ?", id, expectedStatus, expectedFundingSource)
+	if !allowPaid {
+		query = query.Where("funding_source <> ?", RedemptionFundingSourcePaid)
+	}
+	result := query.
+		Update("status", targetStatus)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		var count int64
+		query := DB.Model(&Redemption{}).
+			Where("id = ? AND status = ? AND funding_source = ?", id, expectedStatus, expectedFundingSource)
+		if !allowPaid {
+			query = query.Where("funding_source <> ?", RedemptionFundingSourcePaid)
+		}
+		if err := query.Count(&count).Error; err != nil {
+			return err
+		}
+		if count != 1 {
+			return ErrRedemptionStateChanged
+		}
+	}
+	return nil
 }
 
 func (redemption *Redemption) Delete() error {
@@ -216,20 +314,30 @@ func (redemption *Redemption) Delete() error {
 	return err
 }
 
-func DeleteRedemptionById(id int) (err error) {
+func DeleteRedemptionById(id int, expectedFundingSource string, allowPaid bool) error {
 	if id == 0 {
 		return errors.New("id 为空！")
 	}
-	redemption := Redemption{Id: id}
-	err = DB.Where(redemption).First(&redemption).Error
-	if err != nil {
-		return err
+	query := DB.Where("id = ? AND funding_source = ?", id, expectedFundingSource)
+	if !allowPaid {
+		query = query.Where("funding_source <> ?", RedemptionFundingSourcePaid)
 	}
-	return redemption.Delete()
+	result := query.Delete(&Redemption{})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrRedemptionStateChanged
+	}
+	return nil
 }
 
-func DeleteInvalidRedemptions() (int64, error) {
+func DeleteInvalidRedemptions(includePaid bool) (int64, error) {
 	now := common.GetTimestamp()
-	result := DB.Where("status IN ? OR (status = ? AND expired_time != 0 AND expired_time < ?)", []int{common.RedemptionCodeStatusUsed, common.RedemptionCodeStatusDisabled}, common.RedemptionCodeStatusEnabled, now).Delete(&Redemption{})
+	query := DB.Where("status IN ? OR (status = ? AND expired_time != 0 AND expired_time < ?)", []int{common.RedemptionCodeStatusUsed, common.RedemptionCodeStatusDisabled}, common.RedemptionCodeStatusEnabled, now)
+	if !includePaid {
+		query = query.Where("funding_source <> ?", RedemptionFundingSourcePaid)
+	}
+	result := query.Delete(&Redemption{})
 	return result.RowsAffected, result.Error
 }

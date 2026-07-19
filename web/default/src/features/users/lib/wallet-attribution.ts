@@ -16,19 +16,23 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-// ============================================================================
-// User Actions
-// ============================================================================
-export { getUserActionMessage } from './user-actions'
+import type { WalletAllocationPayload } from '../types'
 
-// ============================================================================
-// Form Utilities
-// ============================================================================
-export {
-  userFormSchema,
-  type UserFormValues,
-  USER_FORM_DEFAULT_VALUES,
-  transformFormDataToPayload,
-  transformUserToFormDefaults,
-} from './user-form'
-export { attributeLegacyWallet } from './wallet-attribution'
+export function attributeLegacyWallet(
+  current: WalletAllocationPayload,
+  legacyPaidQuota: number
+): WalletAllocationPayload | null {
+  if (
+    !Number.isInteger(legacyPaidQuota) ||
+    legacyPaidQuota < 0 ||
+    legacyPaidQuota > current.legacy_quota
+  ) {
+    return null
+  }
+
+  return {
+    paid_quota: current.paid_quota + legacyPaidQuota,
+    promo_quota: current.promo_quota + current.legacy_quota - legacyPaidQuota,
+    legacy_quota: 0,
+  }
+}

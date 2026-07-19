@@ -51,14 +51,18 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
+import { ROLE } from '@/lib/roles'
 import { addTimeToDate } from '@/lib/time'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { createRedemption, updateRedemption, getRedemption } from '../api'
 import { SUCCESS_MESSAGES } from '../constants'
 import {
   getRedemptionFormSchema,
+  isNewRedemptionFundingSource,
   REDEMPTION_FORM_DEFAULT_VALUES,
   type RedemptionFormValues,
   transformFormDataToPayload,
@@ -82,6 +86,9 @@ export function RedemptionsMutateDrawer({
   const isUpdate = !!currentRow
   const { triggerRefresh } = useRedemptions()
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [freshRedemption, setFreshRedemption] = useState<Redemption>()
+  const currentUser = useAuthStore((state) => state.auth.user)
+  const isRoot = currentUser?.role === ROLE.SUPER_ADMIN
 
   const form = useForm<RedemptionFormValues>({
     resolver: zodResolver(getRedemptionFormSchema(t)),
@@ -95,11 +102,13 @@ export function RedemptionsMutateDrawer({
       getRedemption(currentRow.id)
         .then((result) => {
           if (result.success && result.data) {
+            setFreshRedemption(result.data)
             form.reset(transformRedemptionToFormDefaults(result.data))
           }
         })
         .catch(() => form.reset(REDEMPTION_FORM_DEFAULT_VALUES))
     } else if (open && !isUpdate) {
+      setFreshRedemption(undefined)
       // For create, reset to defaults
       form.reset(REDEMPTION_FORM_DEFAULT_VALUES)
     }
@@ -122,7 +131,16 @@ export function RedemptionsMutateDrawer({
         }
       } else {
         // Create mode
-        const result = await createRedemption(basePayload)
+        if (!isNewRedemptionFundingSource(basePayload.funding_source)) {
+          form.setError('funding_source', {
+            message: t('Select paid or gift balance.'),
+          })
+          return
+        }
+        const result = await createRedemption({
+          ...basePayload,
+          funding_source: basePayload.funding_source,
+        })
         if (result.success) {
           const count = result.data?.length || 0
           toast.success(
@@ -165,6 +183,18 @@ export function RedemptionsMutateDrawer({
   const quotaPlaceholder = tokensOnly
     ? t('Enter quota in tokens')
     : t('Enter quota in {{currency}}', { currency: currencyLabel })
+  const storedFundingSource = form.watch('funding_source')
+  const canResolveLegacyFunding =
+    isRoot &&
+    freshRedemption?.funding_source === 'legacy_unknown' &&
+    freshRedemption.status === 1 &&
+    freshRedemption.used_user_id === 0
+  let storedFundingLabel = t('Legacy unattributed')
+  if (storedFundingSource === 'paid') {
+    storedFundingLabel = t('Paid balance')
+  } else if (storedFundingSource === 'promo') {
+    storedFundingLabel = t('Gift balance')
+  }
 
   return (
     <Sheet
@@ -199,14 +229,63 @@ export function RedemptionsMutateDrawer({
             className={sideDrawerFormClassName()}
           >
             <SideDrawerSection>
-              <Alert>
-                <AlertTitle>{t('Balance type: Gift balance')}</AlertTitle>
-                <AlertDescription>
-                  {t(
-                    'Redemption codes always create promotional gift balance and never paid balance.'
+              {isUpdate && !canResolveLegacyFunding && (
+                <Alert>
+                  <AlertTitle>{t('Balance source')}</AlertTitle>
+                  <AlertDescription>{storedFundingLabel}</AlertDescription>
+                </Alert>
+              )}
+              {(!isUpdate || canResolveLegacyFunding) && isRoot && (
+                <FormField
+                  control={form.control}
+                  name='funding_source'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Balance source')}</FormLabel>
+                      <FormControl>
+                        <ToggleGroup
+                          value={[field.value]}
+                          onValueChange={(value) => {
+                            const source = value.find(
+                              (item) => item !== field.value
+                            )
+                            if (source === 'paid' || source === 'promo') {
+                              field.onChange(source)
+                            }
+                          }}
+                          variant='outline'
+                          spacing={2}
+                          className='grid w-full grid-cols-2 gap-2'
+                          aria-label={t('Balance source')}
+                        >
+                          <ToggleGroupItem value='promo' className='w-full'>
+                            {t('Gift balance')}
+                          </ToggleGroupItem>
+                          <ToggleGroupItem value='paid' className='w-full'>
+                            {t('Paid balance')}
+                          </ToggleGroupItem>
+                        </ToggleGroup>
+                      </FormControl>
+                      <FormDescription>
+                        {field.value === 'paid'
+                          ? t(
+                              'Use paid balance only after confirming payment was received.'
+                            )
+                          : t(
+                              'Gift balance produces no recognized revenue when spent.'
+                            )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
                   )}
-                </AlertDescription>
-              </Alert>
+                />
+              )}
+              {(!isUpdate || canResolveLegacyFunding) && !isRoot && (
+                <Alert>
+                  <AlertTitle>{t('Balance source')}</AlertTitle>
+                  <AlertDescription>{t('Gift balance')}</AlertDescription>
+                </Alert>
+              )}
               <FormField
                 control={form.control}
                 name='name'

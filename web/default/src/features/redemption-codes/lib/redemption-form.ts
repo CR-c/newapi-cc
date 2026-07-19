@@ -25,7 +25,18 @@ import {
   REDEMPTION_VALIDATION,
   getRedemptionFormErrorMessages,
 } from '../constants'
-import type { RedemptionFormData, Redemption } from '../types'
+import {
+  redemptionFundingSourceSchema,
+  newRedemptionFundingSourceSchema,
+  type RedemptionFormData,
+  type Redemption,
+} from '../types'
+
+export function isNewRedemptionFundingSource(
+  source: string
+): source is 'paid' | 'promo' {
+  return newRedemptionFundingSourceSchema.safeParse(source).success
+}
 
 // ============================================================================
 // Form Schema (use getRedemptionFormSchema(t) in components for i18n messages)
@@ -39,6 +50,7 @@ export function getRedemptionFormSchema(t: TFunction) {
       .min(REDEMPTION_VALIDATION.NAME_MIN_LENGTH, msg.NAME_LENGTH_INVALID)
       .max(REDEMPTION_VALIDATION.NAME_MAX_LENGTH, msg.NAME_LENGTH_INVALID),
     quota_dollars: z.number().min(0, t('Quota must be a positive number')),
+    funding_source: redemptionFundingSourceSchema,
     expired_time: z.date().optional(),
     count: z
       .number()
@@ -53,6 +65,7 @@ export type RedemptionFormValues = {
   quota_dollars: number
   expired_time?: Date
   count?: number
+  funding_source: 'paid' | 'promo' | 'legacy_unknown'
 }
 
 // ============================================================================
@@ -64,6 +77,7 @@ export const REDEMPTION_FORM_DEFAULT_VALUES: RedemptionFormValues = {
   quota_dollars: 10,
   expired_time: undefined,
   count: 1,
+  funding_source: 'promo',
 }
 
 // ============================================================================
@@ -83,7 +97,7 @@ export function transformFormDataToPayload(
       ? Math.floor(data.expired_time.getTime() / 1000)
       : 0,
     count: data.count || 1,
-    funding_source: 'promo',
+    funding_source: data.funding_source,
   }
 }
 
@@ -101,5 +115,6 @@ export function transformRedemptionToFormDefaults(
         ? new Date(redemption.expired_time * 1000)
         : undefined,
     count: 1,
+    funding_source: redemption.funding_source,
   }
 }

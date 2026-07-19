@@ -26,6 +26,7 @@ export { isRedemptionExpired, isTimestampExpired } from './utils'
 // ============================================================================
 export {
   getRedemptionFormSchema,
+  isNewRedemptionFundingSource,
   type RedemptionFormValues,
   REDEMPTION_FORM_DEFAULT_VALUES,
   transformFormDataToPayload,

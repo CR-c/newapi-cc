@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
@@ -20,6 +21,17 @@ func validateRedemptionQuota(quota int) error {
 		return errors.New("兑换码额度必须大于 0 且不能超过系统额度上限")
 	}
 	return nil
+}
+
+func normalizeNewRedemptionFundingSource(source string) (string, error) {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		source = model.RedemptionFundingSourcePromo
+	}
+	if err := model.ValidateNewRedemptionFundingSource(source); err != nil {
+		return "", err
+	}
+	return source, nil
 }
 
 func GetAllRedemptions(c *gin.Context) {
@@ -97,6 +109,15 @@ func AddRedemption(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	fundingSource, err := normalizeNewRedemptionFundingSource(redemption.FundingSource)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if fundingSource == model.RedemptionFundingSourcePaid && c.GetInt("role") != common.RoleRootUser {
+		common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
+		return
+	}
 	if valid, msg := validateExpiredTime(c, redemption.ExpiredTime); !valid {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": msg})
 		return
@@ -105,12 +126,13 @@ func AddRedemption(c *gin.Context) {
 	for i := 0; i < redemption.Count; i++ {
 		key := common.GetUUID()
 		cleanRedemption := model.Redemption{
-			UserId:      c.GetInt("id"),
-			Name:        redemption.Name,
-			Key:         key,
-			CreatedTime: common.GetTimestamp(),
-			Quota:       redemption.Quota,
-			ExpiredTime: redemption.ExpiredTime,
+			UserId:        c.GetInt("id"),
+			Name:          redemption.Name,
+			Key:           key,
+			CreatedTime:   common.GetTimestamp(),
+			Quota:         redemption.Quota,
+			ExpiredTime:   redemption.ExpiredTime,
+			FundingSource: fundingSource,
 		}
 		err = cleanRedemption.Insert()
 		if err != nil {
@@ -125,9 +147,10 @@ func AddRedemption(c *gin.Context) {
 		keys = append(keys, key)
 	}
 	recordManageAudit(c, "redemption.create", map[string]interface{}{
-		"name":  redemption.Name,
-		"count": redemption.Count,
-		"quota": logger.LogQuota(redemption.Quota),
+		"name":           redemption.Name,
+		"count":          redemption.Count,
+		"quota":          logger.LogQuota(redemption.Quota),
+		"funding_source": fundingSource,
 	})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -139,7 +162,17 @@ func AddRedemption(c *gin.Context) {
 
 func DeleteRedemption(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
-	err := model.DeleteRedemptionById(id)
+	redemption, err := model.GetRedemptionById(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if redemption.FundingSource == model.RedemptionFundingSourcePaid && c.GetInt("role") != common.RoleRootUser {
+		common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
+		return
+	}
+	isRoot := c.GetInt("role") == common.RoleRootUser
+	err = model.DeleteRedemptionById(id, redemption.FundingSource, isRoot)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -164,6 +197,32 @@ func UpdateRedemption(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if cleanRedemption.FundingSource == model.RedemptionFundingSourcePaid && c.GetInt("role") != common.RoleRootUser {
+		common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
+		return
+	}
+	fundingSourceChanged := false
+	expectedFundingSource := cleanRedemption.FundingSource
+	requestedFundingSource := strings.TrimSpace(redemption.FundingSource)
+	if requestedFundingSource != "" && requestedFundingSource != cleanRedemption.FundingSource {
+		if statusOnly != "" {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+		if cleanRedemption.FundingSource != model.RedemptionFundingSourceLegacyUnknown ||
+			cleanRedemption.Status != common.RedemptionCodeStatusEnabled || cleanRedemption.UsedUserId != 0 ||
+			c.GetInt("role") != common.RoleRootUser {
+			common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
+			return
+		}
+		if err := model.ValidateNewRedemptionFundingSource(requestedFundingSource); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		cleanRedemption.FundingSource = requestedFundingSource
+		fundingSourceChanged = true
+	}
+	expectedStatus := cleanRedemption.Status
 	if statusOnly == "" {
 		if err := validateRedemptionQuota(redemption.Quota); err != nil {
 			common.ApiError(c, err)
@@ -173,19 +232,35 @@ func UpdateRedemption(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"success": false, "message": msg})
 			return
 		}
-		// If you add more fields, please also update redemption.Update()
 		cleanRedemption.Name = redemption.Name
 		cleanRedemption.Quota = redemption.Quota
 		cleanRedemption.ExpiredTime = redemption.ExpiredTime
 	}
 	if statusOnly != "" {
+		if expectedStatus == common.RedemptionCodeStatusUsed ||
+			(redemption.Status != common.RedemptionCodeStatusEnabled && redemption.Status != common.RedemptionCodeStatusDisabled) {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+		err = model.UpdateRedemptionStatus(
+			cleanRedemption.Id,
+			expectedStatus,
+			redemption.Status,
+			expectedFundingSource,
+			c.GetInt("role") == common.RoleRootUser,
+		)
 		cleanRedemption.Status = redemption.Status
+	} else {
+		err = cleanRedemption.UpdateDetails(expectedStatus, expectedFundingSource, fundingSourceChanged)
 	}
-	err = cleanRedemption.Update()
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	recordManageAuditFor(c, cleanRedemption.Id, "redemption.update", map[string]interface{}{
+		"funding_source":         cleanRedemption.FundingSource,
+		"funding_source_changed": fundingSourceChanged,
+	})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -195,7 +270,7 @@ func UpdateRedemption(c *gin.Context) {
 }
 
 func DeleteInvalidRedemption(c *gin.Context) {
-	rows, err := model.DeleteInvalidRedemptions()
+	rows, err := model.DeleteInvalidRedemptions(c.GetInt("role") == common.RoleRootUser)
 	if err != nil {
 		common.ApiError(c, err)
 		return

@@ -209,6 +209,143 @@ func TestWalletEventKeyCannotBeReusedForDifferentMutation(t *testing.T) {
 	requireWallet(t, db, user.Id, 0, 20, 0)
 }
 
+func TestReclassifyWalletPreservesTotalAndIsIdempotent(t *testing.T) {
+	db := setupWalletTestDB(t)
+	user := User{
+		Username: "reclassify", Password: "password", Quota: 100,
+		PaidQuota: 10, PromoQuota: 25, LegacyUnknownQuota: 65,
+		WalletVersion: CurrentWalletVersion,
+	}
+	require.NoError(t, db.Create(&user).Error)
+	expected := WalletAllocation{PaidQuota: 10, PromoQuota: 25, LegacyQuota: 65}
+	target := WalletAllocation{PaidQuota: 40, PromoQuota: 60}
+
+	before, after, err := ReclassifyWallet(user.Id, expected, target, "reclassify:history-1", "verified historical funding", 1)
+	require.NoError(t, err)
+	assert.Equal(t, expected, before)
+	assert.Equal(t, target, after)
+	requireWallet(t, db, user.Id, 40, 60, 0)
+
+	replayedBefore, replayedAfter, err := ReclassifyWallet(user.Id, expected, target, "reclassify:history-1", "verified historical funding", 1)
+	require.NoError(t, err)
+	assert.Equal(t, expected, replayedBefore)
+	assert.Equal(t, target, replayedAfter)
+	requireWallet(t, db, user.Id, 40, 60, 0)
+
+	_, _, err = ReclassifyWallet(
+		user.Id,
+		WalletAllocation{PromoQuota: 35, LegacyQuota: 65},
+		target,
+		"reclassify:history-1",
+		"verified historical funding",
+		1,
+	)
+	require.ErrorIs(t, err, ErrWalletEventConflict)
+
+	var ledgers []QuotaLedger
+	require.NoError(t, db.Where("event_key = ?", "reclassify:history-1").Find(&ledgers).Error)
+	require.Len(t, ledgers, 1)
+	assert.Equal(t, walletOperationReclassify, ledgers[0].Operation)
+	assert.Equal(t, 65, ledgers[0].Amount)
+	assert.Equal(t, expected.PaidQuota, ledgers[0].BeforePaidQuota)
+	assert.Equal(t, expected.PromoQuota, ledgers[0].BeforePromoQuota)
+	assert.Equal(t, expected.LegacyQuota, ledgers[0].BeforeLegacyUnknownQuota)
+	assert.Equal(t, "verified historical funding", ledgers[0].Reason)
+	assert.Equal(t, 1, ledgers[0].OperatorId)
+}
+
+func TestReclassifyWalletRejectsStaleSnapshotAndConflictingReplay(t *testing.T) {
+	db := setupWalletTestDB(t)
+	user := User{
+		Username: "reclassify-stale", Password: "password", Quota: 80,
+		PromoQuota: 30, LegacyUnknownQuota: 50, WalletVersion: CurrentWalletVersion,
+	}
+	require.NoError(t, db.Create(&user).Error)
+
+	_, _, err := ReclassifyWallet(
+		user.Id,
+		WalletAllocation{PromoQuota: 20, LegacyQuota: 60},
+		WalletAllocation{PaidQuota: 30, PromoQuota: 50},
+		"reclassify:stale",
+		"stale snapshot",
+		1,
+	)
+	require.ErrorIs(t, err, ErrWalletSnapshotChanged)
+	requireWallet(t, db, user.Id, 0, 30, 50)
+
+	expected := WalletAllocation{PromoQuota: 30, LegacyQuota: 50}
+	target := WalletAllocation{PaidQuota: 30, PromoQuota: 50}
+	_, _, err = ReclassifyWallet(user.Id, expected, target, "reclassify:valid", "valid attribution", 1)
+	require.NoError(t, err)
+	_, _, err = ReclassifyWallet(
+		user.Id,
+		expected,
+		WalletAllocation{PaidQuota: 20, PromoQuota: 60},
+		"reclassify:valid",
+		"valid attribution",
+		1,
+	)
+	require.ErrorIs(t, err, ErrWalletEventConflict)
+	requireWallet(t, db, user.Id, 30, 50, 0)
+}
+
+func TestReclassifyWalletRejectsKnownPromoToPaidRewrite(t *testing.T) {
+	db := setupWalletTestDB(t)
+	user := User{
+		Username: "misclassified-card", Password: "password", Quota: 25,
+		PromoQuota: 25, WalletVersion: CurrentWalletVersion,
+	}
+	require.NoError(t, db.Create(&user).Error)
+
+	_, _, err := ReclassifyWallet(
+		user.Id,
+		WalletAllocation{PromoQuota: 25},
+		WalletAllocation{PaidQuota: 25},
+		"reclassify:sold-card",
+		"invalid known balance rewrite",
+		1,
+	)
+	require.ErrorIs(t, err, ErrInvalidWalletReclassification)
+	requireWallet(t, db, user.Id, 0, 25, 0)
+}
+
+func TestReclassifyWalletConcurrentReplayAppliesOnce(t *testing.T) {
+	db := setupWalletTestDB(t)
+	user := User{
+		Username: "reclassify-concurrent", Password: "password", Quota: 90,
+		PromoQuota: 20, LegacyUnknownQuota: 70, WalletVersion: CurrentWalletVersion,
+	}
+	require.NoError(t, db.Create(&user).Error)
+	expected := WalletAllocation{PromoQuota: 20, LegacyQuota: 70}
+	target := WalletAllocation{PaidQuota: 30, PromoQuota: 60}
+
+	const callers = 8
+	start := make(chan struct{})
+	errs := make(chan error, callers)
+	var wg sync.WaitGroup
+	wg.Add(callers)
+	for range callers {
+		go func() {
+			defer wg.Done()
+			<-start
+			_, _, err := ReclassifyWallet(user.Id, expected, target, "reclassify:concurrent", "concurrent attribution", 1)
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	requireWallet(t, db, user.Id, 30, 60, 0)
+
+	var ledgerCount int64
+	require.NoError(t, db.Model(&QuotaLedger{}).Where("event_key = ?", "reclassify:concurrent").Count(&ledgerCount).Error)
+	assert.Equal(t, int64(1), ledgerCount)
+}
+
 func TestInsertedUserReceivesRegistrationQuotaAsPromo(t *testing.T) {
 	db := setupWalletTestDB(t)
 	originalQuota := common.QuotaForNewUser

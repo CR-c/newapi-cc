@@ -30,6 +30,7 @@ import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { adjustUserQuota } from '../api'
+import { attributeLegacyWallet } from '../lib'
 import type { QuotaAdjustMode, QuotaFundingSource } from '../types'
 
 interface UserQuotaDialogProps {
@@ -37,22 +38,32 @@ interface UserQuotaDialogProps {
   onOpenChange: (open: boolean) => void
   userId: number
   currentQuota: number
+  currentPaidQuota: number
+  currentPromoQuota: number
+  currentLegacyQuota: number
+  canAttribute: boolean
+  canCreditPaid: boolean
   onSuccess: () => void
 }
 
-const QUOTA_MODE_LABELS: Record<QuotaAdjustMode, string> = {
+type QuotaDialogMode = QuotaAdjustMode | 'attribute'
+
+const QUOTA_MODE_LABELS: Record<QuotaDialogMode, string> = {
   add: 'Add',
   subtract: 'Subtract',
   override: 'Override',
+  attribute: 'Attribute balance',
 }
 
 export function UserQuotaDialog(props: UserQuotaDialogProps) {
   const { t } = useTranslation()
-  const [mode, setMode] = useState<QuotaAdjustMode>('add')
+  const [mode, setMode] = useState<QuotaDialogMode>('add')
   const [amount, setAmount] = useState('')
   const [fundingSource, setFundingSource] =
     useState<QuotaFundingSource>('promo')
+  const [reason, setReason] = useState('')
   const [loading, setLoading] = useState(false)
+  const creditFundingSource = props.canCreditPaid ? fundingSource : 'promo'
 
   const { meta: currencyMeta } = getCurrencyDisplay()
   const currencyLabel = getCurrencyLabel()
@@ -60,6 +71,26 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
 
   const amountValue = Number.parseFloat(amount) || 0
   const quotaValue = parseQuotaFromDollars(Math.abs(amountValue))
+  const currentWallet = {
+    paid_quota: props.currentPaidQuota,
+    promo_quota: props.currentPromoQuota,
+    legacy_quota: props.currentLegacyQuota,
+  }
+  const legacyPaidQuota = parseQuotaFromDollars(amountValue)
+  const targetWallet = attributeLegacyWallet(currentWallet, legacyPaidQuota)
+  const reasonLength = [...reason.trim()].length
+  let attributionError = ''
+  if (mode === 'attribute') {
+    if (!amount.trim() || !Number.isFinite(Number.parseFloat(amount))) {
+      attributionError = t('Enter the paid portion of the legacy balance.')
+    } else if (!targetWallet) {
+      attributionError = t('Paid portion must be between 0 and {{amount}}.', {
+        amount: formatQuota(props.currentLegacyQuota),
+      })
+    } else if (reasonLength < 3 || reasonLength > 200) {
+      attributionError = t('Reason must be between 3 and 200 characters.')
+    }
+  }
 
   const getPreviewText = () => {
     const current = props.currentQuota
@@ -73,12 +104,50 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
         const overrideQuota = parseQuotaFromDollars(amountValue)
         return `${t('Current quota')}: ${formatQuota(current)} → ${formatQuota(overrideQuota)}`
       }
+      case 'attribute': {
+        if (!targetWallet) return ''
+        return `${t('Paid balance')}: ${formatQuota(targetWallet.paid_quota)}  ·  ${t('Gift balance')}: ${formatQuota(targetWallet.promo_quota)}`
+      }
       default:
         return ''
     }
   }
 
   const handleConfirm = async () => {
+    if (mode === 'attribute') {
+      if (!targetWallet || attributionError) return
+      setLoading(true)
+      try {
+        const result = await adjustUserQuota({
+          id: props.userId,
+          action: 'reclassify_wallet',
+          expected_wallet: {
+            paid_quota: props.currentPaidQuota,
+            promo_quota: props.currentPromoQuota,
+            legacy_quota: props.currentLegacyQuota,
+          },
+          target_wallet: targetWallet,
+          reason: reason.trim(),
+        })
+        if (result.success) {
+          toast.success(t('Balance attribution updated'))
+          setAmount('')
+          setReason('')
+          setMode('add')
+          props.onOpenChange(false)
+          props.onSuccess()
+        } else {
+          toast.error(result.message || t('Failed to adjust quota'))
+        }
+      } catch (e: unknown) {
+        toast.error(
+          e instanceof Error ? e.message : t('Failed to adjust quota')
+        )
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
     if (!amount && mode !== 'override') return
     if (quotaValue <= 0 && mode !== 'override') return
 
@@ -91,7 +160,7 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
         action: 'add_quota',
         mode,
         value: mode === 'override' ? value : Math.abs(value),
-        funding_source: mode === 'add' ? fundingSource : undefined,
+        funding_source: mode === 'add' ? creditFundingSource : undefined,
       })
       if (result.success) {
         toast.success(t('Quota adjusted successfully'))
@@ -114,6 +183,7 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
     setAmount('')
     setMode('add')
     setFundingSource('promo')
+    setReason('')
     props.onOpenChange(false)
   }
 
@@ -129,6 +199,7 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
           setAmount('')
           setMode('add')
           setFundingSource('promo')
+          setReason('')
         }
         props.onOpenChange(open)
       }}
@@ -141,7 +212,10 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
           <Button variant='outline' onClick={handleCancel}>
             {t('Cancel')}
           </Button>
-          <Button onClick={handleConfirm} disabled={loading}>
+          <Button
+            onClick={handleConfirm}
+            disabled={loading || (mode === 'attribute' && !!attributionError)}
+          >
             {loading ? t('Processing...') : t('Confirm')}
           </Button>
         </>
@@ -152,8 +226,11 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
 
         <div className='space-y-2'>
           <Label>{t('Mode')}</Label>
-          <div className='flex gap-1'>
-            {(['add', 'subtract', 'override'] as const).map((m) => (
+          <div className='grid grid-cols-2 gap-1 sm:grid-cols-4'>
+            {(props.canAttribute
+              ? (['add', 'subtract', 'override', 'attribute'] as const)
+              : (['add', 'subtract', 'override'] as const)
+            ).map((m) => (
               <Button
                 key={m}
                 type='button'
@@ -165,7 +242,7 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
                 )}
                 onClick={() => {
                   setMode(m)
-                  setAmount('')
+                  setAmount(m === 'attribute' ? '0' : '')
                 }}
               >
                 {t(QUOTA_MODE_LABELS[m])}
@@ -174,7 +251,7 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
           </div>
         </div>
 
-        {mode === 'add' && (
+        {mode === 'add' && props.canCreditPaid && (
           <div className='space-y-2'>
             <Label>{t('Balance source')}</Label>
             <ToggleGroup
@@ -207,9 +284,60 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
           </div>
         )}
 
+        {mode === 'add' && !props.canCreditPaid && (
+          <div className='space-y-2'>
+            <Label>{t('Balance source')}</Label>
+            <div className='bg-muted/30 border px-3 py-2 text-sm font-medium'>
+              {t('Gift balance')}
+            </div>
+            <p className='text-muted-foreground text-xs'>
+              {t('Gift balance produces no recognized revenue when spent.')}
+            </p>
+          </div>
+        )}
+
+        {mode === 'attribute' && (
+          <div className='space-y-3'>
+            <div className='bg-muted/30 grid grid-cols-1 gap-2 border px-3 py-2 text-xs sm:grid-cols-3'>
+              <div>
+                <span className='text-muted-foreground block'>
+                  {t('Paid balance')}
+                </span>
+                <span className='font-medium'>
+                  {formatQuota(props.currentPaidQuota)}
+                </span>
+              </div>
+              <div>
+                <span className='text-muted-foreground block'>
+                  {t('Gift balance')}
+                </span>
+                <span className='font-medium'>
+                  {formatQuota(props.currentPromoQuota)}
+                </span>
+              </div>
+              <div>
+                <span className='text-muted-foreground block'>
+                  {t('Legacy unattributed')}
+                </span>
+                <span className='font-medium'>
+                  {formatQuota(props.currentLegacyQuota)}
+                </span>
+              </div>
+            </div>
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Choose how much of the legacy unattributed balance came from verified payments. The remainder becomes gift balance.'
+              )}
+            </p>
+          </div>
+        )}
+
         <div className='space-y-2'>
           <Label>
-            {t('Amount')} ({currencyLabel})
+            {mode === 'attribute'
+              ? t('Paid portion of legacy balance')
+              : t('Amount')}{' '}
+            ({currencyLabel})
           </Label>
           <Input
             type='number'
@@ -222,7 +350,22 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
               if (e.key === 'Enter') handleConfirm()
             }}
           />
+          {mode === 'attribute' && attributionError && (
+            <p className='text-destructive text-xs'>{attributionError}</p>
+          )}
         </div>
+
+        {mode === 'attribute' && (
+          <div className='space-y-2'>
+            <Label>{t('Attribution reason')}</Label>
+            <Input
+              value={reason}
+              maxLength={200}
+              placeholder={t('Enter attribution reason')}
+              onChange={(event) => setReason(event.target.value)}
+            />
+          </div>
+        )}
       </div>
     </Dialog>
   )
