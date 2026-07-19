@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -47,6 +47,7 @@ interface UserQuotaDialogProps {
   currentLegacyQuota: number
   canAttribute: boolean
   canCreditPaid: boolean
+  initialMode?: 'add' | 'attribute'
   onSuccess: () => void
 }
 
@@ -72,6 +73,18 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
   const { meta: currencyMeta } = getCurrencyDisplay()
   const currencyLabel = getCurrencyLabel()
   const tokensOnly = currencyMeta.kind === 'tokens'
+
+  useEffect(() => {
+    if (!props.open) return
+    const nextMode = props.initialMode ?? 'add'
+    setMode(nextMode)
+    setAmount(
+      nextMode === 'attribute'
+        ? String(quotaUnitsToDollars(props.currentPaidQuota))
+        : ''
+    )
+    setReason('')
+  }, [props.open, props.initialMode, props.currentPaidQuota])
 
   const amountValue = Number.parseFloat(amount) || 0
   const quotaValue = parseQuotaFromDollars(Math.abs(amountValue))
@@ -346,6 +359,24 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
                 'The remaining balance becomes gift balance and legacy attribution is cleared.'
               )}
             </p>
+            <div className='grid grid-cols-1 gap-2 sm:grid-cols-2'>
+              <Button
+                type='button'
+                variant='outline'
+                onClick={() =>
+                  setAmount(String(quotaUnitsToDollars(props.currentQuota)))
+                }
+              >
+                {t('Set all to paid balance')}
+              </Button>
+              <Button
+                type='button'
+                variant='outline'
+                onClick={() => setAmount('0')}
+              >
+                {t('Set all to gift balance')}
+              </Button>
+            </div>
           </div>
         )}
 

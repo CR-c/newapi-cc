@@ -577,7 +577,9 @@ export function RechargeFormCard({
             </Button>
           </div>
           <p className='text-muted-foreground text-xs'>
-            {t('Redemption codes add paid balance.')}
+            {t(
+              'The redemption card type determines whether quota is added to paid or gift balance.'
+            )}
           </p>
           {topupLink && (
             <p className='text-muted-foreground text-xs'>

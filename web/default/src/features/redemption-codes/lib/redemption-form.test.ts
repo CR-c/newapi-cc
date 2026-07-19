@@ -28,7 +28,18 @@ describe('redemption funding source form', () => {
     assert.equal(payload.funding_source, 'paid')
   })
 
-  test('editing keeps the only supported paid source', () => {
+  test('gift code selection is preserved in the API payload', () => {
+    const payload = transformFormDataToPayload({
+      name: 'gift code',
+      quota_dollars: 10,
+      count: 1,
+      funding_source: 'promo',
+    })
+
+    assert.equal(payload.funding_source, 'promo')
+  })
+
+  test('editing preserves the stored funding source', () => {
     const values = transformRedemptionToFormDefaults({
       id: 1,
       user_id: 1,
@@ -40,10 +51,10 @@ describe('redemption funding source form', () => {
       redeemed_time: 0,
       expired_time: 0,
       used_user_id: 0,
-      funding_source: 'paid',
+      funding_source: 'promo',
     })
 
-    assert.equal(values.funding_source, 'paid')
+    assert.equal(values.funding_source, 'promo')
   })
 
   test('schema rejects unsupported funding sources', () => {
@@ -56,8 +67,16 @@ describe('redemption funding source form', () => {
     assert.equal(result.success, false)
   })
 
-  test('schema rejects gift and historical sources', () => {
-    for (const funding_source of ['promo', 'legacy_unknown']) {
+  test('schema accepts gift and rejects historical source', () => {
+    assert.equal(
+      getRedemptionFormSchema(t).safeParse({
+        ...REDEMPTION_FORM_DEFAULT_VALUES,
+        name: 'gift source',
+        funding_source: 'promo',
+      }).success,
+      true
+    )
+    for (const funding_source of ['legacy_unknown']) {
       const result = getRedemptionFormSchema(t).safeParse({
         ...REDEMPTION_FORM_DEFAULT_VALUES,
         name: 'paid source only',

@@ -1401,6 +1401,42 @@ Object.assign(newKeys.vi, {
     'Phần còn lại thành số dư tặng và phân loại cũ sẽ được xóa.',
 })
 
+Object.assign(newKeys.en, {
+  'Allocate balance': 'Allocate balance',
+  'Set all to gift balance': 'Set all to gift balance',
+  'Set all to paid balance': 'Set all to paid balance',
+})
+Object.assign(newKeys.zh, {
+  'Allocate balance': '分配余额',
+  'Set all to gift balance': '全部设为赠送余额',
+  'Set all to paid balance': '全部设为付费余额',
+})
+Object.assign(newKeys['zh-TW'], {
+  'Allocate balance': '分配餘額',
+  'Set all to gift balance': '全部設為贈送餘額',
+  'Set all to paid balance': '全部設為付費餘額',
+})
+Object.assign(newKeys.fr, {
+  'Allocate balance': 'Répartir le solde',
+  'Set all to gift balance': 'Tout définir comme solde offert',
+  'Set all to paid balance': 'Tout définir comme solde payé',
+})
+Object.assign(newKeys.ja, {
+  'Allocate balance': '残高を配分',
+  'Set all to gift balance': 'すべて特典残高に設定',
+  'Set all to paid balance': 'すべて支払済み残高に設定',
+})
+Object.assign(newKeys.ru, {
+  'Allocate balance': 'Распределить баланс',
+  'Set all to gift balance': 'Всё в подарочный баланс',
+  'Set all to paid balance': 'Всё в оплаченный баланс',
+})
+Object.assign(newKeys.vi, {
+  'Allocate balance': 'Phân bổ số dư',
+  'Set all to gift balance': 'Đặt tất cả thành số dư tặng',
+  'Set all to paid balance': 'Đặt tất cả thành số dư đã thanh toán',
+})
+
 async function main() {
   let totalAdded = 0
 

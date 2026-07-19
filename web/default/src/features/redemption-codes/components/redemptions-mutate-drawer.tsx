@@ -51,6 +51,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
 import { addTimeToDate } from '@/lib/time'
@@ -165,6 +166,7 @@ export function RedemptionsMutateDrawer({
   const quotaPlaceholder = tokensOnly
     ? t('Enter quota in tokens')
     : t('Enter quota in {{currency}}', { currency: currencyLabel })
+  const storedFundingSource = form.watch('funding_source')
 
   return (
     <Sheet
@@ -199,13 +201,60 @@ export function RedemptionsMutateDrawer({
             className={sideDrawerFormClassName()}
           >
             <SideDrawerSection>
-              <Alert>
-                <AlertTitle>{t('Balance source')}</AlertTitle>
-                <AlertDescription>
-                  {t('Paid balance')}.{' '}
-                  {t('All redemption codes add paid balance.')}
-                </AlertDescription>
-              </Alert>
+              {isUpdate ? (
+                <Alert>
+                  <AlertTitle>{t('Balance source')}</AlertTitle>
+                  <AlertDescription>
+                    {storedFundingSource === 'promo'
+                      ? t('Gift balance')
+                      : t('Paid balance')}
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <FormField
+                  control={form.control}
+                  name='funding_source'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Balance source')}</FormLabel>
+                      <FormControl>
+                        <ToggleGroup
+                          value={[field.value]}
+                          onValueChange={(value) => {
+                            const source = value.find(
+                              (item) => item !== field.value
+                            )
+                            if (source === 'paid' || source === 'promo') {
+                              field.onChange(source)
+                            }
+                          }}
+                          variant='outline'
+                          spacing={2}
+                          className='grid w-full grid-cols-2 gap-2'
+                          aria-label={t('Balance source')}
+                        >
+                          <ToggleGroupItem value='paid' className='w-full'>
+                            {t('Paid balance')}
+                          </ToggleGroupItem>
+                          <ToggleGroupItem value='promo' className='w-full'>
+                            {t('Gift balance')}
+                          </ToggleGroupItem>
+                        </ToggleGroup>
+                      </FormControl>
+                      <FormDescription>
+                        {field.value === 'promo'
+                          ? t(
+                              'Gift balance produces no recognized revenue when spent.'
+                            )
+                          : t(
+                              'Use paid balance only after confirming payment was received.'
+                            )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
               <FormField
                 control={form.control}
                 name='name'

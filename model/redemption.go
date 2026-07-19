@@ -12,22 +12,24 @@ import (
 )
 
 type Redemption struct {
-	Id            int            `json:"id"`
-	UserId        int            `json:"user_id"`
-	Key           string         `json:"key" gorm:"type:char(32);uniqueIndex"`
-	Status        int            `json:"status" gorm:"default:1"`
-	Name          string         `json:"name" gorm:"index"`
-	Quota         int            `json:"quota" gorm:"default:100"`
-	CreatedTime   int64          `json:"created_time" gorm:"bigint"`
-	RedeemedTime  int64          `json:"redeemed_time" gorm:"bigint"`
-	Count         int            `json:"count" gorm:"-:all"` // only for api request
-	UsedUserId    int            `json:"used_user_id"`
-	DeletedAt     gorm.DeletedAt `gorm:"index"`
-	ExpiredTime   int64          `json:"expired_time" gorm:"bigint"` // 过期时间，0 表示不过期
-	FundingSource string         `json:"funding_source" gorm:"type:varchar(32);not null;default:'paid';index"`
+	Id             int            `json:"id"`
+	UserId         int            `json:"user_id"`
+	Key            string         `json:"key" gorm:"type:char(32);uniqueIndex"`
+	Status         int            `json:"status" gorm:"default:1"`
+	Name           string         `json:"name" gorm:"index"`
+	Quota          int            `json:"quota" gorm:"default:100"`
+	CreatedTime    int64          `json:"created_time" gorm:"bigint"`
+	RedeemedTime   int64          `json:"redeemed_time" gorm:"bigint"`
+	Count          int            `json:"count" gorm:"-:all"` // only for api request
+	UsedUserId     int            `json:"used_user_id"`
+	DeletedAt      gorm.DeletedAt `gorm:"index"`
+	ExpiredTime    int64          `json:"expired_time" gorm:"bigint"` // 过期时间，0 表示不过期
+	FundingSource  string         `json:"funding_source" gorm:"type:varchar(32);not null;default:'paid';index"`
+	FundingVersion int            `json:"-" gorm:"type:int;not null;default:0"`
 }
 
 const (
+	CurrentRedemptionFundingVersion      = 1
 	RedemptionFundingSourcePaid          = "paid"
 	RedemptionFundingSourcePromo         = "promo"
 	RedemptionFundingSourceLegacyUnknown = "legacy_unknown"
@@ -36,15 +38,18 @@ const (
 var ErrRedemptionStateChanged = errors.New("redemption state changed, refresh and try again")
 
 func ValidateNewRedemptionFundingSource(source string) error {
-	if source != RedemptionFundingSourcePaid {
-		return errors.New("funding_source must be paid")
+	if source != RedemptionFundingSourcePaid && source != RedemptionFundingSourcePromo {
+		return errors.New("funding_source must be paid or promo")
 	}
 	return nil
 }
 
 func redemptionWalletBucket(source string) (WalletBucket, error) {
-	if source == RedemptionFundingSourcePaid {
+	switch source {
+	case RedemptionFundingSourcePaid:
 		return WalletBucketPaid, nil
+	case RedemptionFundingSourcePromo:
+		return WalletBucketPromo, nil
 	}
 	return "", errors.New("兑换码资金来源无效")
 }
@@ -53,8 +58,11 @@ func redemptionWalletBucket(source string) (WalletBucket, error) {
 // inventory, including used, disabled, and soft-deleted codes.
 func migrateRedemptionFundingSources() error {
 	return DB.Unscoped().Model(&Redemption{}).
-		Where("funding_source IS NULL OR funding_source <> ?", RedemptionFundingSourcePaid).
-		Update("funding_source", RedemptionFundingSourcePaid).Error
+		Where("funding_version IS NULL OR funding_version < ?", CurrentRedemptionFundingVersion).
+		Updates(map[string]interface{}{
+			"funding_source":  RedemptionFundingSourcePaid,
+			"funding_version": CurrentRedemptionFundingVersion,
+		}).Error
 }
 
 func GetAllRedemptions(startIdx int, num int) (redemptions []*Redemption, total int64, err error) {
@@ -227,10 +235,20 @@ func Redeem(key string, userId int) (quota int, err error) {
 	return redemption.Quota, nil
 }
 
-func (redemption *Redemption) Insert() error {
-	var err error
-	err = DB.Create(redemption).Error
-	return err
+func InsertRedemptions(redemptions []Redemption) error {
+	batch := append([]Redemption(nil), redemptions...)
+	for i := range batch {
+		if err := ValidateNewRedemptionFundingSource(batch[i].FundingSource); err != nil {
+			return err
+		}
+		batch[i].FundingVersion = CurrentRedemptionFundingVersion
+	}
+	if len(batch) == 0 {
+		return nil
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		return tx.Create(&batch).Error
+	})
 }
 
 func (redemption *Redemption) SelectUpdate() error {

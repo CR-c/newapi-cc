@@ -30,7 +30,7 @@ export const redemptionFundingSourceSchema = z.enum([
 export type RedemptionFundingSource = z.infer<
   typeof redemptionFundingSourceSchema
 >
-export type NewRedemptionFundingSource = 'paid'
+export type NewRedemptionFundingSource = 'paid' | 'promo'
 
 export const redemptionSchema = z.object({
   id: z.number(),

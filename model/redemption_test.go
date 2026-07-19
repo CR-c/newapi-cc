@@ -190,19 +190,53 @@ func TestRedeemConcurrentSingleSuccess(t *testing.T) {
 }
 
 func TestRedeemCreditsConfiguredFundingBucket(t *testing.T) {
-	userID, key := setupRedeemFixture(t, 400, RedemptionFundingSourcePaid)
+	tests := []struct {
+		name          string
+		fundingSource string
+		want          WalletAllocation
+	}{
+		{name: "paid card", fundingSource: RedemptionFundingSourcePaid, want: WalletAllocation{PaidQuota: 400}},
+		{name: "gift code", fundingSource: RedemptionFundingSourcePromo, want: WalletAllocation{PromoQuota: 400}},
+	}
 
-	quota, err := Redeem(key, userID)
-	require.NoError(t, err)
-	assert.Equal(t, 400, quota)
-	requireWallet(t, DB, userID, 400, 0, 0)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userID, key := setupRedeemFixture(t, 400, tt.fundingSource)
+
+			quota, err := Redeem(key, userID)
+			require.NoError(t, err)
+			assert.Equal(t, 400, quota)
+			requireWallet(t, DB, userID, tt.want.PaidQuota, tt.want.PromoQuota, 0)
+		})
+	}
 }
 
 func TestRedemptionFundingSourceValidation(t *testing.T) {
 	assert.NoError(t, ValidateNewRedemptionFundingSource(RedemptionFundingSourcePaid))
-	for _, source := range []string{"", RedemptionFundingSourcePromo, RedemptionFundingSourceLegacyUnknown, "cash", "PAID"} {
+	assert.NoError(t, ValidateNewRedemptionFundingSource(RedemptionFundingSourcePromo))
+	for _, source := range []string{"", RedemptionFundingSourceLegacyUnknown, "cash", "PAID"} {
 		assert.Error(t, ValidateNewRedemptionFundingSource(source))
 	}
+}
+
+func TestInsertRedemptionsIsAtomic(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:redemption_batch_atomic?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&Redemption{}))
+
+	originalDB := DB
+	DB = db
+	t.Cleanup(func() { DB = originalDB })
+
+	redemptions := []Redemption{
+		{Name: "batch", Key: "duplicate-redemption-key", FundingSource: RedemptionFundingSourcePaid},
+		{Name: "batch", Key: "duplicate-redemption-key", FundingSource: RedemptionFundingSourcePromo},
+	}
+	require.Error(t, InsertRedemptions(redemptions))
+
+	var count int64
+	require.NoError(t, db.Model(&Redemption{}).Count(&count).Error)
+	assert.Zero(t, count)
 }
 
 func TestRedemptionMigrationMovesEveryExistingRowToPaidExactlyOnce(t *testing.T) {
@@ -219,18 +253,25 @@ func TestRedemptionMigrationMovesEveryExistingRowToPaidExactlyOnce(t *testing.T)
 	DB = db
 	t.Cleanup(func() { DB = originalDB })
 	require.NoError(t, migrateRedemptionFundingSources())
+	require.NoError(t, db.Create(&Redemption{
+		Id: 5, Key: "new-gift-code", FundingSource: RedemptionFundingSourcePromo,
+		FundingVersion: CurrentRedemptionFundingVersion,
+	}).Error)
 	require.NoError(t, migrateRedemptionFundingSources())
 
 	var redemptions []Redemption
 	require.NoError(t, db.Unscoped().Order("id").Find(&redemptions).Error)
-	require.Len(t, redemptions, 4)
-	for _, redemption := range redemptions {
+	require.Len(t, redemptions, 5)
+	for _, redemption := range redemptions[:4] {
 		assert.Equal(t, RedemptionFundingSourcePaid, redemption.FundingSource)
+		assert.Equal(t, CurrentRedemptionFundingVersion, redemption.FundingVersion)
 	}
+	assert.Equal(t, RedemptionFundingSourcePromo, redemptions[4].FundingSource)
+	assert.Equal(t, CurrentRedemptionFundingVersion, redemptions[4].FundingVersion)
 }
 
 func TestRedeemRejectsInvalidStoredFundingSourceWithoutConsumingCode(t *testing.T) {
-	for _, source := range []string{RedemptionFundingSourcePromo, RedemptionFundingSourceLegacyUnknown, "cash"} {
+	for _, source := range []string{RedemptionFundingSourceLegacyUnknown, "cash"} {
 		t.Run(source, func(t *testing.T) {
 			userID, key := setupRedeemFixture(t, 300, source)
 

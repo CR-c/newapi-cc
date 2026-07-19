@@ -122,10 +122,11 @@ func AddRedemption(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": msg})
 		return
 	}
-	var keys []string
+	keys := make([]string, 0, redemption.Count)
+	redemptions := make([]model.Redemption, 0, redemption.Count)
 	for i := 0; i < redemption.Count; i++ {
 		key := common.GetUUID()
-		cleanRedemption := model.Redemption{
+		redemptions = append(redemptions, model.Redemption{
 			UserId:        c.GetInt("id"),
 			Name:          redemption.Name,
 			Key:           key,
@@ -133,18 +134,17 @@ func AddRedemption(c *gin.Context) {
 			Quota:         redemption.Quota,
 			ExpiredTime:   redemption.ExpiredTime,
 			FundingSource: fundingSource,
-		}
-		err = cleanRedemption.Insert()
-		if err != nil {
-			common.SysError("failed to insert redemption: " + err.Error())
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": i18n.T(c, i18n.MsgRedemptionCreateFailed),
-				"data":    keys,
-			})
-			return
-		}
+		})
 		keys = append(keys, key)
+	}
+	if err := model.InsertRedemptions(redemptions); err != nil {
+		common.SysError("failed to insert redemptions: " + err.Error())
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": i18n.T(c, i18n.MsgRedemptionCreateFailed),
+			"data":    []string{},
+		})
+		return
 	}
 	recordManageAudit(c, "redemption.create", map[string]interface{}{
 		"name":           redemption.Name,
@@ -200,7 +200,7 @@ func UpdateRedemption(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if cleanRedemption.FundingSource != model.RedemptionFundingSourcePaid {
+	if err := model.ValidateNewRedemptionFundingSource(cleanRedemption.FundingSource); err != nil {
 		common.ApiError(c, model.ErrRedemptionStateChanged)
 		return
 	}
@@ -209,6 +209,10 @@ func UpdateRedemption(c *gin.Context) {
 	if requestedFundingSource != "" {
 		if err := model.ValidateNewRedemptionFundingSource(requestedFundingSource); err != nil {
 			common.ApiError(c, err)
+			return
+		}
+		if requestedFundingSource != cleanRedemption.FundingSource {
+			common.ApiError(c, model.ErrRedemptionStateChanged)
 			return
 		}
 	}

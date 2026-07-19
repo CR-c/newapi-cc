@@ -296,6 +296,26 @@ func TestReclassifyWalletRejectsStaleSnapshotAndConflictingReplay(t *testing.T) 
 	requireWallet(t, db, user.Id, 30, 50, 0)
 }
 
+func TestReclassifyWalletRejectsShortAuditReason(t *testing.T) {
+	db := setupWalletTestDB(t)
+	user := User{
+		Username: "reclassify-short-reason", Password: "password", Quota: 10,
+		PaidQuota: 10, WalletVersion: CurrentWalletVersion,
+	}
+	require.NoError(t, db.Create(&user).Error)
+
+	_, _, err := ReclassifyWallet(
+		user.Id,
+		WalletAllocation{PaidQuota: 10},
+		WalletAllocation{PromoQuota: 10},
+		"reclassify:short-reason",
+		"x",
+		1,
+	)
+	require.ErrorIs(t, err, ErrInvalidWalletReclassification)
+	requireWallet(t, db, user.Id, 10, 0, 0)
+}
+
 func TestReclassifyWalletAllowsRootAuditedManualSplit(t *testing.T) {
 	db := setupWalletTestDB(t)
 	user := User{

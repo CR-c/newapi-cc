@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
-import { Pencil } from 'lucide-react'
+import { Pencil, WalletCards } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -110,6 +110,9 @@ export function UsersMutateDrawer({
   const currentUser = useAuthStore((s) => s.auth.user)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [quotaDialogOpen, setQuotaDialogOpen] = useState(false)
+  const [quotaDialogMode, setQuotaDialogMode] = useState<'add' | 'attribute'>(
+    'add'
+  )
   const [freshUser, setFreshUser] = useState<User>()
   const quotaUser = freshUser?.id === currentRow?.id ? freshUser : undefined
 
@@ -406,7 +409,7 @@ export function UsersMutateDrawer({
                             currency: currencyLabel,
                           })}
                         </FormLabel>
-                        <div className='flex gap-2'>
+                        <div className='flex flex-col gap-2 sm:flex-row'>
                           <FormControl>
                             <Input
                               value={
@@ -421,12 +424,30 @@ export function UsersMutateDrawer({
                           <Button
                             type='button'
                             variant='outline'
-                            onClick={() => setQuotaDialogOpen(true)}
+                            onClick={() => {
+                              setQuotaDialogMode('add')
+                              setQuotaDialogOpen(true)
+                            }}
                             disabled={!quotaUser}
                           >
                             <Pencil className='mr-1 h-4 w-4' />
                             {t('Adjust Quota')}
                           </Button>
+                          {currentUser?.role === ROLE.SUPER_ADMIN &&
+                            quotaUser &&
+                            quotaUser.quota > 0 && (
+                              <Button
+                                type='button'
+                                variant='outline'
+                                onClick={() => {
+                                  setQuotaDialogMode('attribute')
+                                  setQuotaDialogOpen(true)
+                                }}
+                              >
+                                <WalletCards className='mr-1 h-4 w-4' />
+                                {t('Allocate balance')}
+                              </Button>
+                            )}
                         </div>
                         <FormDescription>
                           {formatQuota(parseQuotaFromDollars(field.value || 0))}
@@ -606,6 +627,7 @@ export function UsersMutateDrawer({
             currentUser?.role === ROLE.SUPER_ADMIN && quotaUser.quota > 0
           }
           canCreditPaid={currentUser?.role === ROLE.SUPER_ADMIN}
+          initialMode={quotaDialogMode}
           onSuccess={refreshUserData}
         />
       )}

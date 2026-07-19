@@ -486,7 +486,8 @@ func ReclassifyWallet(userID int, expected, target WalletAllocation, eventKey, r
 		return WalletAllocation{}, WalletAllocation{}, ErrInvalidWalletReclassification
 	}
 	reason = strings.TrimSpace(reason)
-	if reason == "" || utf8.RuneCountInString(reason) > 200 || operatorID <= 0 {
+	reasonLength := utf8.RuneCountInString(reason)
+	if reasonLength < 3 || reasonLength > 200 || operatorID <= 0 {
 		return WalletAllocation{}, WalletAllocation{}, ErrInvalidWalletReclassification
 	}
 	if err := validateWalletMutation(int(moved), eventKey); err != nil {
