@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -155,6 +156,57 @@ func TestLegacyGrokAdaptorConvertsUnifiedVideoParameters(t *testing.T) {
 	assert.NotContains(t, payload, "group")
 }
 
+func TestLegacyGrokAdaptorAcceptsReferenceImageOnCustomPort(t *testing.T) {
+	fetchSetting := system_setting.GetFetchSetting()
+	originalFetchSetting := *fetchSetting
+	t.Cleanup(func() {
+		*fetchSetting = originalFetchSetting
+	})
+	fetchSetting.EnableSSRFProtection = true
+	fetchSetting.AllowPrivateIp = false
+	fetchSetting.DomainFilterMode = false
+	fetchSetting.IpFilterMode = false
+	fetchSetting.DomainList = nil
+	fetchSetting.IpList = nil
+	fetchSetting.AllowedPorts = []string{"80", "443", "8080", "8443"}
+	fetchSetting.ApplyIPFilterForDomain = false
+
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	const imageURL = "https://laomo.asia:90/hwt/refs/2026-07-11/1783729471175952338_637g.png"
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewBufferString(`{
+		"aspect_ratio":"9:16",
+		"duration":15,
+		"images":["`+imageURL+`"],
+		"model":"grok-video-1.5",
+		"prompt":"show yourself",
+		"resolution":"720p"
+	}`))
+	context.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "grok-video-1.5",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName:    "grok-video-1.5",
+			ChannelOtherSettings: dto.ChannelOtherSettings{LegacyOpenAIVideoAPI: true},
+		},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
+	body, err := adaptor.BuildRequestBody(context, info)
+	require.NoError(t, err)
+	bodyBytes, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(bodyBytes, &payload))
+	assert.Equal(t, float64(15), payload["seconds"])
+	assert.Equal(t, "9:16", payload["aspect_ratio"])
+	assert.Equal(t, "720p", payload["resolution"])
+	assert.Equal(t, []any{imageURL}, payload["image_urls"])
+}
+
 func TestGrokVideoValidationEnforcesReferenceRules(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -164,6 +216,9 @@ func TestGrokVideoValidationEnforcesReferenceRules(t *testing.T) {
 	}{
 		{name: "preview model requires image", model: "grok-video-1.5", request: relaycommon.TaskSubmitReq{Seconds: "4", AspectRatio: "16:9", Resolution: "480p"}, wantErr: "exactly one"},
 		{name: "preview model accepts one image", model: "grok-video-1.5", request: relaycommon.TaskSubmitReq{Seconds: "15", AspectRatio: "9:16", Resolution: "720p", Images: []string{"https://example.com/one.png"}}},
+		{name: "preview model rejects custom port on IP literal", model: "grok-video-1.5", request: relaycommon.TaskSubmitReq{Duration: 15, AspectRatio: "9:16", Resolution: "720p", Images: []string{"https://1.1.1.1:90/ref.png"}}, wantErr: "port 90 is not allowed"},
+		{name: "preview model rejects private reference image", model: "grok-video-1.5", request: relaycommon.TaskSubmitReq{Duration: 15, AspectRatio: "9:16", Resolution: "720p", Images: []string{"https://127.0.0.1:443/ref.png"}}, wantErr: "private IP address not allowed"},
+		{name: "non Grok model retains configured port restriction", model: "sora-2", request: relaycommon.TaskSubmitReq{Duration: 15, AspectRatio: "9:16", Resolution: "720p", Images: []string{"https://example.com:90/ref.png"}}, wantErr: "port 90 is not allowed"},
 		{name: "multi reference caps duration", model: "grok-image-video", request: relaycommon.TaskSubmitReq{Seconds: "12", AspectRatio: "16:9", Resolution: "720p", Images: []string{"https://example.com/one.png", "https://example.com/two.png"}}},
 		{name: "rejects eighth image", model: "grok-image-video", request: relaycommon.TaskSubmitReq{Seconds: "10", AspectRatio: "16:9", Resolution: "720p", Images: []string{"https://example.com/1.png", "https://example.com/2.png", "https://example.com/3.png", "https://example.com/4.png", "https://example.com/5.png", "https://example.com/6.png", "https://example.com/7.png", "https://example.com/8.png"}}, wantErr: "at most 7"},
 		{name: "rejects invalid seconds", model: "grok-image-video", request: relaycommon.TaskSubmitReq{Seconds: "invalid", AspectRatio: "16:9", Resolution: "720p"}, wantErr: "seconds must be"},

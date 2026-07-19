@@ -3,6 +3,7 @@ package taskcommon
 import (
 	"encoding/base64"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 
@@ -10,9 +11,47 @@ import (
 	"github.com/QuantumNous/new-api/setting/system_setting"
 )
 
-const maxTaskMediaDataURLLength = 15 << 20
+const (
+	maxTaskMediaURLLength     = 4096
+	maxTaskMediaDataURLLength = 15 << 20
+)
 
-func ValidateMediaURL(value string, allowImageDataURL bool) error {
+// MediaURLPortPolicy controls whether a forwarded media URL may use a custom domain port.
+type MediaURLPortPolicy int
+
+const (
+	MediaURLPortPolicyEnforceConfigured MediaURLPortPolicy = iota
+	MediaURLPortPolicyAllowCustomDomain
+)
+
+func isStrictDNSHostname(host string) bool {
+	if len(host) == 0 || len(host) > 253 || strings.HasSuffix(host, ".") {
+		return false
+	}
+	labels := strings.Split(host, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	for _, label := range labels {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			char := label[i]
+			if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '-' {
+				return false
+			}
+		}
+	}
+	for _, char := range labels[len(labels)-1] {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') {
+			return true
+		}
+	}
+	return false
+}
+
+func ValidateMediaURL(value string, allowImageDataURL bool, portPolicy MediaURLPortPolicy) error {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return fmt.Errorf("media URL is required")
@@ -39,6 +78,9 @@ func ValidateMediaURL(value string, allowImageDataURL bool) error {
 		}
 		return nil
 	}
+	if len(value) > maxTaskMediaURLLength {
+		return fmt.Errorf("media URL is too long")
+	}
 
 	parsed, err := url.Parse(value)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
@@ -47,7 +89,13 @@ func ValidateMediaURL(value string, allowImageDataURL bool) error {
 	if parsed.User != nil {
 		return fmt.Errorf("media URL must not contain credentials")
 	}
+	host := parsed.Hostname()
+	literalIP := net.ParseIP(host)
 	fetchSetting := system_setting.GetFetchSetting()
+	allowedPorts := fetchSetting.AllowedPorts
+	if portPolicy == MediaURLPortPolicyAllowCustomDomain && parsed.Scheme == "https" && parsed.Port() != "" && literalIP == nil && isStrictDNSHostname(host) {
+		allowedPorts = nil
+	}
 	return common.ValidateURLWithFetchSetting(
 		value,
 		fetchSetting.EnableSSRFProtection,
@@ -56,7 +104,7 @@ func ValidateMediaURL(value string, allowImageDataURL bool) error {
 		fetchSetting.IpFilterMode,
 		fetchSetting.DomainList,
 		fetchSetting.IpList,
-		fetchSetting.AllowedPorts,
+		allowedPorts,
 		fetchSetting.ApplyIPFilterForDomain,
 	)
 }

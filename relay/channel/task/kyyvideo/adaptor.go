@@ -123,7 +123,7 @@ func validateKyyVideoRequest(req *relaycommon.TaskSubmitReq, modelName string) e
 		mediaURLs = append(mediaURLs, req.FirstImage, req.LastImage)
 	}
 	for _, mediaURL := range mediaURLs {
-		if err := taskcommon.ValidateMediaURL(mediaURL, false); err != nil {
+		if err := taskcommon.ValidateMediaURL(mediaURL, false, taskcommon.MediaURLPortPolicyEnforceConfigured); err != nil {
 			return fmt.Errorf("invalid media URL: %w", err)
 		}
 	}

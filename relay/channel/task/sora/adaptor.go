@@ -156,17 +156,17 @@ func validateSub2APIVideoRequest(req relaycommon.TaskSubmitReq, modelName string
 		return fmt.Errorf("this model supports at most 1 reference audio")
 	}
 	for _, imageURL := range req.Images {
-		if err := taskcommon.ValidateMediaURL(imageURL, false); err != nil {
+		if err := taskcommon.ValidateMediaURL(imageURL, false, taskcommon.MediaURLPortPolicyEnforceConfigured); err != nil {
 			return fmt.Errorf("invalid reference image: %w", err)
 		}
 	}
 	for _, videoURL := range req.Videos {
-		if err := taskcommon.ValidateMediaURL(videoURL, false); err != nil {
+		if err := taskcommon.ValidateMediaURL(videoURL, false, taskcommon.MediaURLPortPolicyEnforceConfigured); err != nil {
 			return fmt.Errorf("invalid reference video: %w", err)
 		}
 	}
 	for _, audioURL := range req.Audios {
-		if err := taskcommon.ValidateMediaURL(audioURL, false); err != nil {
+		if err := taskcommon.ValidateMediaURL(audioURL, false, taskcommon.MediaURLPortPolicyEnforceConfigured); err != nil {
 			return fmt.Errorf("invalid reference audio: %w", err)
 		}
 	}
@@ -229,8 +229,12 @@ func validateGrokVideoRequest(req *relaycommon.TaskSubmitReq, modelName string) 
 			seconds = 10
 		}
 	}
+	portPolicy := taskcommon.MediaURLPortPolicyEnforceConfigured
+	if modelName == "grok-video-1.5" || modelName == "grok-image-video" {
+		portPolicy = taskcommon.MediaURLPortPolicyAllowCustomDomain
+	}
 	for _, imageURL := range req.Images {
-		if err := taskcommon.ValidateMediaURL(imageURL, true); err != nil {
+		if err := taskcommon.ValidateMediaURL(imageURL, true, portPolicy); err != nil {
 			return fmt.Errorf("invalid reference image: %w", err)
 		}
 	}

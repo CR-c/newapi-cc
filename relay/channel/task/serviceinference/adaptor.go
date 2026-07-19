@@ -106,7 +106,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		return service.TaskErrorWrapperLocal(fmt.Errorf("this model only supports reference images"), "invalid_media", http.StatusBadRequest)
 	}
 	for _, imageURL := range req.Images {
-		if err = taskcommon.ValidateMediaURL(imageURL, false); err != nil {
+		if err = taskcommon.ValidateMediaURL(imageURL, false, taskcommon.MediaURLPortPolicyEnforceConfigured); err != nil {
 			return service.TaskErrorWrapperLocal(fmt.Errorf("invalid reference image: %w", err), "invalid_images", http.StatusBadRequest)
 		}
 	}
