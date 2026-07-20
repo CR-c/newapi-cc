@@ -44,13 +44,22 @@ const GENERIC_PROFILE: VideoModelProfile = {
   supportsWatermark: false,
 }
 
+const KYY_MODEL_CAPABILITY_ALIASES: Readonly<Record<string, string>> = {
+  'sd2.0-933': 'videos',
+  'sd2.0-903': 'videos_pro',
+  'sd2.0fast-903': 'videos_pro_fast',
+  'sd2.0-431': 'videos_stable',
+  'sd2.0fast-431': 'videos_stable_fast',
+}
+
 export function getVideoModelProfile(
   model: string,
   group?: string
 ): VideoModelProfile {
   const isKyyVideoGroup = group === 'sd-video' || group === 'kyy-sd'
+  const kyyModel = KYY_MODEL_CAPABILITY_ALIASES[model] ?? model
 
-  if (isKyyVideoGroup && model === 'videos') {
+  if (isKyyVideoGroup && kyyModel === 'videos') {
     return {
       provider: 'kyy',
       durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
@@ -67,12 +76,12 @@ export function getVideoModelProfile(
   }
   if (
     isKyyVideoGroup &&
-    (model === 'videos_stable' || model === 'videos_stable_fast')
+    (kyyModel === 'videos_stable' || kyyModel === 'videos_stable_fast')
   ) {
     return {
       provider: 'kyy',
       durations:
-        model === 'videos_stable_fast'
+        kyyModel === 'videos_stable_fast'
           ? [10, 15]
           : [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
       aspectRatios: ['16:9', '9:16', '1:1'],
@@ -88,7 +97,7 @@ export function getVideoModelProfile(
   }
   if (
     isKyyVideoGroup &&
-    (model === 'videos_pro' || model === 'videos_pro_fast')
+    (kyyModel === 'videos_pro' || kyyModel === 'videos_pro_fast')
   ) {
     return {
       provider: 'kyy',

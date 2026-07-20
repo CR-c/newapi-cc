@@ -765,25 +765,24 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
               <tr>
                 <td><code>sd-video</code></td>
                 <td>
-                  <code>videos</code>（7 元/次）<br /><code>videos_stable</code
-                  >（6 元/次）<br /><code>videos_stable_fast</code>（5
-                  元/次）<br /><code>videos_pro</code>（6.5 元/次）<br /><code
-                    >videos_pro_fast</code
-                  >（5.5 元/次）
+                  <code>sd2.0-933</code>（7 元/次）<br /><code>sd2.0-431</code
+                  >（6 元/次）<br /><code>sd2.0fast-431</code>（5 元/次）<br /><code
+                    >sd2.0-903</code
+                  >（6.5 元/次）<br /><code>sd2.0fast-903</code>（5.5 元/次）
                 </td>
                 <td>
-                  <code>videos/videos_stable</code> 为 4–15 秒；其余模型仅
+                  <code>sd2.0-933/sd2.0-431</code> 为 4–15 秒；其余模型仅
                   <code>10/15</code> 秒
                 </td>
                 <td>
                   固定 <code>720p</code>；均支持
-                  <code>16:9/9:16/1:1</code>，<code>videos</code> 另支持
+                  <code>16:9/9:16/1:1</code>，<code>sd2.0-933</code> 另支持
                   <code>21:9/4:3/3:4</code>
                 </td>
                 <td>
-                  <code>videos</code>：9 图/3 视频/3
-                  音频；<code>videos_stable*</code>：4 图/3 视频/1
-                  音频；<code>videos_pro*</code>：9 图/0 视频/3
+                  <code>sd2.0-933</code>：9 图/3 视频/3
+                  音频；<code>sd2.0-431/sd2.0fast-431</code>：4 图/3 视频/1
+                  音频；<code>sd2.0-903/sd2.0fast-903</code>：9 图/0 视频/3
                   音频，音频必须搭配图片
                 </td>
                 <td>固定按次</td>
@@ -873,12 +872,12 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
   }'</code></pre>
 
         <h3><code>sd-video</code> 请求示例</h3>
-        <p><code>videos</code> 支持图片、视频和音频参考：</p>
+        <p><code>sd2.0-933</code> 支持图片、视频和音频参考：</p>
         <pre><code>curl "$BASE_URL/v1/videos" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "videos",
+    "model": "sd2.0-933",
     "prompt": "参考人物、动作和音乐生成自然流畅的短片",
     "seconds": 8,
     "aspect_ratio": "21:9",
@@ -888,12 +887,12 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
     "audios": ["https://example.com/music.mp3"]
   }'</code></pre>
 
-        <p><code>videos_stable</code>：</p>
+        <p><code>sd2.0-431</code>：</p>
         <pre><code>curl "$BASE_URL/v1/videos" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "videos_stable",
+    "model": "sd2.0-431",
     "prompt": "人物在街道上自然行走",
     "seconds": 8,
     "aspect_ratio": "1:1",
@@ -901,12 +900,12 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
     "images": ["https://example.com/person.jpg"]
   }'</code></pre>
 
-        <p><code>videos_stable_fast</code> 仅支持 10 或 15 秒：</p>
+        <p><code>sd2.0fast-431</code> 仅支持 10 或 15 秒：</p>
         <pre><code>curl "$BASE_URL/v1/videos" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "videos_stable_fast",
+    "model": "sd2.0fast-431",
     "prompt": "竖屏人物运镜短片",
     "seconds": 10,
     "aspect_ratio": "9:16",
@@ -914,12 +913,12 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
     "images": ["https://example.com/person.jpg"]
   }'</code></pre>
 
-        <p><code>videos_pro</code> 不支持参考视频，音频必须搭配图片：</p>
+        <p><code>sd2.0-903</code> 不支持参考视频，音频必须搭配图片：</p>
         <pre><code>curl "$BASE_URL/v1/videos" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "videos_pro",
+    "model": "sd2.0-903",
     "prompt": "人物跟随音乐自然舞动",
     "seconds": 10,
     "aspect_ratio": "16:9",
@@ -928,12 +927,12 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
     "audios": ["https://example.com/music.mp3"]
   }'</code></pre>
 
-        <p><code>videos_pro_fast</code>：</p>
+        <p><code>sd2.0fast-903</code>：</p>
         <pre><code>curl "$BASE_URL/v1/videos" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "videos_pro_fast",
+    "model": "sd2.0fast-903",
     "prompt": "电影感城市夜景，镜头缓慢推进",
     "seconds": 15,
     "aspect_ratio": "9:16",
@@ -943,8 +942,8 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
         <p>
           首尾帧模式改用 <code>first_image</code> 和
           <code>last_image</code>，两者必须同时提供，并移除
-          <code>images/videos/audios</code>。<code>videos_pro</code> 与
-          <code>videos_pro_fast</code>
+          <code>images/videos/audios</code>。<code>sd2.0-903</code> 与
+          <code>sd2.0fast-903</code>
           不支持参考视频；传音频时至少同时传一张参考图。
         </p>
 
@@ -967,14 +966,14 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
           <code>kind</code> 可为 <code>image</code>、<code>video</code> 或
           <code>audio</code>。响应中的 <code>data.url</code> 可直接填入
           <code>images</code>、<code>videos</code> 或
-          <code>audios</code>。本站会自动完成素材格式转换。
-          临时素材 URL 在有效期内可直接访问，请勿上传敏感素材或公开该 URL。
+          <code>audios</code>。本站会自动完成素材格式转换。 临时素材 URL
+          在有效期内可直接访问，请勿上传敏感素材或公开该 URL。
         </p>
 
         <h3>任务结算说明</h3>
         <p>
-          <code>grok按次</code> 和 <code>sd-video</code>
-          按控制台标价按次结算。仅 <code>video-dddd</code>
+          <code>grok按次</code> 和
+          <code>sd-video</code> 按控制台标价按次结算。仅 <code>video-dddd</code>
           会在提交时预扣额度，并在任务完成后根据
           <code>usage.total_tokens</code
           >、模型倍率、分组倍率和参考图档位重新结算，多扣部分自动退回，少扣部分自动补扣。任务失败会退回预扣额度。

@@ -53,7 +53,14 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if modelName == "" {
 		modelName = req.Model
 	}
-	if err = validateKyyVideoRequest(&req, modelName); err != nil {
+	displayModelName := info.OriginModelName
+	if displayModelName == "" {
+		displayModelName = req.Model
+	}
+	if displayModelName == "" {
+		displayModelName = modelName
+	}
+	if err = validateKyyVideoRequest(&req, modelName, displayModelName); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
 	req.Seconds = ""
@@ -61,10 +68,10 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	return nil
 }
 
-func validateKyyVideoRequest(req *relaycommon.TaskSubmitReq, modelName string) error {
+func validateKyyVideoRequest(req *relaycommon.TaskSubmitReq, modelName string, displayModelName string) error {
 	capabilities, ok := modelCapabilitiesByName[modelName]
 	if !ok {
-		return fmt.Errorf("unsupported model: %s", modelName)
+		return fmt.Errorf("unsupported model: %s", displayModelName)
 	}
 	if modelName != "videos" && utf8.RuneCountInString(req.Prompt) > 5000 {
 		return fmt.Errorf("prompt must contain at most 5000 characters")
@@ -83,7 +90,7 @@ func validateKyyVideoRequest(req *relaycommon.TaskSubmitReq, modelName string) e
 		req.AspectRatio = "16:9"
 	}
 	if !capabilities.aspectRatios[req.AspectRatio] {
-		return fmt.Errorf("unsupported aspect_ratio for %s", modelName)
+		return fmt.Errorf("unsupported aspect_ratio for %s", displayModelName)
 	}
 	if req.Resolution == "" {
 		req.Resolution = "720p"
@@ -92,19 +99,19 @@ func validateKyyVideoRequest(req *relaycommon.TaskSubmitReq, modelName string) e
 		return fmt.Errorf("resolution must be 720p")
 	}
 	if len(req.Images) > capabilities.maxImages {
-		return fmt.Errorf("%s supports at most %d reference images", modelName, capabilities.maxImages)
+		return fmt.Errorf("%s supports at most %d reference images", displayModelName, capabilities.maxImages)
 	}
 	if len(req.Videos) > capabilities.maxVideos {
 		if capabilities.maxVideos == 0 {
-			return fmt.Errorf("%s does not support reference videos", modelName)
+			return fmt.Errorf("%s does not support reference videos", displayModelName)
 		}
-		return fmt.Errorf("%s supports at most %d reference videos", modelName, capabilities.maxVideos)
+		return fmt.Errorf("%s supports at most %d reference videos", displayModelName, capabilities.maxVideos)
 	}
 	if len(req.Audios) > capabilities.maxAudios {
-		return fmt.Errorf("%s supports at most %d reference audios", modelName, capabilities.maxAudios)
+		return fmt.Errorf("%s supports at most %d reference audios", displayModelName, capabilities.maxAudios)
 	}
 	if capabilities.requireImageAudio && len(req.Audios) > 0 && len(req.Images) == 0 {
-		return fmt.Errorf("audio references require at least one reference image for %s", modelName)
+		return fmt.Errorf("audio references require at least one reference image for %s", displayModelName)
 	}
 
 	hasFirstImage := strings.TrimSpace(req.FirstImage) != ""
@@ -302,12 +309,10 @@ func (a *TaskAdaptor) SanitizeTaskData(body []byte) []byte {
 	safe := struct {
 		Object  string `json:"object,omitempty"`
 		Created int64  `json:"created,omitempty"`
-		Model   string `json:"model,omitempty"`
 		Status  string `json:"status,omitempty"`
 	}{
 		Object:  upstream.Object,
 		Created: int64(upstream.Created),
-		Model:   upstream.Model,
 		Status:  upstream.Status,
 	}
 	data, err := common.Marshal(safe)

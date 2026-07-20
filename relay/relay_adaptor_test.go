@@ -31,6 +31,7 @@ func TestTaskModel2DtoHidesKyyUpstreamIdentifiers(t *testing.T) {
 		},
 		Data: json.RawMessage(`{
 			"id":"upstream-video-id",
+			"model":"videos_pro",
 			"status":"completed",
 			"video_url":"https://storage.example/signed-result.mp4",
 			"amount":0.32
@@ -44,6 +45,7 @@ func TestTaskModel2DtoHidesKyyUpstreamIdentifiers(t *testing.T) {
 	require.NotContains(t, string(result.Data), "upstream-video-id")
 	require.NotContains(t, string(result.Data), "storage.example")
 	require.NotContains(t, string(result.Data), "amount")
+	require.NotContains(t, string(result.Data), "videos_pro")
 	properties := result.Properties.(model.Properties)
 	require.Empty(t, properties.UpstreamModelName)
 	require.Equal(t, "videos", properties.OriginModelName)

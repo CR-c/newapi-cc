@@ -67,7 +67,7 @@ func TestValidateKyyVideoRequestAcceptsDocumentedModelCapabilities(t *testing.T)
 			req.Videos = repeatedURLs("video", tt.videos)
 			req.Audios = repeatedURLs("audio", tt.audios)
 
-			require.NoError(t, validateKyyVideoRequest(&req, tt.model))
+			require.NoError(t, validateKyyVideoRequest(&req, tt.model, tt.model))
 			assert.Equal(t, tt.ratio, req.AspectRatio)
 			assert.Equal(t, "720p", req.Resolution)
 		})
@@ -96,11 +96,36 @@ func TestValidateKyyVideoRequestRejectsDocumentedInvalidCombinations(t *testing.
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateKyyVideoRequest(&tt.req, tt.model)
+			err := validateKyyVideoRequest(&tt.req, tt.model, tt.model)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.want)
 		})
 	}
+}
+
+func TestValidateKyyVideoRequestUsesPublicModelNameInErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"sd2.0-903",
+		"prompt":"animate",
+		"seconds":10,
+		"videos":["https://example.com/reference.mp4"]
+	}`))
+	context.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "sd2.0-903",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "videos_pro",
+		},
+	}
+
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(context, info)
+
+	require.NotNil(t, taskErr)
+	assert.Contains(t, taskErr.Message, "sd2.0-903")
+	assert.NotContains(t, taskErr.Message, "videos_pro")
 }
 
 func TestBuildRequestMapsUnifiedFieldsToKyyVideoContract(t *testing.T) {

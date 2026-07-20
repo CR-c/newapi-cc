@@ -627,6 +627,7 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 			delete(data, "video_url")
 			delete(data, "amount")
 			delete(data, "error")
+			delete(data, "model")
 			if sanitized, err := common.Marshal(data); err == nil {
 				result.Data = sanitized
 			}

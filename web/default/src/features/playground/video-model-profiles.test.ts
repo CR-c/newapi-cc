@@ -5,7 +5,7 @@ import { getVideoModelProfile } from './video-model-profiles'
 
 describe('KYY video model profiles', () => {
   test('sd-video uses the KYY model capabilities', () => {
-    const profile = getVideoModelProfile('videos', 'sd-video')
+    const profile = getVideoModelProfile('sd2.0-933', 'sd-video')
 
     assert.equal(profile.provider, 'kyy')
     assert.equal(profile.maxImages, 9)
@@ -13,8 +13,8 @@ describe('KYY video model profiles', () => {
     assert.equal(profile.maxAudios, 3)
   })
 
-  test('videos exposes nine images three videos and three audios', () => {
-    const profile = getVideoModelProfile('videos', 'kyy-sd')
+  test('933 alias exposes nine images three videos and three audios', () => {
+    const profile = getVideoModelProfile('sd2.0-933', 'sd-video')
 
     assert.equal(profile.provider, 'kyy')
     assert.deepEqual(
@@ -36,8 +36,8 @@ describe('KYY video model profiles', () => {
   })
 
   test('stable models expose their documented limits', () => {
-    const stable = getVideoModelProfile('videos_stable', 'kyy-sd')
-    const fast = getVideoModelProfile('videos_stable_fast', 'kyy-sd')
+    const stable = getVideoModelProfile('sd2.0-431', 'sd-video')
+    const fast = getVideoModelProfile('sd2.0fast-431', 'sd-video')
 
     assert.deepEqual(
       stable.durations,
@@ -52,8 +52,8 @@ describe('KYY video model profiles', () => {
   })
 
   test('pro models require an image only when audio is supplied', () => {
-    for (const model of ['videos_pro', 'videos_pro_fast']) {
-      const profile = getVideoModelProfile(model, 'kyy-sd')
+    for (const model of ['sd2.0-903', 'sd2.0fast-903']) {
+      const profile = getVideoModelProfile(model, 'sd-video')
       assert.deepEqual(profile.durations, [10, 15])
       assert.equal(profile.maxImages, 9)
       assert.equal(profile.maxVideos, 0)
@@ -63,8 +63,8 @@ describe('KYY video model profiles', () => {
     }
   })
 
-  test('same model name outside kyy-sd keeps the generic profile', () => {
-    const profile = getVideoModelProfile('videos', 'default')
+  test('same model alias outside sd-video keeps the generic profile', () => {
+    const profile = getVideoModelProfile('sd2.0-933', 'default')
 
     assert.equal(profile.provider, 'generic')
     assert.equal(profile.maxImages, 0)
