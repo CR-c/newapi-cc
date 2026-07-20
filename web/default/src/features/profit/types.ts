@@ -56,10 +56,17 @@ export type ModelCostRule = {
   id: number
   model_name: string
   purchase_price_cny: number
+  cost_tiers: ModelCostTier[] | null
   version: number
   enabled: boolean
   effective_from: number
   effective_to: number
+}
+
+export type ModelCostTier = {
+  key: string
+  label: string
+  purchase_price_cny: number
 }
 
 export type ProfitCostModelGroup = {
@@ -78,5 +85,5 @@ export type ProfitQuery = {
 
 export type SaveCostRuleInput = Pick<
   ModelCostRule,
-  'model_name' | 'purchase_price_cny'
+  'model_name' | 'purchase_price_cny' | 'cost_tiers'
 >
