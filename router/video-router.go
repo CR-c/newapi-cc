@@ -8,6 +8,16 @@ import (
 )
 
 func SetVideoRouter(router *gin.Engine) {
+	videoAssetRouter := router.Group("/v1/sd/assets")
+	videoAssetRouter.Use(middleware.RouteTag("relay"))
+	videoAssetRouter.Use(middleware.GlobalAPIRateLimit())
+	videoAssetRouter.Use(middleware.SystemPerformanceCheck())
+	videoAssetRouter.Use(middleware.TokenAuth())
+	{
+		videoAssetRouter.POST("", middleware.VideoAssetCreateRateLimit(), controller.CreateVideoAsset)
+		videoAssetRouter.GET("/:asset_id", middleware.VideoAssetQueryRateLimit(), controller.GetVideoAsset)
+	}
+
 	// Video proxy: accepts either session auth (dashboard) or token auth (API clients)
 	videoProxyRouter := router.Group("/v1")
 	videoProxyRouter.Use(middleware.RouteTag("relay"))

@@ -9,10 +9,13 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestGetModelRequestRecognizesPlaygroundVideos(t *testing.T) {
@@ -116,4 +119,134 @@ func TestRelayRequestPathNormalizesPlaygroundRoutes(t *testing.T) {
 	assert.Equal(t, "/v1/images/generations", relayRequestPath("/pg/images/generations"))
 	assert.Equal(t, "/v1/videos", relayRequestPath("/pg/videos"))
 	assert.Equal(t, "/v1/chat/completions", relayRequestPath("/v1/chat/completions"))
+}
+
+func TestResolveVideoAssetReferencesEnforcesOwnershipAndChannel(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.VideoAsset{}, &model.Channel{}, &model.Ability{}))
+	previousDB := model.DB
+	previousCache := common.MemoryCacheEnabled
+	model.DB = db
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.MemoryCacheEnabled = previousCache
+	})
+	channel := &model.Channel{Id: 59, Type: constant.ChannelTypeServiceInference, Status: common.ChannelStatusEnabled}
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group: "video-dddd", Model: "dreamina-seedance-2-0-mini-hc", ChannelId: 59, Enabled: true,
+	}).Error)
+	require.NoError(t, db.Create(&model.VideoAsset{
+		ID: "asset-local", UserID: 7, Group: "video-dddd", ChannelID: 59, UpstreamID: "asset-upstream", AssetType: "Image",
+	}).Error)
+
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewBufferString(`{
+		"model":"dreamina-seedance-2-0-mini-hc","images":["asset://asset-local"]
+	}`))
+	context.Request.Header.Set("Content-Type", "application/json")
+	context.Set("id", 7)
+
+	channelID, err := resolveVideoAssetReferences(context, "video-dddd")
+
+	require.NoError(t, err)
+	assert.Equal(t, 59, channelID)
+	referencesValue, exists := common.GetContextKey(context, constant.ContextKeyVideoAssetReferences)
+	require.True(t, exists)
+	references, ok := referencesValue.(map[string]string)
+	require.True(t, ok)
+	assert.Equal(t, "asset-upstream", references["asset-local"])
+
+	boundChannel, err := resolveVideoAssetChannel(context, "video-dddd", "dreamina-seedance-2-0-mini-hc")
+	require.NoError(t, err)
+	require.NotNil(t, boundChannel)
+	assert.Equal(t, 59, boundChannel.Id)
+
+	foreignContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+	foreignContext.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewBufferString(`{
+		"model":"dreamina-seedance-2-0-mini-hc","images":["asset://asset-local"]
+	}`))
+	foreignContext.Request.Header.Set("Content-Type", "application/json")
+	foreignContext.Set("id", 8)
+
+	_, err = resolveVideoAssetReferences(foreignContext, "video-dddd")
+	assert.ErrorContains(t, err, "not found or unavailable")
+}
+
+func TestResolveVideoAssetReferencesRejectsOversizedImageArraysBeforeLookup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewBufferString(`{
+		"model":"dreamina-seedance-2-0-mini-hc",
+		"images":["asset://asset-1","asset://asset-2","asset://asset-3","asset://asset-4","asset://asset-5"]
+	}`))
+	context.Request.Header.Set("Content-Type", "application/json")
+
+	_, err := resolveVideoAssetReferences(context, "video-dddd")
+
+	assert.ErrorContains(t, err, "at most 4")
+}
+
+func TestResolveVideoAssetReferencesPreservesOtherGroupImageLimits(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewBufferString(`{
+		"model":"grok-image-video",
+		"images":[
+			"https://example.com/1.png","https://example.com/2.png","https://example.com/3.png",
+			"https://example.com/4.png","https://example.com/5.png","https://example.com/6.png",
+			"https://example.com/7.png"
+		]
+	}`))
+	context.Request.Header.Set("Content-Type", "application/json")
+
+	channelID, err := resolveVideoAssetReferences(context, "grok按次")
+
+	require.NoError(t, err)
+	assert.Zero(t, channelID)
+}
+
+func TestDistributeResolvesVideoAssetsForSpecifiedChannel(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.VideoAsset{}, &model.Channel{}, &model.Ability{}))
+	previousDB := model.DB
+	previousCache := common.MemoryCacheEnabled
+	model.DB = db
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.MemoryCacheEnabled = previousCache
+	})
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 59, Type: constant.ChannelTypeServiceInference, Status: common.ChannelStatusEnabled, Key: "upstream-key",
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group: "video-dddd", Model: "dreamina-seedance-2-0-mini-hc", ChannelId: 59, Enabled: true,
+	}).Error)
+	require.NoError(t, db.Create(&model.VideoAsset{
+		ID: "asset-local", UserID: 7, Group: "video-dddd", ChannelID: 59, UpstreamID: "asset-upstream", AssetType: "Image",
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewBufferString(`{
+		"model":"dreamina-seedance-2-0-mini-hc","images":["asset://asset-local"]
+	}`))
+	context.Request.Header.Set("Content-Type", "application/json")
+	context.Set("id", 7)
+	common.SetContextKey(context, constant.ContextKeyUsingGroup, "video-dddd")
+	common.SetContextKey(context, constant.ContextKeyTokenSpecificChannelId, "59")
+
+	Distribute()(context)
+
+	assert.False(t, context.IsAborted())
+	assert.Equal(t, 59, common.GetContextKeyInt(context, constant.ContextKeyVideoAssetChannelId))
+	referencesValue, exists := common.GetContextKey(context, constant.ContextKeyVideoAssetReferences)
+	require.True(t, exists)
+	references, ok := referencesValue.(map[string]string)
+	require.True(t, ok)
+	assert.Equal(t, "asset-upstream", references["asset-local"])
 }

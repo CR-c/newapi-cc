@@ -60,6 +60,8 @@ const (
 
 	// ContextKeyFileSourcesToCleanup stores file sources that need cleanup when request ends
 	ContextKeyFileSourcesToCleanup ContextKey = "file_sources_to_cleanup"
+	ContextKeyVideoAssetChannelId  ContextKey = "video_asset_channel_id"
+	ContextKeyVideoAssetReferences ContextKey = "video_asset_references"
 
 	// ContextKeyAdminRejectReason stores an admin-only reject/block reason extracted from upstream responses.
 	// It is not returned to end users, but can be persisted into consume/error logs for debugging.

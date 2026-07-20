@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
@@ -540,4 +541,26 @@ func TestValidateRequestRejectsInvalidSecondsAndUnsupportedAssetReferences(t *te
 		require.NotNil(t, taskErr, body)
 		assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
 	}
+}
+
+func TestBuildRequestBodyPassesResolvedAssetReferenceWithoutUploadingAgain(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+	context.Set("task_request", relaycommon.TaskSubmitReq{
+		Model: "dreamina-seedance-2-0-mini-hc", Prompt: "animate", Duration: 4,
+		Images: []string{"asset://asset-local"},
+	})
+	common.SetContextKey(context, constant.ContextKeyVideoAssetReferences, map[string]string{
+		"asset-local": "asset-upstream",
+	})
+
+	body, err := (&TaskAdaptor{}).BuildRequestBody(context, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{},
+	})
+
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"url":"asset://asset-upstream"`)
 }

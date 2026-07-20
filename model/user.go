@@ -440,6 +440,9 @@ func HardDeleteUserById(id int) error {
 		if err := DeletePlaygroundAssetsByUser(tx, id); err != nil {
 			return err
 		}
+		if err := DeleteVideoAssetsByUser(tx, id); err != nil {
+			return err
+		}
 		return tx.Unscoped().Delete(&User{}, "id = ?", id).Error
 	})
 }

@@ -117,6 +117,18 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		return service.TaskErrorWrapperLocal(fmt.Errorf("this model only supports reference images"), "invalid_media", http.StatusBadRequest)
 	}
 	for _, imageURL := range req.Images {
+		if strings.HasPrefix(imageURL, "asset://") {
+			assetID := strings.TrimPrefix(imageURL, "asset://")
+			resolvedValue, ok := common.GetContextKey(c, constant.ContextKeyVideoAssetReferences)
+			if !ok {
+				return service.TaskErrorWrapperLocal(fmt.Errorf("video asset reference is not available"), "invalid_images", http.StatusBadRequest)
+			}
+			resolved, ok := resolvedValue.(map[string]string)
+			if !ok || resolved[assetID] == "" {
+				return service.TaskErrorWrapperLocal(fmt.Errorf("video asset reference is not available"), "invalid_images", http.StatusBadRequest)
+			}
+			continue
+		}
 		if err = taskcommon.ValidateMediaURL(imageURL, false, taskcommon.MediaURLPortPolicyEnforceConfigured); err != nil {
 			return service.TaskErrorWrapperLocal(fmt.Errorf("invalid reference image: %w", err), "invalid_images", http.StatusBadRequest)
 		}
@@ -272,6 +284,18 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	assetContext, cancelAssetPreparation := context.WithTimeout(assetContext, a.assetPreparationMaxWait())
 	defer cancelAssetPreparation()
 	for _, imageURL := range req.Images {
+		if strings.HasPrefix(imageURL, "asset://") {
+			assetID := strings.TrimPrefix(imageURL, "asset://")
+			resolvedValue, ok := common.GetContextKey(c, constant.ContextKeyVideoAssetReferences)
+			resolved, resolvedOK := resolvedValue.(map[string]string)
+			if !ok || !resolvedOK || resolved[assetID] == "" {
+				return nil, errors.New("video asset reference is not available")
+			}
+			body.Content = append(body.Content, contentItem{Type: "image_url", ImageURL: &struct {
+				URL string `json:"url"`
+			}{URL: "asset://" + resolved[assetID]}, Role: "reference_image"})
+			continue
+		}
 		assetID, uploadErr := a.createImageAsset(assetContext, info, imageURL)
 		if uploadErr != nil {
 			return nil, uploadErr

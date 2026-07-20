@@ -14,9 +14,12 @@
         --muted: #5f6b7c;
         --border: #d8dee9;
         --accent: #166534;
+        --accent-strong: #104d29;
         --accent-soft: #eaf6ee;
         --warning: #8a4b08;
         --warning-soft: #fff5e6;
+        --method-post: #166534;
+        --method-get: #1d4ed8;
         --code: #111827;
         --code-text: #e5edf7;
       }
@@ -60,6 +63,14 @@
 
       header > div {
         padding: 40px 0 32px;
+      }
+
+      .eyebrow {
+        margin: 0 0 8px;
+        color: var(--accent);
+        font-size: 13px;
+        font-weight: 700;
+        text-transform: uppercase;
       }
 
       h1,
@@ -120,6 +131,17 @@
         color: var(--text);
       }
 
+      nav a:focus-visible {
+        border-radius: 3px;
+        outline: 2px solid var(--accent);
+        outline-offset: 4px;
+      }
+
+      nav a[href='#video-dddd'] {
+        color: var(--accent);
+        font-weight: 700;
+      }
+
       main {
         background: var(--surface);
       }
@@ -127,6 +149,31 @@
       section {
         padding: 36px 0;
         border-bottom: 1px solid var(--border);
+        scroll-margin-top: 64px;
+      }
+
+      .section-heading {
+        max-width: 760px;
+        margin-bottom: 24px;
+      }
+
+      .section-heading p:last-child {
+        color: var(--muted);
+      }
+
+      .group-section {
+        position: relative;
+      }
+
+      .group-section::before {
+        position: absolute;
+        top: 0;
+        right: calc(50% - 50vw);
+        bottom: 0;
+        left: calc(50% - 50vw);
+        z-index: -1;
+        background: color-mix(in srgb, var(--accent-soft) 34%, var(--surface));
+        content: '';
       }
 
       code {
@@ -206,6 +253,85 @@
         padding-left: 22px;
       }
 
+      .endpoint {
+        display: flex;
+        align-items: center;
+        width: fit-content;
+        max-width: 100%;
+        margin: 16px 0 12px;
+        overflow: hidden;
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        background: var(--background);
+      }
+
+      .endpoint .method {
+        align-self: stretch;
+        display: inline-flex;
+        align-items: center;
+        padding: 8px 10px;
+        color: #f7fff9;
+        font-size: 12px;
+        font-weight: 750;
+      }
+
+      .endpoint .method.post {
+        background: var(--method-post);
+      }
+
+      .endpoint .method.get {
+        background: var(--method-get);
+      }
+
+      .endpoint code {
+        padding: 7px 11px;
+        overflow-x: auto;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        white-space: nowrap;
+      }
+
+      .workflow {
+        margin: 18px 0 28px;
+        padding: 0;
+        border-top: 1px solid var(--border);
+        list-style: none;
+        counter-reset: workflow;
+      }
+
+      .workflow li {
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr);
+        gap: 12px;
+        padding: 14px 0;
+        border-bottom: 1px solid var(--border);
+        counter-increment: workflow;
+      }
+
+      .workflow li::before {
+        display: grid;
+        width: 28px;
+        height: 28px;
+        place-items: center;
+        border-radius: 50%;
+        background: var(--accent-strong);
+        color: #f7fff9;
+        content: counter(workflow);
+        font-size: 13px;
+        font-weight: 750;
+      }
+
+      .workflow strong {
+        display: block;
+        margin-bottom: 2px;
+      }
+
+      .workflow p {
+        margin: 0;
+        color: var(--muted);
+      }
+
       footer {
         color: var(--muted);
       }
@@ -223,9 +349,12 @@
           --muted: #a8b3c2;
           --border: #344052;
           --accent: #71d391;
+          --accent-strong: #2f8a4e;
           --accent-soft: #173224;
           --warning: #f1b665;
           --warning-soft: #3b2a16;
+          --method-post: #287943;
+          --method-get: #315db5;
           --code: #090d13;
           --code-text: #e5edf7;
         }
@@ -250,12 +379,17 @@
         section {
           padding: 30px 0;
         }
+
+        .endpoint {
+          width: 100%;
+        }
       }
     </style>
   </head>
   <body>
     <header>
       <div>
+        <p class="eyebrow">API Reference</p>
         <h1>VP 统一图片与视频 API 文档</h1>
         <p class="lede">
           用户始终通过 VP
@@ -270,6 +404,7 @@
         <a href="#start">接入准备</a>
         <a href="#images">图片生成</a>
         <a href="#videos">视频通用流程</a>
+        <a href="#video-dddd">video-dddd 专区</a>
         <a href="#video-parameters">视频模型能力</a>
         <a href="#errors">错误处理</a>
       </div>
@@ -699,6 +834,298 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
         </p>
       </section>
 
+      <section id="video-dddd" class="group-section">
+        <div class="section-heading">
+          <p class="eyebrow">Dedicated integration</p>
+          <h2><code>video-dddd</code> 专区</h2>
+          <p>
+            本栏目只适用于绑定到 <code>video-dddd</code> 分组的 API
+            Key，集中说明 dddd 视频模型、素材库和计费方式。请求体不要传
+            <code>group</code>。
+          </p>
+        </div>
+
+        <div class="note">
+          <strong>先确认分组：</strong>使用当前 Key 调用
+          <code>GET /v1/models</code>。响应中应至少包含一个
+          <code>dreamina-seedance-2-0-*</code> 模型；否则请检查 Key
+          的分组和模型权限。
+        </div>
+
+        <h3>模型与限制</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>模型</th>
+                <th>时长</th>
+                <th>清晰度</th>
+                <th>参考素材</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>dreamina-seedance-2-0-fast-hc</code></td>
+                <td>4–15 秒</td>
+                <td><code>480p/720p</code></td>
+                <td>最多 4 张图片</td>
+              </tr>
+              <tr>
+                <td><code>dreamina-seedance-2-0-hc</code></td>
+                <td>4–15 秒</td>
+                <td><code>480p/720p/1080p/4k</code></td>
+                <td>最多 4 张图片</td>
+              </tr>
+              <tr>
+                <td><code>dreamina-seedance-2-0-mini-hc</code></td>
+                <td>4–15 秒</td>
+                <td><code>480p/720p</code></td>
+                <td>最多 4 张图片</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="warning">
+          <strong>时长必须为 4–15 秒。</strong>例如 3 秒请求会返回
+          <code>400 invalid_duration</code>。三个模型都支持
+          <code>generate_audio</code> 和 <code>watermark</code>。
+        </div>
+
+        <h3>素材库接入流程</h3>
+        <ol class="workflow">
+          <li>
+            <div>
+              <strong>准备素材 URL</strong>
+              <p>
+                使用本站上传接口或管理员批准的 HTTPS 素材域名，获得受控的素材
+                URL。
+              </p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>创建并查询素材</strong>
+              <p>
+                注册素材 URL，保存返回的 ID，并等待 <code>Status</code> 变为
+                <code>Active</code>。
+              </p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>生成视频</strong>
+              <p>
+                将图片素材写成
+                <code>asset://&lt;Id&gt;</code>，放入统一视频请求的
+                <code>images</code> 数组。
+              </p>
+            </div>
+          </li>
+        </ol>
+
+        <h3>1. 准备受控素材 URL</h3>
+        <p>
+          本地文件先上传到本站临时素材接口。响应中的
+          <code>data.url</code> 是可用于下一步的 HTTPS 地址，有效期为 24 小时。
+        </p>
+        <pre><code>curl "$BASE_URL/pg/assets" \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "kind=image" \
+  -F "file=@./reference.png"</code></pre>
+        <p>
+          <code>kind</code> 可为 <code>image</code>、<code>video</code> 或
+          <code>audio</code>。若使用自有对象存储或
+          CDN，素材域名必须先由管理员加入可信域名列表； 任意第三方 URL
+          不会直接转交上游抓取。
+        </p>
+
+        <h3>2. 创建素材</h3>
+        <p>
+          创建接口为 <strong>POST /v1/sd/assets</strong>。接口使用当前
+          <code>video-dddd</code> API Key 鉴权，并返回仅属于当前账户的本站素材
+          ID。
+        </p>
+        <div class="endpoint" aria-label="POST /v1/sd/assets">
+          <span class="method post">POST</span><code>/v1/sd/assets</code>
+        </div>
+        <pre><code>curl "$BASE_URL/v1/sd/assets" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "URL": "https://vp.735678.xyz/pg/assets/&lt;upload_id&gt;/reference.png",
+    "Name": "avatar_front",
+    "AssetType": "Image"
+  }'</code></pre>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>字段</th>
+                <th>类型</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>URL</code></td>
+                <td>string</td>
+                <td>
+                  必填，管理员批准域名下的 HTTPS 素材地址（仅默认 443 端口）
+                </td>
+              </tr>
+              <tr>
+                <td><code>Name</code></td>
+                <td>string</td>
+                <td>必填，1–128 个字符的素材名称</td>
+              </tr>
+              <tr>
+                <td><code>AssetType</code></td>
+                <td>string</td>
+                <td>
+                  <code>Image</code>、<code>Video</code> 或 <code>Audio</code>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>创建成功响应：</p>
+        <pre><code>{
+  "success": true,
+  "data": {
+    "Id": "asset-N3w8cK7pQ2mR5tV9xY4zA6bD",
+    "base_resp": {
+      "status_code": 0,
+      "status_msg": "success"
+    }
+  }
+}</code></pre>
+        <div class="note">
+          <strong>保存 <code>data.Id</code>。</strong>这是 VP 生成的账户级素材
+          ID，不是上游 ID。其他用户的素材 ID、上游原始 ID或未经过本站创建的
+          <code>asset://</code> 引用均不可使用。
+        </div>
+
+        <h3>3. 查询素材</h3>
+        <p>
+          查询接口为 <strong>GET /v1/sd/assets/{asset_id}</strong>。路径中的
+          <code>asset_id</code> 使用创建响应里的 <code>data.Id</code>。
+        </p>
+        <div class="endpoint" aria-label="GET /v1/sd/assets/{asset_id}">
+          <span class="method get">GET</span
+          ><code>/v1/sd/assets/{asset_id}</code>
+        </div>
+        <pre><code>ASSET_ID="asset-N3w8cK7pQ2mR5tV9xY4zA6bD"
+
+curl "$BASE_URL/v1/sd/assets/$ASSET_ID" \
+  -H "Authorization: Bearer $API_KEY"</code></pre>
+
+        <p>素材可用时的响应：</p>
+        <pre><code>{
+  "success": true,
+  "data": {
+    "Id": "asset-N3w8cK7pQ2mR5tV9xY4zA6bD",
+    "Status": "Active",
+    "AssetType": "Image",
+    "Name": "avatar_front",
+    "URL": "https://vp.735678.xyz/pg/assets/&lt;upload_id&gt;/reference.png",
+    "GroupId": null,
+    "CreateTime": "2026-07-04T12:15:34Z",
+    "UpdateTime": "2026-07-04T12:15:36Z",
+    "base_resp": {
+      "status_code": 0,
+      "status_msg": "success"
+    }
+  }
+}</code></pre>
+        <p>
+          建议每 2 秒查询一次，直到 <code>Status</code> 为
+          <code>Active</code> 后再提交视频任务。 若返回
+          404，请确认素材由当前账户创建，并且查询时仍使用
+          <code>video-dddd</code> 分组的 API Key。
+        </p>
+
+        <h3>4. 在视频请求中引用图片素材</h3>
+        <p>
+          将素材 ID 加上 <code>asset://</code> 前缀后放入
+          <code>images</code>。本站会校验素材归属，
+          并自动固定到创建该素材的上游渠道。
+        </p>
+        <pre><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "dreamina-seedance-2-0-mini-hc",
+    "prompt": "让人物自然转身并看向镜头",
+    "seconds": 4,
+    "aspect_ratio": "9:16",
+    "resolution": "480p",
+    "images": [
+      "asset://asset-N3w8cK7pQ2mR5tV9xY4zA6bD"
+    ],
+    "generate_audio": false,
+    "watermark": false
+  }'</code></pre>
+        <div class="warning">
+          <strong>当前统一视频接口只接受 <code>Image</code> 素材引用。</strong>
+          <code>Video</code> 和
+          <code>Audio</code> 可通过素材库创建与查询，但暂时不能放入
+          <code>video-dddd</code> 的 <code>images/videos/audios</code> 参数。
+        </div>
+
+        <h3>三个模型的直接请求示例</h3>
+        <p><code>dreamina-seedance-2-0-fast-hc</code>：</p>
+        <pre><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "dreamina-seedance-2-0-fast-hc",
+    "prompt": "海边日落，镜头缓慢向前推进",
+    "seconds": 8,
+    "aspect_ratio": "16:9",
+    "resolution": "720p",
+    "generate_audio": false,
+    "watermark": false
+  }'</code></pre>
+
+        <p><code>dreamina-seedance-2-0-hc</code> 支持 1080p 和 4K：</p>
+        <pre><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "dreamina-seedance-2-0-hc",
+    "prompt": "人物转身看向镜头，背景灯光缓慢变化",
+    "seconds": 8,
+    "aspect_ratio": "16:9",
+    "resolution": "1080p",
+    "generate_audio": false,
+    "watermark": false
+  }'</code></pre>
+
+        <p><code>dreamina-seedance-2-0-mini-hc</code> 的低成本测试：</p>
+        <pre><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "dreamina-seedance-2-0-mini-hc",
+    "prompt": "纸飞机在清晨天空中缓慢飞行",
+    "seconds": 4,
+    "aspect_ratio": "9:16",
+    "resolution": "480p",
+    "generate_audio": false,
+    "watermark": false
+  }'</code></pre>
+
+        <h3>计费</h3>
+        <p>
+          <code>video-dddd</code> 在提交时预扣额度，并在任务完成后按
+          <code>usage.total_tokens</code
+          >、模型倍率、分组倍率、清晰度和参考图档位重新结算。
+          多扣部分自动退回，少扣部分自动补扣；任务失败会退回预扣额度。当前倍率和价格以控制台定价页为准。
+        </p>
+      </section>
+
       <section id="video-parameters">
         <h2>视频模型能力</h2>
         <p>
@@ -791,12 +1218,6 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
           </table>
         </div>
 
-        <div class="warning">
-          <strong><code>video-dddd</code> 时长限制：</strong
-          ><code>seconds</code> 必须为 4–15 秒。3 秒请求会返回
-          <code>400 invalid_duration</code>。
-        </div>
-
         <h3><code>grok按次</code> 请求示例</h3>
         <p><code>grok-image-video</code> 支持文生视频和最多 7 张参考图：</p>
         <pre><code>curl "$BASE_URL/v1/videos" \
@@ -825,50 +1246,6 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
     "aspect_ratio": "9:16",
     "resolution": "720p",
     "images": ["https://example.com/person.jpg"]
-  }'</code></pre>
-
-        <h3><code>video-dddd</code> 请求示例</h3>
-        <p><code>dreamina-seedance-2-0-fast-hc</code>：</p>
-        <pre><code>curl "$BASE_URL/v1/videos" \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "dreamina-seedance-2-0-fast-hc",
-    "prompt": "海边日落，镜头缓慢向前推进",
-    "seconds": 8,
-    "aspect_ratio": "16:9",
-    "resolution": "720p",
-    "generate_audio": false,
-    "watermark": false
-  }'</code></pre>
-
-        <p><code>dreamina-seedance-2-0-hc</code> 支持 1080p 和 4K：</p>
-        <pre><code>curl "$BASE_URL/v1/videos" \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "dreamina-seedance-2-0-hc",
-    "prompt": "人物转身看向镜头，背景灯光缓慢变化",
-    "seconds": 8,
-    "aspect_ratio": "16:9",
-    "resolution": "1080p",
-    "images": ["https://example.com/reference.jpg"],
-    "generate_audio": false,
-    "watermark": false
-  }'</code></pre>
-
-        <p><code>dreamina-seedance-2-0-mini-hc</code>：</p>
-        <pre><code>curl "$BASE_URL/v1/videos" \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "dreamina-seedance-2-0-mini-hc",
-    "prompt": "纸飞机在清晨天空中缓慢飞行",
-    "seconds": 4,
-    "aspect_ratio": "9:16",
-    "resolution": "720p",
-    "generate_audio": false,
-    "watermark": false
   }'</code></pre>
 
         <h3><code>sd-video</code> 请求示例</h3>
@@ -945,12 +1322,6 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
           <code>images/videos/audios</code>。<code>sd2.0-903</code> 与
           <code>sd2.0fast-903</code>
           不支持参考视频；传音频时至少同时传一张参考图。
-        </p>
-
-        <h3><code>video-dddd</code> 计费</h3>
-        <p>
-          该分组在任务完成后按实际 token
-          用量结算。参考图和清晰度会影响计费档位，当前倍率和价格以控制台定价页为准。
         </p>
 
         <h3>上传本地参考素材</h3>

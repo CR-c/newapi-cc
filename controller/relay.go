@@ -510,6 +510,14 @@ func RelayTask(c *gin.Context) {
 		})
 		return
 	}
+	if assetChannelID := common.GetContextKeyInt(c, constant.ContextKeyVideoAssetChannelId); assetChannelID > 0 {
+		assetChannel, channelErr := model.CacheGetChannel(assetChannelID)
+		if channelErr != nil || assetChannel == nil {
+			respondTaskError(c, service.TaskErrorWrapperLocal(errors.New("video asset channel is unavailable"), "video_asset_channel_unavailable", http.StatusBadRequest))
+			return
+		}
+		relayInfo.LockedChannel = assetChannel
+	}
 
 	if taskErr := relay.ResolveOriginTask(c, relayInfo); taskErr != nil {
 		respondTaskError(c, taskErr)
@@ -670,6 +678,9 @@ func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 
 func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError, retryTimes int) bool {
 	if taskErr == nil {
+		return false
+	}
+	if common.GetContextKeyInt(c, constant.ContextKeyVideoAssetChannelId) > 0 {
 		return false
 	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {

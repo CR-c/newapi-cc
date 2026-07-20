@@ -116,6 +116,14 @@ func UploadRateLimit() func(c *gin.Context) {
 	return rateLimitFactory(common.UploadRateLimitNum, common.UploadRateLimitDuration, "UP")
 }
 
+func VideoAssetCreateRateLimit() func(c *gin.Context) {
+	return userRateLimitFactory(20, 60, "VAC")
+}
+
+func VideoAssetQueryRateLimit() func(c *gin.Context) {
+	return userRateLimitFactory(120, 60, "VAQ")
+}
+
 // userRateLimitFactory creates a rate limiter keyed by authenticated user ID
 // instead of client IP, making it resistant to proxy rotation attacks.
 // Must be used AFTER authentication middleware (UserAuth).
