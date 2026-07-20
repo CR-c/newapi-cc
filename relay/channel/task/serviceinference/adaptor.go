@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
@@ -58,6 +60,7 @@ type assetResponse struct {
 	Success bool `json:"success"`
 	Data    struct {
 		ID       string `json:"Id"`
+		Status   string `json:"Status"`
 		BaseResp struct {
 			StatusCode int    `json:"status_code"`
 			StatusMsg  string `json:"status_msg"`
@@ -69,12 +72,20 @@ type TaskAdaptor struct {
 	taskcommon.BaseBilling
 	apiKey  string
 	baseURL string
+
+	assetPollInterval time.Duration
+	assetMaxPolls     int
+	assetMaxWait      time.Duration
 }
 
 const (
-	minDurationSeconds     = 4
-	maxDurationSeconds     = 15
-	defaultDurationSeconds = 4
+	minDurationSeconds                  = 4
+	maxDurationSeconds                  = 15
+	defaultDurationSeconds              = 4
+	serviceInferenceAssetPollInterval   = 500 * time.Millisecond
+	serviceInferenceAssetMaxPolls       = 30
+	serviceInferenceAssetMaxWait        = 20 * time.Second
+	serviceInferenceAssetResponseMaxLen = 1 << 20
 )
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
@@ -254,8 +265,14 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			body.Ratio = ratio
 		}
 	}
+	assetContext := context.Background()
+	if c != nil && c.Request != nil {
+		assetContext = c.Request.Context()
+	}
+	assetContext, cancelAssetPreparation := context.WithTimeout(assetContext, a.assetPreparationMaxWait())
+	defer cancelAssetPreparation()
 	for _, imageURL := range req.Images {
-		assetID, uploadErr := a.createImageAsset(c, info, imageURL)
+		assetID, uploadErr := a.createImageAsset(assetContext, info, imageURL)
 		if uploadErr != nil {
 			return nil, uploadErr
 		}
@@ -270,7 +287,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	return bytes.NewReader(data), nil
 }
 
-func (a *TaskAdaptor) createImageAsset(c *gin.Context, info *relaycommon.RelayInfo, imageURL string) (string, error) {
+func (a *TaskAdaptor) createImageAsset(ctx context.Context, info *relaycommon.RelayInfo, imageURL string) (string, error) {
 	payload := map[string]string{
 		"URL": imageURL, "Name": "playground-reference", "AssetType": "Image",
 	}
@@ -278,11 +295,7 @@ func (a *TaskAdaptor) createImageAsset(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return "", err
 	}
-	requestContext := context.Background()
-	if c != nil && c.Request != nil {
-		requestContext = c.Request.Context()
-	}
-	req, err := http.NewRequestWithContext(requestContext, http.MethodPost, a.baseURL+"/v1/sd/assets", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/v1/sd/assets", bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
@@ -301,10 +314,16 @@ func (a *TaskAdaptor) createImageAsset(c *gin.Context, info *relaycommon.RelayIn
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		if ctx.Err() != nil {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return "", errors.New("reference asset preparation timed out")
+			}
+			return "", errors.New("reference asset preparation canceled")
+		}
+		return "", errors.New("asset upload failed")
 	}
-	defer resp.Body.Close()
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, serviceInferenceAssetResponseMaxLen))
+	_ = resp.Body.Close()
 	if err != nil {
 		return "", err
 	}
@@ -318,8 +337,126 @@ func (a *TaskAdaptor) createImageAsset(c *gin.Context, info *relaycommon.RelayIn
 	if !result.Success || result.Data.BaseResp.StatusCode != 0 || result.Data.ID == "" {
 		return "", errors.New("asset upload failed")
 	}
+	if err = a.waitForImageAsset(ctx, client, result.Data.ID); err != nil {
+		return "", err
+	}
 	return result.Data.ID, nil
 }
+
+func (a *TaskAdaptor) waitForImageAsset(ctx context.Context, client *http.Client, assetID string) error {
+	readinessCtx, cancel := context.WithTimeout(ctx, a.assetPreparationMaxWait())
+	defer cancel()
+
+	pollInterval := a.assetPollInterval
+	if pollInterval <= 0 {
+		pollInterval = serviceInferenceAssetPollInterval
+	}
+	maxPolls := a.assetMaxPolls
+	if maxPolls <= 0 {
+		maxPolls = serviceInferenceAssetMaxPolls
+	}
+
+	lastResult := ""
+	for poll := 1; poll <= maxPolls; poll++ {
+		status, retryable, err := a.getImageAssetStatus(readinessCtx, client, assetID)
+		if err != nil {
+			if ctx.Err() != nil {
+				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					logger.LogWarn(ctx, "service-inference asset readiness timed out: category=preparation_deadline")
+					return errors.New("reference asset processing timed out")
+				}
+				return errors.New("asset readiness check canceled")
+			}
+			if readinessCtx.Err() != nil {
+				logger.LogWarn(ctx, "service-inference asset readiness timed out: category=request_deadline")
+				return errors.New("reference asset processing timed out")
+			}
+			if !retryable {
+				logger.LogWarn(ctx, "service-inference asset readiness failed: category=permanent_status_error")
+				return errors.New("asset readiness check failed")
+			}
+			lastResult = "transient_status_error"
+		} else {
+			lastResult = strings.ToLower(strings.TrimSpace(status))
+		}
+
+		switch lastResult {
+		case "active":
+			return nil
+		case "failed", "error":
+			logger.LogWarn(ctx, "service-inference asset readiness failed: category=terminal_status")
+			return errors.New("reference asset processing failed")
+		case "processing", "pending", "transient_status_error":
+			if poll == maxPolls {
+				break
+			}
+		default:
+			logger.LogWarn(ctx, "service-inference asset readiness failed: category=unsupported_status")
+			return errors.New("reference asset processing failed")
+		}
+
+		select {
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				logger.LogWarn(ctx, "service-inference asset readiness timed out: category=preparation_wait_deadline")
+				return errors.New("reference asset processing timed out")
+			}
+			return errors.New("asset readiness check canceled")
+		case <-readinessCtx.Done():
+			logger.LogWarn(ctx, "service-inference asset readiness timed out: category=wait_deadline")
+			return errors.New("reference asset processing timed out")
+		case <-time.After(pollInterval):
+		}
+	}
+
+	logger.LogWarn(ctx, fmt.Sprintf("service-inference asset readiness timed out after %d polls: last_result=%s", maxPolls, lastResult))
+	return errors.New("reference asset processing timed out")
+}
+
+func (a *TaskAdaptor) assetPreparationMaxWait() time.Duration {
+	if a.assetMaxWait > 0 {
+		return a.assetMaxWait
+	}
+	return serviceInferenceAssetMaxWait
+}
+
+func (a *TaskAdaptor) getImageAssetStatus(ctx context.Context, client *http.Client, assetID string) (string, bool, error) {
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		a.baseURL+"/v1/sd/assets/"+url.PathEscape(assetID),
+		nil,
+	)
+	if err != nil {
+		return "", false, errors.New("build status request failed")
+	}
+	req.Header.Set("Authorization", "Bearer "+a.apiKey)
+
+	resp, err := client.Do(req)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
+	if err != nil {
+		return "", true, errors.New("status request failed")
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		retryable := resp.StatusCode >= http.StatusInternalServerError || resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusTooManyRequests
+		return "", retryable, fmt.Errorf("status request returned %d", resp.StatusCode)
+	}
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, serviceInferenceAssetResponseMaxLen))
+	if err != nil {
+		return "", true, errors.New("read status response failed")
+	}
+	var result assetResponse
+	if common.Unmarshal(responseBody, &result) != nil || !result.Success || result.Data.BaseResp.StatusCode != 0 {
+		return "", false, errors.New("invalid status response")
+	}
+	if strings.TrimSpace(result.Data.Status) == "" {
+		return "", false, errors.New("empty asset status")
+	}
+	return result.Data.Status, false, nil
+}
+
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, body io.Reader) (*http.Response, error) {
 	return channel.DoTaskApiRequest(a, c, info, body)
 }

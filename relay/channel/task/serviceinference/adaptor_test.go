@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -20,7 +21,12 @@ func TestBuildRequestBodyUploadsImagesAndPreservesOptionalParameters(t *testing.
 	gin.SetMode(gin.TestMode)
 	assetRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/v1/sd/assets" {
+		if request.Method == http.MethodGet && request.URL.Path == "/v1/sd/assets/asset-created" {
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"Id":"asset-created","Status":"Active","base_resp":{"status_code":0,"status_msg":"success"}}}`))
+			return
+		}
+		if request.Method != http.MethodPost || request.URL.Path != "/v1/sd/assets" {
 			http.NotFound(writer, request)
 			return
 		}
@@ -40,7 +46,10 @@ func TestBuildRequestBodyUploadsImagesAndPreservesOptionalParameters(t *testing.
 		Images:        []string{"https://example.com/reference.png"},
 		GenerateAudio: &generateAudio, Watermark: &watermark,
 	})
-	adaptor := &TaskAdaptor{baseURL: server.URL, apiKey: "test-key"}
+	adaptor := &TaskAdaptor{
+		baseURL: server.URL, apiKey: "test-key",
+		assetPollInterval: time.Millisecond,
+	}
 	body, err := adaptor.BuildRequestBody(context, &relaycommon.RelayInfo{
 		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "dreamina-seedance-2-0-hc"},
 	})
@@ -61,6 +70,206 @@ func TestBuildRequestBodyUploadsImagesAndPreservesOptionalParameters(t *testing.
 	require.NotNil(t, payload.Content[1].ImageURL)
 	assert.Equal(t, "asset://asset-created", payload.Content[1].ImageURL.URL)
 	assert.Equal(t, "reference_image", payload.Content[1].Role)
+}
+
+func TestBuildRequestBodyWaitsForReferenceAssetToBecomeActive(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	requests := make([]string, 0, 3)
+	statusRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/sd/assets":
+			requests = append(requests, "create")
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"Id":"asset-created","base_resp":{"status_code":0,"status_msg":"success"}}}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sd/assets/asset-created":
+			requests = append(requests, "status")
+			statusRequests++
+			status := "Processing"
+			if statusRequests > 1 {
+				status = "Active"
+			}
+			_, _ = fmt.Fprintf(writer, `{"success":true,"data":{"Id":"asset-created","Status":%q,"base_resp":{"status_code":0,"status_msg":"success"}}}`, status)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Set("task_request", relaycommon.TaskSubmitReq{
+		Model: "dreamina-seedance-2-0-hc", Prompt: "animate", Duration: 5,
+		Images: []string{"https://example.com/reference.png"},
+	})
+	adaptor := &TaskAdaptor{
+		baseURL: server.URL, apiKey: "test-key",
+		assetPollInterval: time.Millisecond,
+	}
+
+	body, err := adaptor.BuildRequestBody(context, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "dreamina-seedance-2-0-hc"},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"create", "status", "status"}, requests)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"url":"asset://asset-created"`)
+}
+
+func TestWaitForImageAssetStopsOnFailureAndTimeout(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    string
+		maxPolls  int
+		wantError string
+		wantPolls int
+	}{
+		{
+			name: "terminal failure", status: "Failed", maxPolls: 3,
+			wantError: "reference asset processing failed", wantPolls: 1,
+		},
+		{
+			name: "processing timeout", status: "Processing", maxPolls: 2,
+			wantError: "reference asset processing timed out", wantPolls: 2,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			polls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				polls++
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(writer, `{"success":true,"data":{"Id":"asset-created","Status":%q,"base_resp":{"status_code":0,"status_msg":"success"}}}`, test.status)
+			}))
+			defer server.Close()
+
+			adaptor := &TaskAdaptor{
+				baseURL: server.URL, apiKey: "test-key",
+				assetPollInterval: time.Millisecond,
+				assetMaxPolls:     test.maxPolls,
+			}
+
+			err := adaptor.waitForImageAsset(t.Context(), server.Client(), "asset-created")
+
+			require.EqualError(t, err, test.wantError)
+			assert.Equal(t, test.wantPolls, polls)
+		})
+	}
+}
+
+func TestWaitForImageAssetStopsOnPermanentHTTPError(t *testing.T) {
+	polls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		polls++
+		http.Error(writer, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	adaptor := &TaskAdaptor{
+		baseURL: server.URL, apiKey: "test-key",
+		assetPollInterval: time.Millisecond,
+		assetMaxPolls:     30,
+	}
+
+	err := adaptor.waitForImageAsset(t.Context(), server.Client(), "asset-created")
+
+	require.EqualError(t, err, "asset readiness check failed")
+	assert.Equal(t, 1, polls)
+}
+
+func TestWaitForImageAssetBoundsBlockedStatusRequest(t *testing.T) {
+	requestCanceled := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		<-request.Context().Done()
+		close(requestCanceled)
+	}))
+	defer server.Close()
+	adaptor := &TaskAdaptor{
+		baseURL: server.URL, apiKey: "test-key",
+		assetPollInterval: time.Millisecond,
+		assetMaxPolls:     30,
+		assetMaxWait:      50 * time.Millisecond,
+	}
+
+	err := adaptor.waitForImageAsset(t.Context(), server.Client(), "asset-created")
+
+	require.EqualError(t, err, "reference asset processing timed out")
+	select {
+	case <-requestCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("blocked status request was not canceled by the readiness deadline")
+	}
+}
+
+func TestBuildRequestBodyBoundsBlockedAssetUpload(t *testing.T) {
+	releaseHandler := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		<-releaseHandler
+	}))
+	defer server.Close()
+	defer close(releaseHandler)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Set("task_request", relaycommon.TaskSubmitReq{
+		Model: "dreamina-seedance-2-0-hc", Prompt: "animate", Duration: 5,
+		Images: []string{"https://example.com/reference.png"},
+	})
+	adaptor := &TaskAdaptor{
+		baseURL: server.URL, apiKey: "test-key",
+		assetMaxWait: 50 * time.Millisecond,
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := adaptor.BuildRequestBody(context, &relaycommon.RelayInfo{
+			ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "dreamina-seedance-2-0-hc"},
+		})
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		require.EqualError(t, err, "reference asset preparation timed out")
+	case <-time.After(time.Second):
+		t.Fatal("blocked asset upload exceeded the preparation deadline")
+	}
+}
+
+func TestBuildRequestBodyBoundsBlockedAssetStatus(t *testing.T) {
+	releaseHandler := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodPost {
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"Id":"asset-created","base_resp":{"status_code":0,"status_msg":"success"}}}`))
+			return
+		}
+		<-releaseHandler
+	}))
+	defer server.Close()
+	defer close(releaseHandler)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Set("task_request", relaycommon.TaskSubmitReq{
+		Model: "dreamina-seedance-2-0-hc", Prompt: "animate", Duration: 5,
+		Images: []string{"https://example.com/reference.png"},
+	})
+	adaptor := &TaskAdaptor{
+		baseURL: server.URL, apiKey: "test-key",
+		assetPollInterval: time.Millisecond,
+		assetMaxWait:      50 * time.Millisecond,
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := adaptor.BuildRequestBody(context, &relaycommon.RelayInfo{
+			ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "dreamina-seedance-2-0-hc"},
+		})
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		require.EqualError(t, err, "reference asset processing timed out")
+	case <-time.After(time.Second):
+		t.Fatal("blocked asset status check exceeded the preparation deadline")
+	}
 }
 
 func TestBuildRequestBodyHidesAssetUploadFailureDetails(t *testing.T) {
