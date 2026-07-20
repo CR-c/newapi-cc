@@ -549,7 +549,81 @@ func TestCalculateProfitRecordForRatioModel(t *testing.T) {
 	assert.Equal(t, int64(-409374), record.ProfitMicros())
 }
 
-func TestDreaminaCostVariantsUseConfiguredBasePurchasePrice(t *testing.T) {
+func TestCalculateProfitRecordUsesTierPurchasePriceAndActualSaleBase(t *testing.T) {
+	previousQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500000
+	t.Cleanup(func() { common.QuotaPerUnit = previousQuotaPerUnit })
+
+	log := &Log{
+		RequestId: "req-video-tier",
+		Type:      LogTypeConsume,
+		ModelName: "doubao-seedance-2-0-260128",
+		Quota:     11200000,
+		Other: `{"model_price":-1,"model_ratio":23,"group_ratio":0.8,` +
+			`"cost_tier":"video:480p-720p:reference","other_multiplier":0.6086956521739131}`,
+	}
+	rule := &ModelCostRule{
+		ModelName:        "doubao-seedance-2-0-260128",
+		PurchasePriceCNY: 29.9,
+		CostTiers: ModelCostTiers{
+			{Key: "video:480p-720p:reference", Label: "480p/720p with video", PurchasePriceCNY: 18.2},
+		},
+	}
+
+	record, err := calculateProfitRecord(log, rule, false)
+	require.NoError(t, err)
+	assert.True(t, record.CostKnown)
+	assert.Equal(t, int64(18_200_000), record.CostMicros)
+}
+
+func TestCalculateProfitRecordFallsBackToBasePurchasePriceForUnknownTier(t *testing.T) {
+	previousQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500000
+	t.Cleanup(func() { common.QuotaPerUnit = previousQuotaPerUnit })
+
+	log := &Log{
+		RequestId: "req-video-tier-fallback",
+		Type:      LogTypeConsume,
+		ModelName: "video-model",
+		Quota:     500000,
+		Other:     `{"model_price":1,"group_ratio":1,"cost_tier":"video:unknown","other_multiplier":0.5}`,
+	}
+	rule := &ModelCostRule{
+		ModelName:        "video-model",
+		PurchasePriceCNY: 0.6,
+		CostTiers: ModelCostTiers{
+			{Key: "video:known", Label: "Known", PurchasePriceCNY: 0.4},
+		},
+	}
+
+	record, err := calculateProfitRecord(log, rule, false)
+	require.NoError(t, err)
+	assert.Equal(t, int64(600_000), record.CostMicros)
+}
+
+func TestValidateModelCostRuleRejectsInvalidCostTiers(t *testing.T) {
+	tests := []struct {
+		name  string
+		tiers ModelCostTiers
+	}{
+		{name: "empty key", tiers: ModelCostTiers{{Label: "Base", PurchasePriceCNY: 1}}},
+		{name: "empty label", tiers: ModelCostTiers{{Key: "video:base", PurchasePriceCNY: 1}}},
+		{name: "duplicate key", tiers: ModelCostTiers{
+			{Key: "video:base", Label: "Base", PurchasePriceCNY: 1},
+			{Key: " video:base ", Label: "Duplicate", PurchasePriceCNY: 2},
+		}},
+		{name: "invalid price", tiers: ModelCostTiers{{Key: "video:base", Label: "Base", PurchasePriceCNY: 0}}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rule := &ModelCostRule{ModelName: "video-model", PurchasePriceCNY: 1, CostTiers: test.tiers}
+			require.Error(t, validateModelCostRule(rule))
+		})
+	}
+}
+
+func TestDreaminaCostVariantsUseConfiguredTierPurchasePrice(t *testing.T) {
 	previousQuotaPerUnit := common.QuotaPerUnit
 	common.QuotaPerUnit = 500000
 	t.Cleanup(func() { common.QuotaPerUnit = previousQuotaPerUnit })
@@ -561,30 +635,34 @@ func TestDreaminaCostVariantsUseConfiguredBasePurchasePrice(t *testing.T) {
 		purchasePriceCNY float64
 		variantSalePrice float64
 		expectedCostCNY  float64
+		costTier         string
 	}{
-		{"hc-4k-no-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 4, 21.76},
-		{"hc-4k-with-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 2.4, 13.056},
-		{"hc-480p-no-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 7, 38.08},
-		{"hc-480p-with-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 4.3, 23.392},
-		{"hc-720p-no-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 7, 38.08},
-		{"hc-720p-with-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 4.3, 23.392},
-		{"hc-1080p-no-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 7.7, 41.888},
-		{"hc-1080p-with-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 4.7, 25.568},
-		{"fast-no-ref", "dreamina-seedance-2-0-fast-hc", 5.6, 30.464, 5.6, 30.464},
-		{"fast-with-ref", "dreamina-seedance-2-0-fast-hc", 5.6, 30.464, 3.3, 17.952},
-		{"mini-no-ref", "dreamina-seedance-2-0-mini-hc", 3.5, 19.04, 3.5, 19.04},
-		{"mini-with-ref", "dreamina-seedance-2-0-mini-hc", 3.5, 19.04, 2.1, 11.424},
+		{"hc-4k-no-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 4, 21.76, "video:4k:no-reference"},
+		{"hc-4k-with-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 2.4, 13.056, "video:4k:reference"},
+		{"hc-480p-no-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 7, 38.08, "video:480p-720p:no-reference"},
+		{"hc-480p-with-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 4.3, 23.392, "video:480p-720p:reference"},
+		{"hc-720p-no-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 7, 38.08, "video:480p-720p:no-reference"},
+		{"hc-720p-with-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 4.3, 23.392, "video:480p-720p:reference"},
+		{"hc-1080p-no-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 7.7, 41.888, "video:1080p:no-reference"},
+		{"hc-1080p-with-ref", "dreamina-seedance-2-0-hc", 7, 38.08, 4.7, 25.568, "video:1080p:reference"},
+		{"fast-no-ref", "dreamina-seedance-2-0-fast-hc", 5.6, 30.464, 5.6, 30.464, "video:480p-720p:no-reference"},
+		{"fast-with-ref", "dreamina-seedance-2-0-fast-hc", 5.6, 30.464, 3.3, 17.952, "video:480p-720p:reference"},
+		{"mini-no-ref", "dreamina-seedance-2-0-mini-hc", 3.5, 19.04, 3.5, 19.04, "video:480p-720p:no-reference"},
+		{"mini-with-ref", "dreamina-seedance-2-0-mini-hc", 3.5, 19.04, 2.1, 11.424, "video:480p-720p:reference"},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			quota := int(math.Round(500000 * test.variantSalePrice))
+			otherMultiplier := test.variantSalePrice / test.baseSalePrice
 			log := &Log{
 				RequestId: test.name, Type: LogTypeConsume, ModelName: test.model, Quota: quota,
-				Other: fmt.Sprintf(`{"model_price":-1,"model_ratio":%g,"group_ratio":1}`, test.baseSalePrice/2),
+				Other: fmt.Sprintf(`{"model_price":-1,"model_ratio":%g,"group_ratio":1,"cost_tier":%q,"other_multiplier":%g}`,
+					test.baseSalePrice/2, test.costTier, otherMultiplier),
 			}
 			rule := &ModelCostRule{
 				ModelName: test.model, PurchasePriceCNY: test.purchasePriceCNY,
+				CostTiers: ModelCostTiers{{Key: test.costTier, Label: test.name, PurchasePriceCNY: test.expectedCostCNY}},
 			}
 
 			record, err := calculateProfitRecord(log, rule, false)
@@ -698,8 +776,15 @@ func TestGetProfitCostModelNamesReturnsStableUnion(t *testing.T) {
 		{Group: "", Models: []string{"legacy-model", "upstream-model"}},
 	}, groups)
 
-	_, err = SaveModelCostRule(&ModelCostRule{ModelName: "sd-model", PurchasePriceCNY: 1})
+	savedRule, err := SaveModelCostRule(&ModelCostRule{
+		ModelName: "sd-model", PurchasePriceCNY: 1,
+		CostTiers: ModelCostTiers{{Key: "video:base", Label: "Base", PurchasePriceCNY: 0.65}},
+	})
 	assert.NoError(t, err)
+	require.NotNil(t, savedRule)
+	var persistedRule ModelCostRule
+	require.NoError(t, db.First(&persistedRule, savedRule.Id).Error)
+	assert.Equal(t, savedRule.CostTiers, persistedRule.CostTiers)
 
 	_, err = SaveModelCostRule(&ModelCostRule{ModelName: "not-in-list", PurchasePriceCNY: 1})
 	assert.ErrorContains(t, err, "model name is not available")

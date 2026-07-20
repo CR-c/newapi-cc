@@ -430,6 +430,8 @@ func TestTaskBillingOtherFiltersHistoricalOtherRatios(t *testing.T) {
 		"nan":      math.NaN(),
 		"inf":      math.Inf(1),
 	}
+	task.PrivateData.BillingContext.CostTier = "video:1080p:reference"
+	task.PrivateData.BillingContext.OtherMultiplier = 0.61
 
 	other := taskBillingOther(task)
 
@@ -442,6 +444,8 @@ func TestTaskBillingOtherFiltersHistoricalOtherRatios(t *testing.T) {
 	assert.Equal(t, "video", other["media_type"])
 	assert.Equal(t, task.TaskID, other["task_id"])
 	assert.Equal(t, int64(3), other["profit_generation"])
+	assert.Equal(t, "video:1080p:reference", other["cost_tier"])
+	assert.Equal(t, 0.61, other["other_multiplier"])
 }
 
 func TestLogTaskConsumptionRecordsVideoMetadata(t *testing.T) {

@@ -48,6 +48,10 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 		other["model_ratio"] = info.PriceData.ModelRatio
 	}
 	other["group_ratio"] = info.PriceData.GroupRatioInfo.GroupRatio
+	if info.CostTier != "" {
+		other["cost_tier"] = info.CostTier
+		other["other_multiplier"] = info.PriceData.OtherRatioMultiplier()
+	}
 	if info.ProfitGeneration != nil {
 		other["profit_generation"] = *info.ProfitGeneration
 	}
@@ -223,6 +227,18 @@ func taskBillingOther(task *model.Task, eventAllocation ...model.WalletAllocatio
 			other["model_ratio"] = bc.ModelRatio
 		}
 		other["group_ratio"] = bc.GroupRatio
+		if bc.CostTier != "" {
+			other["cost_tier"] = bc.CostTier
+			otherMultiplier := bc.OtherMultiplier
+			if otherMultiplier <= 0 {
+				if priceData := taskBillingContextPriceData(bc); priceData != nil {
+					otherMultiplier = priceData.OtherRatioMultiplier()
+				}
+			}
+			if otherMultiplier > 0 {
+				other["other_multiplier"] = otherMultiplier
+			}
+		}
 		if bc.ProfitGeneration != nil {
 			other["profit_generation"] = *bc.ProfitGeneration
 		}

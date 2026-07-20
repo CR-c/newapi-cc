@@ -2,6 +2,7 @@ package model
 
 import (
 	"crypto/sha256"
+	"database/sql/driver"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -28,19 +29,60 @@ var profitEpochMutex sync.RWMutex
 var ErrProfitBackfillInProgress = errors.New("profit backfill is already in progress")
 
 type ModelCostRule struct {
-	Id               int64   `json:"id" gorm:"primaryKey"`
-	ModelName        string  `json:"model_name" gorm:"type:varchar(191);index:idx_model_cost_rule,priority:1;uniqueIndex:idx_model_cost_rule_version,priority:1"`
-	PurchasePriceCNY float64 `json:"purchase_price_cny"`
-	Version          int     `json:"version" gorm:"index:idx_model_cost_rule,priority:2;uniqueIndex:idx_model_cost_rule_version,priority:2"`
-	Enabled          bool    `json:"enabled" gorm:"index"`
-	EffectiveFrom    int64   `json:"effective_from" gorm:"index"`
-	EffectiveTo      int64   `json:"effective_to" gorm:"index"`
-	CreatedAt        int64   `json:"created_at"`
-	UpdatedAt        int64   `json:"updated_at"`
+	Id               int64          `json:"id" gorm:"primaryKey"`
+	ModelName        string         `json:"model_name" gorm:"type:varchar(191);index:idx_model_cost_rule,priority:1;uniqueIndex:idx_model_cost_rule_version,priority:1"`
+	PurchasePriceCNY float64        `json:"purchase_price_cny"`
+	CostTiers        ModelCostTiers `json:"cost_tiers" gorm:"type:text"`
+	Version          int            `json:"version" gorm:"index:idx_model_cost_rule,priority:2;uniqueIndex:idx_model_cost_rule_version,priority:2"`
+	Enabled          bool           `json:"enabled" gorm:"index"`
+	EffectiveFrom    int64          `json:"effective_from" gorm:"index"`
+	EffectiveTo      int64          `json:"effective_to" gorm:"index"`
+	CreatedAt        int64          `json:"created_at"`
+	UpdatedAt        int64          `json:"updated_at"`
 
 	UpstreamPriceUSD float64 `json:"-" gorm:"column:upstream_price_usd;->;-:migration"`
 	ExchangeRate     float64 `json:"-" gorm:"column:exchange_rate;->;-:migration"`
 	Discount         float64 `json:"-" gorm:"column:discount;->;-:migration"`
+}
+
+type ModelCostTier struct {
+	Key              string  `json:"key"`
+	Label            string  `json:"label"`
+	PurchasePriceCNY float64 `json:"purchase_price_cny"`
+}
+
+type ModelCostTiers []ModelCostTier
+
+func (tiers ModelCostTiers) Value() (driver.Value, error) {
+	if len(tiers) == 0 {
+		return nil, nil
+	}
+	data, err := common.Marshal(tiers)
+	if err != nil {
+		return nil, err
+	}
+	return string(data), nil
+}
+
+func (tiers *ModelCostTiers) Scan(value interface{}) error {
+	if value == nil {
+		*tiers = nil
+		return nil
+	}
+	var data []byte
+	switch typed := value.(type) {
+	case []byte:
+		data = append([]byte(nil), typed...)
+	case string:
+		data = []byte(typed)
+	default:
+		return fmt.Errorf("unsupported cost tiers database type %T", value)
+	}
+	if len(data) == 0 {
+		*tiers = nil
+		return nil
+	}
+	return common.Unmarshal(data, tiers)
 }
 
 type ProfitCostModelGroup struct {
@@ -148,6 +190,8 @@ type profitBillingSnapshot struct {
 	BillingSource     string  `json:"billing_source"`
 	IsAdminUsage      bool    `json:"is_admin_usage"`
 	UserRoleSnapshot  int     `json:"user_role_snapshot"`
+	CostTier          string  `json:"cost_tier"`
+	OtherMultiplier   float64 `json:"other_multiplier"`
 	WalletFunding     struct {
 		Version     int `json:"version"`
 		PaidQuota   int `json:"paid_quota"`
@@ -236,6 +280,29 @@ func validateModelCostRule(rule *ModelCostRule) error {
 	}
 	if rule.PurchasePriceCNY <= 0 || rule.PurchasePriceCNY > 1_000_000 {
 		return errors.New("purchase price must be greater than 0 and at most 1000000")
+	}
+	if len(rule.CostTiers) > 64 {
+		return errors.New("cost tiers must not exceed 64 entries")
+	}
+	tierKeys := make(map[string]struct{}, len(rule.CostTiers))
+	for index := range rule.CostTiers {
+		tier := &rule.CostTiers[index]
+		tier.Key = strings.TrimSpace(tier.Key)
+		tier.Label = strings.TrimSpace(tier.Label)
+		if tier.Key == "" || len(tier.Key) > 128 {
+			return errors.New("cost tier key is required and must not exceed 128 characters")
+		}
+		if tier.Label == "" || len(tier.Label) > 191 {
+			return errors.New("cost tier label is required and must not exceed 191 characters")
+		}
+		if _, exists := tierKeys[tier.Key]; exists {
+			return errors.New("cost tier keys must be unique")
+		}
+		tierKeys[tier.Key] = struct{}{}
+		if math.IsNaN(tier.PurchasePriceCNY) || math.IsInf(tier.PurchasePriceCNY, 0) ||
+			tier.PurchasePriceCNY <= 0 || tier.PurchasePriceCNY > 1_000_000 {
+			return errors.New("cost tier purchase price must be finite, greater than 0, and at most 1000000")
+		}
 	}
 	return nil
 }
@@ -339,9 +406,26 @@ func calculateProfitRecord(log *Log, rule *ModelCostRule, estimated bool) (*Prof
 		return record, nil
 	}
 	costBase := rule.PurchasePriceCNY
+	actualSaleBase := saleBase
+	if snapshot.CostTier != "" {
+		matchedCostTier := false
+		for _, tier := range rule.CostTiers {
+			if tier.Key == snapshot.CostTier {
+				costBase = tier.PurchasePriceCNY
+				matchedCostTier = true
+				break
+			}
+		}
+		if matchedCostTier && snapshot.OtherMultiplier > 0 && !math.IsNaN(snapshot.OtherMultiplier) && !math.IsInf(snapshot.OtherMultiplier, 0) {
+			actualSaleBase *= snapshot.OtherMultiplier
+		}
+	}
+	if actualSaleBase <= 0 || math.IsNaN(actualSaleBase) || math.IsInf(actualSaleBase, 0) {
+		return record, nil
+	}
 	costMicros := decimal.NewFromInt(grossConsumptionMicros).
 		Mul(decimal.NewFromFloat(costBase)).
-		Div(decimal.NewFromFloat(saleBase)).
+		Div(decimal.NewFromFloat(actualSaleBase)).
 		Round(0).
 		IntPart()
 	record.CostMicros = costMicros
@@ -533,6 +617,7 @@ func SaveModelCostRule(input *ModelCostRule) (*ModelCostRule, error) {
 	rule := &ModelCostRule{
 		ModelName:        input.ModelName,
 		PurchasePriceCNY: input.PurchasePriceCNY,
+		CostTiers:        append(ModelCostTiers(nil), input.CostTiers...),
 		Enabled:          true,
 		EffectiveFrom:    now,
 		CreatedAt:        now,
