@@ -327,7 +327,7 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		return nil, err
 	}
 	applyHeaderOverrideToRequest(req, headerOverride)
-	resp, err := doRequest(c, req, info)
+	resp, err := doRequest(c, req, info, false)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
 	}
@@ -359,7 +359,7 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 		return nil, err
 	}
 	applyHeaderOverrideToRequest(req, headerOverride)
-	resp, err := doRequest(c, req, info)
+	resp, err := doRequest(c, req, info, false)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
 	}
@@ -472,9 +472,9 @@ func sendPingData(c *gin.Context, mutex *sync.Mutex) error {
 }
 
 func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
-	return doRequest(c, req, info)
+	return doRequest(c, req, info, false)
 }
-func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
+func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo, rejectRedirects bool) (*http.Response, error) {
 	var client *http.Client
 	var err error
 	if info.ChannelSetting.Proxy != "" {
@@ -484,6 +484,13 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		}
 	} else {
 		client = service.GetHttpClient()
+	}
+	if rejectRedirects {
+		redirectClient := *client
+		redirectClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+		client = &redirectClient
 	}
 
 	var stopPinger context.CancelFunc
@@ -542,7 +549,11 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
-	resp, err := doRequest(c, req, info)
+	rejectRedirects := false
+	if policy, ok := a.(TaskRedirectPolicy); ok {
+		rejectRedirects = policy.RejectRedirects()
+	}
+	resp, err := doRequest(c, req, info, rejectRedirects)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
 	}

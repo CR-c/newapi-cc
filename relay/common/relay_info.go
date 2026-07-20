@@ -167,6 +167,8 @@ type RelayInfo struct {
 	UpstreamRequestBodySize int64
 
 	PriceData types.PriceData
+	// CostTier identifies the concrete purchase-cost tier used by profit analysis.
+	CostTier string
 	// ProfitGeneration freezes the profit-analysis generation for asynchronous
 	// task submission and settlement logs. Nil keeps the normal current-generation behavior.
 	ProfitGeneration *int64

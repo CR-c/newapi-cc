@@ -57,7 +57,8 @@ type taskUsage struct {
 }
 
 type assetResponse struct {
-	Success bool `json:"success"`
+	Success bool   `json:"success"`
+	Message string `json:"message"`
 	Data    struct {
 		ID       string `json:"Id"`
 		Status   string `json:"Status"`
@@ -182,6 +183,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		return nil
 	}
 	resolution := taskResolution(req)
+	info.CostTier = relaycommon.VideoCostTier(resolution, req.HasImage())
 	billingModel := info.UpstreamModelName
 	if billingModel == "" {
 		billingModel = info.OriginModelName
@@ -351,12 +353,29 @@ func (a *TaskAdaptor) createImageAsset(ctx context.Context, info *relaycommon.Re
 	if err != nil {
 		return "", err
 	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("asset upload failed with status %d", resp.StatusCode)
-	}
 	var result assetResponse
-	if err = common.Unmarshal(responseBody, &result); err != nil {
-		return "", err
+	unmarshalErr := common.Unmarshal(responseBody, &result)
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		widthTooSmall := false
+		if resp.StatusCode == http.StatusBadRequest && unmarshalErr == nil {
+			for _, field := range strings.Fields(result.Message) {
+				errorCode := strings.Trim(field, "(),:;")
+				if errorCode == "InvalidParameter.WidthTooSmall" || errorCode == "code=InvalidParameter.WidthTooSmall" {
+					widthTooSmall = true
+					break
+				}
+			}
+		}
+		if widthTooSmall {
+			return "", service.NewTaskRequestError(
+				errors.New("reference image width must be between 300px and 6000px"),
+				"invalid_reference_image",
+			)
+		}
+		return "", service.NewTaskUpstreamError(errors.New("asset upload failed"), resp.StatusCode)
+	}
+	if unmarshalErr != nil {
+		return "", unmarshalErr
 	}
 	if !result.Success || result.Data.BaseResp.StatusCode != 0 || result.Data.ID == "" {
 		return "", errors.New("asset upload failed")

@@ -150,6 +150,37 @@ func TestRelayErrorHandlerKeepsInvalidJSONBodyInDebugLog(t *testing.T) {
 	require.Contains(t, logBuffer.String(), body)
 }
 
+func TestTaskErrorFromBuildRequestPreservesClientError(t *testing.T) {
+	err := NewTaskRequestError(fmt.Errorf("reference image width must be between 300px and 6000px"), "invalid_reference_image")
+
+	taskErr := TaskErrorFromBuildRequest(err)
+
+	require.Equal(t, "invalid_reference_image", taskErr.Code)
+	require.Equal(t, "reference image width must be between 300px and 6000px", taskErr.Message)
+	require.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	require.True(t, taskErr.LocalError)
+}
+
+func TestTaskErrorFromBuildRequestKeepsUnknownFailuresInternal(t *testing.T) {
+	taskErr := TaskErrorFromBuildRequest(fmt.Errorf("unexpected conversion failure"))
+
+	require.Equal(t, "build_request_failed", taskErr.Code)
+	require.Equal(t, "unexpected conversion failure", taskErr.Message)
+	require.Equal(t, http.StatusInternalServerError, taskErr.StatusCode)
+	require.False(t, taskErr.LocalError)
+}
+
+func TestTaskErrorFromBuildRequestPreservesSanitizedUpstreamStatus(t *testing.T) {
+	err := NewTaskUpstreamError(fmt.Errorf("asset upload failed"), http.StatusUnauthorized)
+
+	taskErr := TaskErrorFromBuildRequest(err)
+
+	require.Equal(t, "build_request_failed", taskErr.Code)
+	require.Equal(t, "asset upload failed", taskErr.Message)
+	require.Equal(t, http.StatusUnauthorized, taskErr.StatusCode)
+	require.False(t, taskErr.LocalError)
+}
+
 func withDebugEnabled(t *testing.T, enabled bool) {
 	t.Helper()
 

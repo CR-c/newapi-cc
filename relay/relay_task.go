@@ -221,7 +221,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 8. 构建请求体
 	requestBody, err := adaptor.BuildRequestBody(c, info)
 	if err != nil {
-		return nil, service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
+		return nil, service.TaskErrorFromBuildRequest(err)
 	}
 
 	// 9. 发送请求
@@ -229,7 +229,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if err != nil {
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
-	if resp != nil && resp.StatusCode != http.StatusOK {
+	if resp != nil && !taskSubmitSucceeded(resp.StatusCode) {
 		return nil, taskSubmitHTTPError(resp, info.ChannelType)
 	}
 
@@ -266,13 +266,19 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}, nil
 }
 
+func taskSubmitSucceeded(statusCode int) bool {
+	return statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices
+}
+
 func taskSubmitHTTPError(resp *http.Response, channelType int) *dto.TaskError {
-	if channelType == constant.ChannelTypeKyyVideo || channelType == constant.ChannelTypeServiceInference {
+	if channelType == constant.ChannelTypeKyyVideo || channelType == constant.ChannelTypeServiceInference || channelType == constant.ChannelTypeDoubaoVideo {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 		_ = resp.Body.Close()
 		message := "Video upstream request failed"
 		if channelType == constant.ChannelTypeKyyVideo {
 			message = "KYY video upstream request failed"
+		} else if channelType == constant.ChannelTypeDoubaoVideo {
+			message = "Doubao video upstream request failed"
 		}
 		return service.TaskErrorWrapper(errors.New(message), "fail_to_fetch_task", resp.StatusCode)
 	}

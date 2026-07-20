@@ -61,10 +61,7 @@ func VideoProxy(c *gin.Context) {
 		videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to retrieve channel information")
 		return
 	}
-	baseURL := channel.GetBaseURL()
-	if baseURL == "" {
-		baseURL = "https://api.openai.com"
-	}
+	baseURL := resolveVideoChannelBaseURL(channel)
 
 	var videoURL string
 	proxy := channel.GetSetting().Proxy
@@ -118,6 +115,13 @@ func VideoProxy(c *gin.Context) {
 			videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
 			req.Header.Set("Authorization", "Bearer "+channel.Key)
 		}
+	case constant.ChannelTypeDoubaoVideo:
+		videoURL, err = buildDoubaoVideoContentRequest(req, baseURL, channel, task)
+		if err != nil {
+			videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to create proxy request")
+			return
+		}
+		client = clientWithoutAuthorizationOnRedirect(client)
 	default:
 		// Video URL is stored in PrivateData.ResultURL (fallback to FailReason for old data)
 		videoURL = task.GetResultURL()
@@ -194,6 +198,51 @@ func VideoProxy(c *gin.Context) {
 	if _, err = io.Copy(c.Writer, resp.Body); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to stream video content: %s", err.Error()))
 	}
+}
+
+func buildDoubaoVideoContentRequest(req *http.Request, baseURL string, channel *model.Channel, task *model.Task) (string, error) {
+	upstreamTaskID := strings.TrimSpace(task.GetUpstreamTaskID())
+	if upstreamTaskID == "" {
+		return "", fmt.Errorf("upstream task id is empty")
+	}
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		return "", fmt.Errorf("channel base url is empty")
+	}
+	apiKey := task.PrivateData.Key
+	if apiKey == "" {
+		apiKey = channel.Key
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	return fmt.Sprintf("%s/api/v3/contents/generations/tasks/%s/content", baseURL, url.PathEscape(upstreamTaskID)), nil
+}
+
+func resolveVideoChannelBaseURL(channel *model.Channel) string {
+	if baseURL := strings.TrimSpace(channel.GetBaseURL()); baseURL != "" {
+		return baseURL
+	}
+	if channel.Type >= 0 && channel.Type < len(constant.ChannelBaseURLs) {
+		if baseURL := strings.TrimSpace(constant.ChannelBaseURLs[channel.Type]); baseURL != "" {
+			return baseURL
+		}
+	}
+	return "https://api.openai.com"
+}
+
+func clientWithoutAuthorizationOnRedirect(client *http.Client) *http.Client {
+	redirectClient := *client
+	baseCheckRedirect := client.CheckRedirect
+	redirectClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		req.Header.Del("Authorization")
+		if baseCheckRedirect != nil {
+			return baseCheckRedirect(req, via)
+		}
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &redirectClient
 }
 
 func writeVideoDataURL(c *gin.Context, dataURL string) error {

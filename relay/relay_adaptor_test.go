@@ -125,3 +125,19 @@ func TestTaskSubmitHTTPErrorHidesServiceInferenceResponseBody(t *testing.T) {
 	require.NotContains(t, taskErr.Message, "storage.example")
 	require.NotContains(t, taskErr.Error.Error(), "internal detail")
 }
+
+func TestTaskSubmitHTTPErrorHidesDoubaoResponseBody(t *testing.T) {
+	response := &http.Response{
+		StatusCode: http.StatusBadGateway,
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"seedance_upstream_123","message":"internal upstream detail"}`,
+		)),
+	}
+
+	taskErr := taskSubmitHTTPError(response, constant.ChannelTypeDoubaoVideo)
+
+	require.Equal(t, http.StatusBadGateway, taskErr.StatusCode)
+	require.Equal(t, "Doubao video upstream request failed", taskErr.Message)
+	require.NotContains(t, taskErr.Error.Error(), "seedance_upstream_123")
+	require.NotContains(t, taskErr.Error.Error(), "internal upstream detail")
+}

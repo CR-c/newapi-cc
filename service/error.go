@@ -209,6 +209,67 @@ func TaskErrorWrapper(err error, code string, statusCode int) *dto.TaskError {
 	return taskError
 }
 
+// TaskRequestError marks a request-build failure that was caused by client input.
+// Adapters must only use this for sanitized, confidently classified errors.
+type TaskRequestError struct {
+	err  error
+	code string
+}
+
+func NewTaskRequestError(err error, code string) error {
+	return &TaskRequestError{err: err, code: code}
+}
+
+func (e *TaskRequestError) Error() string {
+	if e == nil || e.err == nil {
+		return "invalid task request"
+	}
+	return e.err.Error()
+}
+
+func (e *TaskRequestError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+// TaskUpstreamError preserves a sanitized upstream status for channel handling.
+type TaskUpstreamError struct {
+	err        error
+	statusCode int
+}
+
+func NewTaskUpstreamError(err error, statusCode int) error {
+	return &TaskUpstreamError{err: err, statusCode: statusCode}
+}
+
+func (e *TaskUpstreamError) Error() string {
+	if e == nil || e.err == nil {
+		return "task upstream request failed"
+	}
+	return e.err.Error()
+}
+
+func (e *TaskUpstreamError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+func TaskErrorFromBuildRequest(err error) *dto.TaskError {
+	var requestErr *TaskRequestError
+	if errors.As(err, &requestErr) && requestErr != nil && requestErr.code != "" {
+		return TaskErrorWrapperLocal(requestErr, requestErr.code, http.StatusBadRequest)
+	}
+	var upstreamErr *TaskUpstreamError
+	if errors.As(err, &upstreamErr) && upstreamErr != nil && upstreamErr.statusCode >= 400 && upstreamErr.statusCode < 600 {
+		return TaskErrorWrapper(upstreamErr, "build_request_failed", upstreamErr.statusCode)
+	}
+	return TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
+}
+
 // TaskErrorFromAPIError 将 PreConsumeBilling 返回的 NewAPIError 转换为 TaskError。
 func TaskErrorFromAPIError(apiErr *types.NewAPIError) *dto.TaskError {
 	if apiErr == nil {

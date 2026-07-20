@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -296,6 +297,110 @@ func TestBuildRequestBodyHidesAssetUploadFailureDetails(t *testing.T) {
 	assert.NotContains(t, err.Error(), "secret-upstream-host")
 }
 
+func TestBuildRequestBodyMapsSmallReferenceImageToClientError(t *testing.T) {
+	messages := []string{
+		"CreateAsset failed: code=InvalidParameter.WidthTooSmall request_id=secret-request-id",
+		"CreateAsset failed: InvalidParameter.WidthTooSmall: Width must be between 300px and 6000px",
+	}
+
+	for _, message := range messages {
+		t.Run(message, func(t *testing.T) {
+			data, err := common.Marshal(map[string]any{"success": false, "message": message})
+			require.NoError(t, err)
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				writer.WriteHeader(http.StatusBadRequest)
+				_, _ = writer.Write(data)
+			}))
+			defer server.Close()
+
+			context, _ := gin.CreateTestContext(httptest.NewRecorder())
+			context.Set("task_request", relaycommon.TaskSubmitReq{
+				Model: "dreamina-seedance-2-0-hc", Prompt: "animate", Duration: 5,
+				Images: []string{"https://example.com/reference.png"},
+			})
+			adaptor := &TaskAdaptor{baseURL: server.URL, apiKey: "test-key"}
+
+			_, err = adaptor.BuildRequestBody(context, &relaycommon.RelayInfo{
+				ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "dreamina-seedance-2-0-hc"},
+			})
+
+			var requestErr *service.TaskRequestError
+			require.ErrorAs(t, err, &requestErr)
+			assert.Equal(t, "reference image width must be between 300px and 6000px", requestErr.Error())
+			taskErr := service.TaskErrorFromBuildRequest(err)
+			assert.Equal(t, "invalid_reference_image", taskErr.Code)
+			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+			assert.True(t, taskErr.LocalError)
+			assert.NotContains(t, err.Error(), "secret-request-id")
+		})
+	}
+}
+
+func TestBuildRequestBodyDoesNotTrustUnclassifiedAssetErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+	}{
+		{
+			name:       "unknown invalid parameter",
+			statusCode: http.StatusBadRequest,
+			body:       `{"success":false,"message":"code=InvalidParameter.Unknown request_id=secret-request-id"}`,
+		},
+		{
+			name:       "similar error code",
+			statusCode: http.StatusBadRequest,
+			body:       `{"success":false,"message":"code=InvalidParameter.WidthTooSmallEnough request_id=secret-request-id"}`,
+		},
+		{
+			name:       "malformed response",
+			statusCode: http.StatusBadRequest,
+			body:       `code=InvalidParameter.WidthTooSmall request_id=secret-request-id`,
+		},
+		{
+			name:       "credential failure with misleading body",
+			statusCode: http.StatusUnauthorized,
+			body:       `{"success":false,"message":"code=InvalidParameter.WidthTooSmall request_id=secret-request-id"}`,
+		},
+		{
+			name:       "server failure with misleading body",
+			statusCode: http.StatusInternalServerError,
+			body:       `{"success":false,"message":"code=InvalidParameter.WidthTooSmall request_id=secret-request-id"}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				writer.WriteHeader(test.statusCode)
+				_, _ = writer.Write([]byte(test.body))
+			}))
+			defer server.Close()
+
+			context, _ := gin.CreateTestContext(httptest.NewRecorder())
+			context.Set("task_request", relaycommon.TaskSubmitReq{
+				Model: "dreamina-seedance-2-0-hc", Prompt: "animate", Duration: 5,
+				Images: []string{"https://example.com/reference.png"},
+			})
+			adaptor := &TaskAdaptor{baseURL: server.URL, apiKey: "test-key"}
+
+			_, err := adaptor.BuildRequestBody(context, &relaycommon.RelayInfo{
+				ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "dreamina-seedance-2-0-hc"},
+			})
+
+			var requestErr *service.TaskRequestError
+			require.NotErrorAs(t, err, &requestErr)
+			assert.EqualError(t, err, "asset upload failed")
+			assert.NotContains(t, err.Error(), "secret-request-id")
+			taskErr := service.TaskErrorFromBuildRequest(err)
+			assert.Equal(t, test.statusCode, taskErr.StatusCode)
+			assert.False(t, taskErr.LocalError)
+		})
+	}
+}
+
 func TestBillingRatio(t *testing.T) {
 	tests := []struct {
 		model      string
@@ -336,6 +441,7 @@ func TestEstimateBillingUsesMappedUpstreamModel(t *testing.T) {
 
 	ratios := (&TaskAdaptor{}).EstimateBilling(context, info)
 	assert.InDelta(t, 2.1/3.5, ratios["reference_image"], 0.0000001)
+	assert.Equal(t, relaycommon.VideoCostTier480p720pReference, info.CostTier)
 }
 
 func TestTaskResolutionMapsPlaygroundVideoSizes(t *testing.T) {
