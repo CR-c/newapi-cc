@@ -286,11 +286,19 @@ export function PlaygroundMedia(props: PlaygroundMediaProps) {
       )
         ? current.responseFormat
         : (imageProfile.responseFormats[0] ?? 'url')
+      const sizeOptions = imageProfile.sizes
+      const size =
+        sizeOptions && sizeOptions.length > 0
+          ? sizeOptions.includes(current.size)
+            ? current.size
+            : sizeOptions[0]
+          : current.size
 
       return {
         ...current,
         aspectRatio,
         resolution,
+        size,
         quality,
         background,
         responseFormat,

@@ -18,15 +18,17 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 export interface ImageModelProfile {
-  provider: 'nano-banana' | 'gpt-image' | 'generic'
+  provider: 'nano-banana' | 'gpt-image' | 'seedream' | 'generic'
   aspectRatios: string[]
   resolutions: string[]
   fixedResolution?: string
   presetSizes: Record<string, Record<string, string>>
+  sizes?: string[]
   qualities: string[]
   backgrounds: string[]
   responseFormats: Array<'url' | 'b64_json'>
   maxImages: number
+  /** Max reference images for image-to-image. 0 = channel does not expose refs in playground. */
   maxReferences: number
   supportsAutoSize: boolean
   supportsExactSize: boolean
@@ -101,6 +103,18 @@ const GPT_IMAGE_SIZES: Record<string, Record<string, string>> = {
   },
 }
 
+const GENERIC_SIZES = ['1024x1024', '1024x1792', '1792x1024']
+
+const SEEDREAM_SIZES = [
+  '1024x1024',
+  '1920x1920',
+  '2048x2048',
+  '2560x1440',
+  '1440x2560',
+  '1024x1792',
+  '1792x1024',
+]
+
 const GENERIC_PROFILE: ImageModelProfile = {
   provider: 'generic',
   aspectRatios: [],
@@ -112,6 +126,7 @@ const GENERIC_PROFILE: ImageModelProfile = {
       landscape: '1792x1024',
     },
   },
+  sizes: GENERIC_SIZES,
   qualities: ['standard', 'hd'],
   backgrounds: [],
   responseFormats: ['url'],
@@ -119,6 +134,59 @@ const GENERIC_PROFILE: ImageModelProfile = {
   maxReferences: 0,
   supportsAutoSize: false,
   supportsExactSize: false,
+}
+
+function normalizeModel(model: string): string {
+  return model.trim().toLowerCase()
+}
+
+function isNanoBananaExtreme(model: string): boolean {
+  const m = normalizeModel(model)
+  return (
+    m === 'gemini-3.1-flash-image-preview' ||
+    (m.includes('nano-banana') && m.includes('3.1'))
+  )
+}
+
+function isNanoBananaStandard(model: string): boolean {
+  const m = normalizeModel(model)
+  if (isNanoBananaExtreme(model)) return false
+  return (
+    m === 'gemini-3-pro-image-preview' ||
+    m === 'gemini-2.5-flash-image' ||
+    (m.includes('gemini') && m.includes('image')) ||
+    m.includes('nano-banana')
+  )
+}
+
+function isGptImage2(model: string): boolean {
+  const m = normalizeModel(model)
+  return m === 'gpt-image-2' || m.startsWith('gpt-image-2-')
+}
+
+function isGptImageFamily(model: string): boolean {
+  const m = normalizeModel(model)
+  return m.startsWith('gpt-image') || m === 'chatgpt-image-latest'
+}
+
+function isSeedreamModel(model: string): boolean {
+  const m = normalizeModel(model)
+  return (
+    m.includes('seedream') ||
+    m.includes('dola-seedream') ||
+    m.startsWith('doubao-seedream')
+  )
+}
+
+function isImageEditModel(model: string): boolean {
+  const m = normalizeModel(model)
+  return (
+    m.includes('image-edit') ||
+    m.includes('image_edit') ||
+    (m.endsWith('-edit') && m.includes('image')) ||
+    m.includes('qwen-image-edit') ||
+    (m.includes('flux') && (m.includes('kontext') || m.includes('edit')))
+  )
 }
 
 function createNanoProfile(includeExtremeRatios: boolean): ImageModelProfile {
@@ -140,36 +208,100 @@ function createNanoProfile(includeExtremeRatios: boolean): ImageModelProfile {
   }
 }
 
+function createGptImage2Profile(): ImageModelProfile {
+  return {
+    provider: 'gpt-image',
+    aspectRatios: [...STANDARD_ASPECT_RATIOS],
+    resolutions: ['1K', '2K', '4K'],
+    presetSizes: GPT_IMAGE_SIZES,
+    qualities: ['low', 'medium', 'high'],
+    backgrounds: ['opaque', 'transparent'],
+    responseFormats: ['url', 'b64_json'],
+    maxImages: 4,
+    maxReferences: 14,
+    supportsAutoSize: true,
+    supportsExactSize: true,
+  }
+}
+
+function createGptImageBasicProfile(): ImageModelProfile {
+  return {
+    provider: 'gpt-image',
+    aspectRatios: [...STANDARD_ASPECT_RATIOS],
+    resolutions: ['1K', '2K'],
+    presetSizes: {
+      '1K': GPT_IMAGE_SIZES['1K'],
+      '2K': GPT_IMAGE_SIZES['2K'],
+    },
+    qualities: ['low', 'medium', 'high', 'auto'],
+    backgrounds: ['opaque', 'transparent'],
+    responseFormats: ['url', 'b64_json'],
+    maxImages: 4,
+    maxReferences: 14,
+    supportsAutoSize: true,
+    supportsExactSize: false,
+  }
+}
+
+function createSeedreamProfile(): ImageModelProfile {
+  return {
+    provider: 'seedream',
+    aspectRatios: [],
+    resolutions: [],
+    presetSizes: GENERIC_PROFILE.presetSizes,
+    sizes: SEEDREAM_SIZES,
+    qualities: [],
+    backgrounds: [],
+    responseFormats: ['url'],
+    maxImages: 1,
+    // Seedream 4.x accepts multi-image reference via unified `image` field.
+    maxReferences: 10,
+    supportsAutoSize: false,
+    supportsExactSize: false,
+  }
+}
+
+function createImageEditProfile(): ImageModelProfile {
+  return {
+    ...GENERIC_PROFILE,
+    maxReferences: 16,
+    responseFormats: ['url', 'b64_json'],
+  }
+}
+
+/**
+ * Resolve playground image controls and image-to-image reference limits.
+ * Different channels/models support different reference counts; 0 hides the upload UI.
+ */
 export function getImageModelProfile(
   group: string,
   model: string
 ): ImageModelProfile {
-  if (group !== '64生图') return GENERIC_PROFILE
-
-  if (model === 'gemini-3.1-flash-image-preview') {
+  if (isNanoBananaExtreme(model)) {
     return createNanoProfile(true)
   }
-  if (
-    model === 'gemini-3-pro-image-preview' ||
-    model === 'gemini-2.5-flash-image'
-  ) {
+  if (isNanoBananaStandard(model)) {
     return createNanoProfile(false)
   }
-  if (model === 'gpt-image-2') {
-    return {
-      provider: 'gpt-image',
-      aspectRatios: [...STANDARD_ASPECT_RATIOS],
-      resolutions: ['1K', '2K', '4K'],
-      presetSizes: GPT_IMAGE_SIZES,
-      qualities: ['low', 'medium', 'high'],
-      backgrounds: ['opaque', 'transparent'],
-      responseFormats: ['url', 'b64_json'],
-      maxImages: 4,
-      maxReferences: 14,
-      supportsAutoSize: true,
-      supportsExactSize: true,
-    }
+  if (isGptImage2(model)) {
+    return createGptImage2Profile()
   }
+  if (isGptImageFamily(model)) {
+    return createGptImageBasicProfile()
+  }
+  if (isSeedreamModel(model) || group === 'dddd-sd-图') {
+    return createSeedreamProfile()
+  }
+  if (isImageEditModel(model)) {
+    return createImageEditProfile()
+  }
+
+  // Legacy group gate: 64生图 models that are not name-matched still get no
+  // references unless they match the families above.
+  if (group === '64生图') {
+    return GENERIC_PROFILE
+  }
+
   return GENERIC_PROFILE
 }
 

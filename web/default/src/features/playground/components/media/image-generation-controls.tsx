@@ -63,45 +63,64 @@ export function ImageGenerationControls(props: ImageGenerationControlsProps) {
     value: ImageGenerationSettings[K]
   ) => props.onChange({ ...props.settings, [key]: value })
 
-  if (props.profile.provider === 'generic') {
+  if (
+    props.profile.provider === 'generic' ||
+    props.profile.provider === 'seedream'
+  ) {
+    const sizeOptions =
+      props.profile.sizes && props.profile.sizes.length > 0
+        ? props.profile.sizes
+        : ['1024x1024', '1024x1792', '1792x1024']
     return (
-      <div className='grid grid-cols-2 gap-3'>
-        <div className='space-y-2'>
-          <Label>{t('Size')}</Label>
-          <Select
-            value={props.settings.size}
-            onValueChange={(value) => value && update('size', value)}
-          >
-            <SelectTrigger>
-              <SelectValue>{props.settings.size}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {['1024x1024', '1024x1792', '1792x1024'].map((value) => (
-                <SelectItem key={value} value={value}>
-                  {value}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      <div className='space-y-4'>
+        <div className='grid grid-cols-2 gap-3'>
+          <div className='space-y-2'>
+            <Label>{t('Size')}</Label>
+            <Select
+              value={props.settings.size}
+              onValueChange={(value) => value && update('size', value)}
+            >
+              <SelectTrigger>
+                <SelectValue>{props.settings.size}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {sizeOptions.map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {value}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {props.profile.qualities.length > 0 && (
+            <div className='space-y-2'>
+              <Label>{t('Quality')}</Label>
+              <Select
+                value={props.settings.quality}
+                onValueChange={(value) => value && update('quality', value)}
+              >
+                <SelectTrigger>
+                  <SelectValue>{t(props.settings.quality)}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {props.profile.qualities.map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {t(value)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
-        <div className='space-y-2'>
-          <Label>{t('Quality')}</Label>
-          <Select
-            value={props.settings.quality}
-            onValueChange={(value) => value && update('quality', value)}
-          >
-            <SelectTrigger>
-              <SelectValue>{t(props.settings.quality)}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {props.profile.qualities.map((value) => (
-                <SelectItem key={value} value={value}>
-                  {t(value)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <ImageReferenceInputs
+          files={props.settings.referenceFiles}
+          urls={props.settings.referenceURLs}
+          maxFiles={props.profile.maxReferences}
+          disabled={props.disabled}
+          onChange={(files) => update('referenceFiles', files)}
+          onURLsChange={(urls) => update('referenceURLs', urls)}
+        />
       </div>
     )
   }

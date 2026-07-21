@@ -7,7 +7,7 @@ import {
   isValidExactImageSize,
 } from './image-model-profiles'
 
-describe('64 image model profiles', () => {
+describe('image model profiles', () => {
   test('nano-banana-3 exposes fourteen aspect ratios at fixed 2K', () => {
     const profile = getImageModelProfile(
       '64生图',
@@ -31,6 +31,16 @@ describe('64 image model profiles', () => {
     assert.equal(profile.fixedResolution, '2K')
     assert.equal(profile.aspectRatios.length, 10)
     assert.equal(profile.aspectRatios.includes('1:4'), false)
+    assert.equal(profile.maxReferences, 14)
+  })
+
+  test('gemini image models keep reference support outside 64生图 group', () => {
+    const profile = getImageModelProfile(
+      'default',
+      'gemini-2.5-flash-image'
+    )
+    assert.equal(profile.provider, 'nano-banana')
+    assert.equal(profile.maxReferences, 14)
   })
 
   test('gpt-image-2 exposes documented resolution and parameter controls', () => {
@@ -42,9 +52,41 @@ describe('64 image model profiles', () => {
     assert.deepEqual(profile.backgrounds, ['opaque', 'transparent'])
     assert.equal(profile.supportsAutoSize, true)
     assert.equal(profile.supportsExactSize, true)
+    assert.equal(profile.maxReferences, 14)
     assert.equal(getImagePresetSize(profile, '1K', '1:1'), '1024x1024')
     assert.equal(getImagePresetSize(profile, '2K', '16:9'), '2560x1440')
     assert.equal(getImagePresetSize(profile, '4K', '9:16'), '1872x3328')
+  })
+
+  test('gpt-image-1 family supports multi-image references', () => {
+    const profile = getImageModelProfile('default', 'gpt-image-1')
+    assert.equal(profile.provider, 'gpt-image')
+    assert.equal(profile.maxReferences, 14)
+  })
+
+  test('seedream models enable image-to-image references', () => {
+    const byName = getImageModelProfile(
+      'default',
+      'dola-seedream-5-0-pro-260628'
+    )
+    assert.equal(byName.provider, 'seedream')
+    assert.equal(byName.maxReferences, 10)
+    assert.ok(byName.sizes?.includes('1920x1920'))
+
+    const byGroup = getImageModelProfile('dddd-sd-图', 'custom-seedream-alias')
+    assert.equal(byGroup.provider, 'seedream')
+    assert.equal(byGroup.maxReferences, 10)
+  })
+
+  test('image-edit models expose reference uploads', () => {
+    const profile = getImageModelProfile('default', 'qwen-image-edit-plus')
+    assert.equal(profile.provider, 'generic')
+    assert.equal(profile.maxReferences, 16)
+  })
+
+  test('plain text-to-image models hide reference uploads', () => {
+    const profile = getImageModelProfile('default', 'dall-e-3')
+    assert.equal(profile.maxReferences, 0)
   })
 
   test('exact gpt-image-2 sizes require positive multiples of sixteen', () => {
