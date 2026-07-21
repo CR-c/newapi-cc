@@ -3,16 +3,21 @@ package helper
 import (
 	"bytes"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -24,6 +29,7 @@ func TestGetAndValidOpenAIImageRequestMultipartStream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	newContext := func(t *testing.T, streamValue string, withImage bool) (*gin.Context, string) {
+		t.Setenv("IMAGE_UPLOAD_DIR", t.TempDir())
 		var body bytes.Buffer
 		writer := multipart.NewWriter(&body)
 		require.NoError(t, writer.WriteField("model", "gpt-image-1"))
@@ -32,8 +38,9 @@ func TestGetAndValidOpenAIImageRequestMultipartStream(t *testing.T) {
 		if withImage {
 			part, err := writer.CreateFormFile("image", "input.png")
 			require.NoError(t, err)
-			_, err = part.Write([]byte("fake image"))
-			require.NoError(t, err)
+			input := image.NewNRGBA(image.Rect(0, 0, 320, 320))
+			input.Set(1, 1, color.NRGBA{R: 255, A: 255})
+			require.NoError(t, png.Encode(part, input))
 		}
 		require.NoError(t, writer.Close())
 		originalBody := body.String()
@@ -61,6 +68,15 @@ func TestGetAndValidOpenAIImageRequestMultipartStream(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "true", url.Values(form.Value).Get("stream"))
 		require.Len(t, form.File["image"], 1)
+
+		value, exists := c.Get(service.NormalizedImageUploadsContextKey)
+		require.True(t, exists)
+		stored := value.([]service.StoredUploadedImage)
+		require.Len(t, stored, 1)
+		require.FileExists(t, stored[0].Path)
+		CleanupNormalizedImageUploads(c)
+		_, statErr := os.Stat(stored[0].Path)
+		require.ErrorIs(t, statErr, os.ErrNotExist)
 	})
 
 	t.Run("invalid stream value is rejected", func(t *testing.T) {
@@ -70,6 +86,84 @@ func TestGetAndValidOpenAIImageRequestMultipartStream(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid stream value")
 	})
+}
+
+func TestGetAndValidOpenAIImageRequestRejectsTooManyMultipartImagesBeforePersistence(t *testing.T) {
+	storageDir := t.TempDir()
+	t.Setenv("IMAGE_UPLOAD_DIR", storageDir)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", "gpt-image-2"))
+	require.NoError(t, writer.WriteField("prompt", "edit these images"))
+	for index := 0; index <= maxImageEditFiles; index++ {
+		part, err := writer.CreateFormFile("image[]", fmt.Sprintf("input-%d.png", index))
+		require.NoError(t, err)
+		input := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+		require.NoError(t, png.Encode(part, input))
+	}
+	require.NoError(t, writer.Close())
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", &body)
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+
+	_, err := GetAndValidOpenAIImageRequest(c, relayconstant.RelayModeImagesEdits)
+
+	require.EqualError(t, err, fmt.Sprintf("at most %d edit images are allowed", maxImageEditFiles))
+	entries, readErr := os.ReadDir(storageDir)
+	require.NoError(t, readErr)
+	require.Empty(t, entries)
+}
+
+func TestGetAndValidOpenAIImageRequestRejectsExcessiveTotalPixelsBeforePersistence(t *testing.T) {
+	storageDir := t.TempDir()
+	t.Setenv("IMAGE_UPLOAD_DIR", storageDir)
+	large := image.NewGray(image.Rect(0, 0, 4096, 4096))
+	var encoded bytes.Buffer
+	require.NoError(t, png.Encode(&encoded, large))
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", "gpt-image-2"))
+	require.NoError(t, writer.WriteField("prompt", "edit these images"))
+	for index := 0; index < 5; index++ {
+		part, err := writer.CreateFormFile("image[]", fmt.Sprintf("large-%d.png", index))
+		require.NoError(t, err)
+		_, err = part.Write(encoded.Bytes())
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close())
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", &body)
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+
+	_, err := GetAndValidOpenAIImageRequest(c, relayconstant.RelayModeImagesEdits)
+
+	require.EqualError(t, err, fmt.Sprintf("image edit uploads exceed %d total pixels", maxImageEditTotalPixels))
+	entries, readErr := os.ReadDir(storageDir)
+	require.NoError(t, readErr)
+	require.Empty(t, entries)
+}
+
+func TestGetAndValidOpenAIImageRequestRejectsInvalidMultipartImage(t *testing.T) {
+	t.Setenv("IMAGE_UPLOAD_DIR", t.TempDir())
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", "gpt-image-2"))
+	require.NoError(t, writer.WriteField("prompt", "edit this image"))
+	part, err := writer.CreateFormFile("image", "input.png")
+	require.NoError(t, err)
+	_, err = part.Write([]byte("\x89PNG\r\n\x1a\ntruncated"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", &body)
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+
+	_, err = GetAndValidOpenAIImageRequest(c, relayconstant.RelayModeImagesEdits)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid image upload")
 }
 
 // TestGetAndValidOpenAIImageRequestNBounds guards the billing invariant that

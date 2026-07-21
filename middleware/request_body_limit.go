@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/gin-gonic/gin"
 )
+
+var imageEditRequestSlots = make(chan struct{}, 2)
 
 func AnonymousRequestBodyLimit() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -31,6 +35,30 @@ func AnonymousRequestBodyLimit() gin.HandlerFunc {
 
 		c.Request.Body = io.NopCloser(bytes.NewReader(limitedBody))
 		c.Request.ContentLength = int64(len(limitedBody))
+		c.Next()
+	}
+}
+
+func ImageEditRequestBodyLimit() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		path := c.Request.URL.Path
+		isImageEdit := path == "/v1/images/edits" || path == "/pg/images/edits"
+		if !isImageEdit || !strings.Contains(c.Request.Header.Get("Content-Type"), gin.MIMEMultipartPOSTForm) {
+			c.Next()
+			return
+		}
+		if c.Request.ContentLength > constant.MaxImageEditMultipartBytes {
+			c.AbortWithStatus(http.StatusRequestEntityTooLarge)
+			return
+		}
+		select {
+		case imageEditRequestSlots <- struct{}{}:
+			defer func() { <-imageEditRequestSlots }()
+		case <-c.Request.Context().Done():
+			c.AbortWithStatus(499)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, constant.MaxImageEditMultipartBytes)
 		c.Next()
 	}
 }

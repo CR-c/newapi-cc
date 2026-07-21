@@ -28,6 +28,7 @@ services:
     volumes:
       - ./data:/data
       - ./logs:/app/logs
+      - /home/new-image:/home/new-image
     environment:
       - SQL_DSN=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
 #      - SQL_DSN=root:123456@tcp(mysql:3306)/new-api  # Point to the mysql service, uncomment if using MySQL
@@ -39,6 +40,8 @@ services:
       - SESSION_SECRET=${SESSION_SECRET}
       - SESSION_COOKIE_SECURE=true
       - SESSION_COOKIE_TRUSTED_URL=https://vp.735678.xyz
+      - IMAGE_UPLOAD_DIR=/home/new-image
+      - PLAYGROUND_ASSET_DIR=/home/new-image
       - TASK_PRICE_PATCH=grok-image-video,grok-video-1.5,video-ds-2.0,video-ds-2.0-fast,as-sd2.0-fast
       - ERROR_LOG_ENABLED=true # 是否启用错误日志记录 (Whether to enable error log recording)
       - BATCH_UPDATE_ENABLED=true  # 是否启用批量更新 (Whether to enable batch update)

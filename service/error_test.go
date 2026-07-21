@@ -170,6 +170,31 @@ func TestTaskErrorFromBuildRequestKeepsUnknownFailuresInternal(t *testing.T) {
 	require.False(t, taskErr.LocalError)
 }
 
+func TestTaskErrorFromBuildRequestClassifiesClientCancellation(t *testing.T) {
+	taskErr := TaskErrorFromBuildRequest(NewClientRequestCanceledError())
+
+	require.Equal(t, "request_canceled", taskErr.Code)
+	require.Equal(t, context.Canceled.Error(), taskErr.Message)
+	require.Equal(t, 499, taskErr.StatusCode)
+	require.True(t, taskErr.LocalError)
+}
+
+func TestTaskErrorFromBuildRequestDoesNotClassifyBareCancellationAsClientCancellation(t *testing.T) {
+	taskErr := TaskErrorFromBuildRequest(context.Canceled)
+
+	require.Equal(t, "build_request_failed", taskErr.Code)
+	require.Equal(t, http.StatusInternalServerError, taskErr.StatusCode)
+	require.False(t, taskErr.LocalError)
+}
+
+func TestTaskErrorFromBuildRequestDoesNotClassifyWrappedCancellationAsClientCancellation(t *testing.T) {
+	taskErr := TaskErrorFromBuildRequest(fmt.Errorf("internal operation stopped: %w", context.Canceled))
+
+	require.Equal(t, "build_request_failed", taskErr.Code)
+	require.Equal(t, http.StatusInternalServerError, taskErr.StatusCode)
+	require.False(t, taskErr.LocalError)
+}
+
 func TestTaskErrorFromBuildRequestPreservesSanitizedUpstreamStatus(t *testing.T) {
 	err := NewTaskUpstreamError(fmt.Errorf("asset upload failed"), http.StatusUnauthorized)
 

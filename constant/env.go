@@ -1,5 +1,7 @@
 package constant
 
+const MaxImageEditMultipartBytes int64 = 52 << 20
+
 var StreamingTimeout int
 var DifyDebug bool
 var MaxFileDownloadMB int

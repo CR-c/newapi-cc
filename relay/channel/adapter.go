@@ -31,6 +31,10 @@ type Adaptor interface {
 	ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error)
 }
 
+type NormalizedImageUploadAdaptor interface {
+	UsesNormalizedImageUploads() bool
+}
+
 type TaskAdaptor interface {
 	Init(info *relaycommon.RelayInfo)
 

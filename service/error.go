@@ -240,6 +240,20 @@ type TaskUpstreamError struct {
 	statusCode int
 }
 
+type clientRequestCanceledError struct{}
+
+func (clientRequestCanceledError) Error() string {
+	return context.Canceled.Error()
+}
+
+func (clientRequestCanceledError) Unwrap() error {
+	return context.Canceled
+}
+
+func NewClientRequestCanceledError() error {
+	return clientRequestCanceledError{}
+}
+
 func NewTaskUpstreamError(err error, statusCode int) error {
 	return &TaskUpstreamError{err: err, statusCode: statusCode}
 }
@@ -259,6 +273,10 @@ func (e *TaskUpstreamError) Unwrap() error {
 }
 
 func TaskErrorFromBuildRequest(err error) *dto.TaskError {
+	var canceledErr clientRequestCanceledError
+	if errors.As(err, &canceledErr) {
+		return TaskErrorWrapperLocal(context.Canceled, "request_canceled", 499)
+	}
 	var requestErr *TaskRequestError
 	if errors.As(err, &requestErr) && requestErr != nil && requestErr.code != "" {
 		return TaskErrorWrapperLocal(requestErr, requestErr.code, http.StatusBadRequest)

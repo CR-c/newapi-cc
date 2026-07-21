@@ -2,15 +2,21 @@ package controller
 
 import (
 	"bytes"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"image/png"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -22,7 +28,7 @@ func TestUploadAndServePlaygroundAsset(t *testing.T) {
 	t.Setenv("PLAYGROUND_ASSET_DIR", t.TempDir())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.PlaygroundAsset{}))
+	require.NoError(t, db.AutoMigrate(&model.PlaygroundAsset{}, &model.PlaygroundAssetStorageState{}, &model.PlaygroundAssetStorageReservation{}))
 	previousDB := model.DB
 	model.DB = db
 	t.Cleanup(func() { model.DB = previousDB })
@@ -32,8 +38,9 @@ func TestUploadAndServePlaygroundAsset(t *testing.T) {
 	require.NoError(t, writer.WriteField("kind", "image"))
 	fileWriter, err := writer.CreateFormFile("file", "reference.png")
 	require.NoError(t, err)
-	_, err = fileWriter.Write([]byte("\x89PNG\r\n\x1a\nreference-image"))
-	require.NoError(t, err)
+	expectedImage := image.NewNRGBA(image.Rect(0, 0, 320, 320))
+	expectedImage.Set(12, 34, color.NRGBA{R: 20, G: 40, B: 60, A: 255})
+	require.NoError(t, png.Encode(fileWriter, expectedImage))
 	require.NoError(t, writer.Close())
 
 	uploadRecorder := httptest.NewRecorder()
@@ -64,7 +71,129 @@ func TestUploadAndServePlaygroundAsset(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, serveRecorder.Code)
 	assert.Equal(t, "image/png", serveRecorder.Header().Get("Content-Type"))
-	assert.Equal(t, []byte("\x89PNG\r\n\x1a\nreference-image"), serveRecorder.Body.Bytes())
+	decoded, format, err := image.Decode(bytes.NewReader(serveRecorder.Body.Bytes()))
+	require.NoError(t, err)
+	assert.Equal(t, "png", format)
+	assert.Equal(t, expectedImage.Bounds(), decoded.Bounds())
+}
+
+func TestUploadPlaygroundAssetRejectsCorruptImageBeforePersistence(t *testing.T) {
+	storageDir := t.TempDir()
+	t.Setenv("PLAYGROUND_ASSET_DIR", storageDir)
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.PlaygroundAsset{}, &model.PlaygroundAssetStorageState{}, &model.PlaygroundAssetStorageReservation{}))
+	previousDB := model.DB
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	var requestBody bytes.Buffer
+	writer := multipart.NewWriter(&requestBody)
+	require.NoError(t, writer.WriteField("kind", "image"))
+	fileWriter, err := writer.CreateFormFile("file", "corrupt.png")
+	require.NoError(t, err)
+	_, err = fileWriter.Write([]byte("\x89PNG\r\n\x1a\ntruncated"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/pg/assets", &requestBody)
+	context.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	context.Set("id", 7)
+
+	UploadPlaygroundAsset(context)
+
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+	var count int64
+	require.NoError(t, db.Model(&model.PlaygroundAsset{}).Count(&count).Error)
+	assert.Zero(t, count)
+	entries, err := os.ReadDir(storageDir)
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+}
+
+func TestUploadPlaygroundAssetRejectsReferenceImageOutsideProviderDimensions(t *testing.T) {
+	storageDir := t.TempDir()
+	t.Setenv("PLAYGROUND_ASSET_DIR", storageDir)
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.PlaygroundAsset{}, &model.PlaygroundAssetStorageState{}, &model.PlaygroundAssetStorageReservation{}))
+	previousDB := model.DB
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+	var requestBody bytes.Buffer
+	writer := multipart.NewWriter(&requestBody)
+	require.NoError(t, writer.WriteField("kind", "image"))
+	fileWriter, err := writer.CreateFormFile("file", "tiny.png")
+	require.NoError(t, err)
+	require.NoError(t, png.Encode(fileWriter, image.NewNRGBA(image.Rect(0, 0, 64, 64))))
+	require.NoError(t, writer.Close())
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/pg/assets", &requestBody)
+	context.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	context.Set("id", 7)
+
+	UploadPlaygroundAsset(context)
+
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+	entries, err := os.ReadDir(storageDir)
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+}
+
+func TestUploadPlaygroundAssetRechecksQuotaAfterImageNormalization(t *testing.T) {
+	storageDir := t.TempDir()
+	t.Setenv("PLAYGROUND_ASSET_DIR", storageDir)
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.PlaygroundAsset{}, &model.PlaygroundAssetStorageState{}, &model.PlaygroundAssetStorageReservation{}))
+	previousDB := model.DB
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	input := image.NewNRGBA(image.Rect(0, 0, 512, 512))
+	state := uint32(1)
+	for index := range input.Pix {
+		state = state*1664525 + 1013904223
+		input.Pix[index] = uint8(state >> 24)
+	}
+	var encoded bytes.Buffer
+	require.NoError(t, jpeg.Encode(&encoded, input, &jpeg.Options{Quality: 70}))
+	preview, err := service.NormalizeAndStoreUploadedImage(
+		bytes.NewReader(encoded.Bytes()), t.TempDir(), "preview", int64(encoded.Len()), service.MaxNormalizedUploadedImageBytes,
+	)
+	require.NoError(t, err)
+	require.Greater(t, preview.Size, int64(encoded.Len()))
+
+	now := time.Now().Unix()
+	existingSize := model.PlaygroundAssetMaxBytesPerUser - preview.Size + 1
+	require.NoError(t, db.Create(&model.PlaygroundAsset{
+		ID: "existing", UserID: 7, Kind: "image", Filename: "existing.png", ContentType: "image/png",
+		StorageName: "existing.png", Size: existingSize, CreatedAt: now, ExpiresAt: now + 3600,
+	}).Error)
+
+	var requestBody bytes.Buffer
+	writer := multipart.NewWriter(&requestBody)
+	require.NoError(t, writer.WriteField("kind", "image"))
+	fileWriter, err := writer.CreateFormFile("file", "reference.jpg")
+	require.NoError(t, err)
+	_, err = fileWriter.Write(encoded.Bytes())
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/pg/assets", &requestBody)
+	context.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	context.Set("id", 7)
+
+	UploadPlaygroundAsset(context)
+
+	assert.Equal(t, http.StatusTooManyRequests, recorder.Code)
+	entries, err := os.ReadDir(storageDir)
+	require.NoError(t, err)
+	assert.Empty(t, entries)
 }
 
 func TestGetPlaygroundAssetRejectsExpiredAsset(t *testing.T) {

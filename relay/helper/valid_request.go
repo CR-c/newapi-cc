@@ -163,7 +163,11 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 	switch relayMode {
 	case relayconstant.RelayModeImagesEdits:
 		if strings.Contains(c.Request.Header.Get("Content-Type"), "multipart/form-data") {
-			form, err := common.ParseMultipartFormReusable(c)
+			form := c.Request.MultipartForm
+			var err error
+			if form == nil {
+				form, err = common.ParseMultipartFormReusable(c)
+			}
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse image edit form request: %w", err)
 			}
@@ -200,11 +204,17 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			if imageRequest.N == nil || *imageRequest.N == 0 {
 				imageRequest.N = common.GetPointer(uint(1))
 			}
+			if imageRequest.Model == "" {
+				return nil, errors.New("model is required")
+			}
 
 			hasWatermark := formData.Has("watermark")
 			if hasWatermark {
 				watermark := formData.Get("watermark") == "true"
 				imageRequest.Watermark = &watermark
+			}
+			if err = normalizeAndStoreImageEditUploads(c, form); err != nil {
+				return nil, err
 			}
 			break
 		}

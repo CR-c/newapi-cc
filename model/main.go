@@ -286,6 +286,8 @@ func migrateDB() error {
 		&Task{},
 		&PlaygroundMediaHistory{},
 		&PlaygroundAsset{},
+		&PlaygroundAssetStorageState{},
+		&PlaygroundAssetStorageReservation{},
 		&VideoAsset{},
 		&Model{},
 		&Vendor{},
@@ -311,6 +313,9 @@ func migrateDB() error {
 		&AuthzRole{},
 	)
 	if err != nil {
+		return err
+	}
+	if err := DB.FirstOrCreate(&PlaygroundAssetStorageState{ID: 1}, PlaygroundAssetStorageState{ID: 1}).Error; err != nil {
 		return err
 	}
 	if err := migrateUserWallets(); err != nil {
@@ -360,6 +365,8 @@ func migrateDBFast() error {
 		{&Task{}, "Task"},
 		{&PlaygroundMediaHistory{}, "PlaygroundMediaHistory"},
 		{&PlaygroundAsset{}, "PlaygroundAsset"},
+		{&PlaygroundAssetStorageState{}, "PlaygroundAssetStorageState"},
+		{&PlaygroundAssetStorageReservation{}, "PlaygroundAssetStorageReservation"},
 		{&VideoAsset{}, "VideoAsset"},
 		{&Model{}, "Model"},
 		{&Vendor{}, "Vendor"},

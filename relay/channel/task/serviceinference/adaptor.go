@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	"golang.org/x/sync/errgroup"
 )
 
 type contentItem struct {
@@ -285,27 +286,46 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 	assetContext, cancelAssetPreparation := context.WithTimeout(assetContext, a.assetPreparationMaxWait())
 	defer cancelAssetPreparation()
-	for _, imageURL := range req.Images {
-		if strings.HasPrefix(imageURL, "asset://") {
-			assetID := strings.TrimPrefix(imageURL, "asset://")
-			resolvedValue, ok := common.GetContextKey(c, constant.ContextKeyVideoAssetReferences)
-			resolved, resolvedOK := resolvedValue.(map[string]string)
-			if !ok || !resolvedOK || resolved[assetID] == "" {
-				return nil, errors.New("video asset reference is not available")
-			}
-			body.Content = append(body.Content, contentItem{Type: "image_url", ImageURL: &struct {
-				URL string `json:"url"`
-			}{URL: "asset://" + resolved[assetID]}, Role: "reference_image"})
+	imageItems := make([]contentItem, len(req.Images))
+	for index, imageURL := range req.Images {
+		if !strings.HasPrefix(imageURL, "asset://") {
 			continue
 		}
-		assetID, uploadErr := a.createImageAsset(assetContext, info, imageURL)
-		if uploadErr != nil {
-			return nil, uploadErr
+		assetID := strings.TrimPrefix(imageURL, "asset://")
+		resolvedValue, ok := common.GetContextKey(c, constant.ContextKeyVideoAssetReferences)
+		resolved, resolvedOK := resolvedValue.(map[string]string)
+		if !ok || !resolvedOK || resolved[assetID] == "" {
+			return nil, errors.New("video asset reference is not available")
 		}
-		body.Content = append(body.Content, contentItem{Type: "image_url", ImageURL: &struct {
+		imageItems[index] = contentItem{Type: "image_url", ImageURL: &struct {
 			URL string `json:"url"`
-		}{URL: "asset://" + assetID}, Role: "reference_image"})
+		}{URL: "asset://" + resolved[assetID]}, Role: "reference_image"}
 	}
+	preparationGroup, preparationContext := errgroup.WithContext(assetContext)
+	for index, imageURL := range req.Images {
+		if strings.HasPrefix(imageURL, "asset://") {
+			continue
+		}
+		index := index
+		imageURL := imageURL
+		preparationGroup.Go(func() error {
+			assetID, uploadErr := a.createImageAsset(preparationContext, info, imageURL)
+			if uploadErr != nil {
+				return uploadErr
+			}
+			imageItems[index] = contentItem{Type: "image_url", ImageURL: &struct {
+				URL string `json:"url"`
+			}{URL: "asset://" + assetID}, Role: "reference_image"}
+			return nil
+		})
+	}
+	if err = preparationGroup.Wait(); err != nil {
+		if c != nil && c.Request != nil && c.Request.Context().Err() == context.Canceled && errors.Is(err, context.Canceled) {
+			return nil, service.NewClientRequestCanceledError()
+		}
+		return nil, err
+	}
+	body.Content = append(body.Content, imageItems...)
 	data, err := common.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -344,7 +364,7 @@ func (a *TaskAdaptor) createImageAsset(ctx context.Context, info *relaycommon.Re
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				return "", errors.New("reference asset preparation timed out")
 			}
-			return "", errors.New("reference asset preparation canceled")
+			return "", ctx.Err()
 		}
 		return "", errors.New("asset upload failed")
 	}
@@ -408,7 +428,7 @@ func (a *TaskAdaptor) waitForImageAsset(ctx context.Context, client *http.Client
 					logger.LogWarn(ctx, "service-inference asset readiness timed out: category=preparation_deadline")
 					return errors.New("reference asset processing timed out")
 				}
-				return errors.New("asset readiness check canceled")
+				return ctx.Err()
 			}
 			if readinessCtx.Err() != nil {
 				logger.LogWarn(ctx, "service-inference asset readiness timed out: category=request_deadline")
@@ -444,7 +464,7 @@ func (a *TaskAdaptor) waitForImageAsset(ctx context.Context, client *http.Client
 				logger.LogWarn(ctx, "service-inference asset readiness timed out: category=preparation_wait_deadline")
 				return errors.New("reference asset processing timed out")
 			}
-			return errors.New("asset readiness check canceled")
+			return ctx.Err()
 		case <-readinessCtx.Done():
 			logger.LogWarn(ctx, "service-inference asset readiness timed out: category=wait_deadline")
 			return errors.New("reference asset processing timed out")
@@ -491,8 +511,13 @@ func (a *TaskAdaptor) getImageAssetStatus(ctx context.Context, client *http.Clie
 		return "", true, errors.New("read status response failed")
 	}
 	var result assetResponse
-	if common.Unmarshal(responseBody, &result) != nil || !result.Success || result.Data.BaseResp.StatusCode != 0 {
+	if common.Unmarshal(responseBody, &result) != nil {
 		return "", false, errors.New("invalid status response")
+	}
+	if !result.Success || result.Data.BaseResp.StatusCode != 0 {
+		statusCode := result.Data.BaseResp.StatusCode
+		retryable := statusCode >= http.StatusInternalServerError || statusCode == http.StatusRequestTimeout || statusCode == http.StatusTooManyRequests
+		return "", retryable, errors.New("asset status is not ready")
 	}
 	if strings.TrimSpace(result.Data.Status) == "" {
 		return "", false, errors.New("empty asset status")

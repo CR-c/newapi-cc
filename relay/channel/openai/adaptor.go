@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -39,6 +40,10 @@ import (
 type Adaptor struct {
 	ChannelType    int
 	ResponseFormat string
+}
+
+func (a *Adaptor) UsesNormalizedImageUploads() bool {
+	return true
 }
 
 func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error) {
@@ -460,6 +465,20 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 				}
 			}
 		}
+		if normalizedValue, ok := c.Get(service.NormalizedImageUploadsContextKey); ok {
+			normalizedImages, valid := normalizedValue.([]service.StoredUploadedImage)
+			if !valid || len(normalizedImages) == 0 {
+				return nil, errors.New("normalized image uploads are unavailable")
+			}
+			if err := writeNormalizedImageEditUploads(writer, normalizedImages); err != nil {
+				return nil, err
+			}
+			if err := writer.Close(); err != nil {
+				return nil, errors.New("close image edit form failed")
+			}
+			c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+			return &requestBody, nil
+		}
 
 		if mf != nil && mf.File != nil {
 			// Check if "image" field exists in any form, including array notation
@@ -558,6 +577,46 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 	default:
 		return request, nil
 	}
+}
+
+func writeNormalizedImageEditUploads(writer *multipart.Writer, uploads []service.StoredUploadedImage) error {
+	imageCount := 0
+	for _, upload := range uploads {
+		if upload.FieldName != "mask" {
+			imageCount++
+		}
+	}
+	if imageCount == 0 {
+		return errors.New("image is required")
+	}
+	for _, upload := range uploads {
+		fieldName := "image"
+		if upload.FieldName == "mask" {
+			fieldName = "mask"
+		} else if imageCount > 1 {
+			fieldName = "image[]"
+		}
+		header := make(textproto.MIMEHeader)
+		header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, fieldName, upload.Filename))
+		header.Set("Content-Type", upload.ContentType)
+		part, err := writer.CreatePart(header)
+		if err != nil {
+			return fmt.Errorf("create normalized %s part: %w", fieldName, err)
+		}
+		file, err := os.Open(upload.Path)
+		if err != nil {
+			return fmt.Errorf("open normalized %s: %w", fieldName, err)
+		}
+		_, copyErr := io.Copy(part, file)
+		closeErr := file.Close()
+		if copyErr != nil {
+			return fmt.Errorf("copy normalized %s: %w", fieldName, copyErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close normalized %s: %w", fieldName, closeErr)
+		}
+	}
+	return nil
 }
 
 func isJSONRequest(c *gin.Context) bool {

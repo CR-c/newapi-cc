@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -48,7 +50,12 @@ var playgroundAssetKindRules = map[string]playgroundAssetKindRule{
 
 const playgroundAssetUploadMaxBytes = (50 << 20) + (1 << 20)
 
-var playgroundAssetUserLocks [64]sync.Mutex
+const (
+	playgroundReferenceImageMinDimension = 300
+	playgroundReferenceImageMaxDimension = 6000
+)
+
+var playgroundAssetUploadLock sync.Mutex
 
 func UploadPlaygroundAsset(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, playgroundAssetUploadMaxBytes)
@@ -68,9 +75,22 @@ func UploadPlaygroundAsset(c *gin.Context) {
 		return
 	}
 	userID := c.GetInt("id")
-	lock := &playgroundAssetUserLocks[uint(userID)%uint(len(playgroundAssetUserLocks))]
-	lock.Lock()
-	defer lock.Unlock()
+	playgroundAssetUploadLock.Lock()
+	defer playgroundAssetUploadLock.Unlock()
+	storageDirectory := model.PlaygroundAssetStorageDir()
+	reservationBytes := rule.maxSize
+	if kind == "image" {
+		reservationBytes += service.MaxNormalizedUploadedImageBytes
+	}
+	storageAvailable, err := service.UploadedImageStorageAvailable(storageDirectory, reservationBytes)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !storageAvailable {
+		c.JSON(http.StatusInsufficientStorage, gin.H{"success": false, "message": "asset storage is temporarily full"})
+		return
+	}
 
 	now := time.Now().Unix()
 	assetCount, assetBytes, err := model.GetPlaygroundAssetUsage(model.DB, userID, now)
@@ -107,6 +127,40 @@ func UploadPlaygroundAsset(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "unsupported asset content type"})
 		return
 	}
+	if kind == "image" {
+		if _, err = file.Seek(0, io.SeekStart); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		metadata, inspectErr := service.InspectUploadedImage(file)
+		if inspectErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid image upload"})
+			return
+		}
+		if metadata.Width < playgroundReferenceImageMinDimension || metadata.Height < playgroundReferenceImageMinDimension ||
+			metadata.Width > playgroundReferenceImageMaxDimension || metadata.Height > playgroundReferenceImageMaxDimension {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "image dimensions must be between 300 and 6000 pixels"})
+			return
+		}
+		if _, err = file.Seek(0, io.SeekStart); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+	reservationID, err := model.ReservePlaygroundAssetStorage(model.DB, reservationBytes, now)
+	if err != nil {
+		if errors.Is(err, model.ErrPlaygroundAssetStorageFull) {
+			c.JSON(http.StatusInsufficientStorage, gin.H{"success": false, "message": "asset storage is temporarily full"})
+			return
+		}
+		common.ApiError(c, err)
+		return
+	}
+	defer func() {
+		if releaseErr := model.ReleasePlaygroundAssetStorage(model.DB, reservationID); releaseErr != nil {
+			common.SysError("release playground asset storage reservation: " + releaseErr.Error())
+		}
+	}()
 
 	assetID, err := common.GenerateRandomCharsKey(32)
 	if err != nil {
@@ -114,33 +168,60 @@ func UploadPlaygroundAsset(c *gin.Context) {
 		return
 	}
 	storageName := assetID + extension
-	if err = os.MkdirAll(model.PlaygroundAssetStorageDir(), 0o750); err != nil {
-		common.ApiError(c, err)
-		return
-	}
 	storagePath := model.PlaygroundAssetStoragePath(storageName)
-	output, err := os.OpenFile(storagePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o640)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	written, writeErr := output.Write(prefix)
-	if writeErr == nil {
-		var copied int64
-		copied, writeErr = io.Copy(output, io.LimitReader(file, rule.maxSize-int64(written)+1))
-		written += int(copied)
-	}
-	closeErr := output.Close()
-	if writeErr != nil || closeErr != nil || int64(written) > rule.maxSize {
-		_ = os.Remove(storagePath)
-		if writeErr == nil {
-			writeErr = closeErr
+	written := 0
+	if kind == "image" {
+		stored, normalizeErr := service.NormalizeAndStoreUploadedImageContext(
+			c.Request.Context(), file, model.PlaygroundAssetStorageDir(), assetID,
+			rule.maxSize, service.MaxNormalizedUploadedImageBytes,
+		)
+		if normalizeErr != nil {
+			if service.IsInvalidUploadedImage(normalizeErr) {
+				c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid image upload"})
+				return
+			}
+			common.SysError("store playground image: " + normalizeErr.Error())
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "image upload storage is unavailable"})
+			return
 		}
-		if writeErr == nil {
-			writeErr = fmt.Errorf("asset exceeds size limit")
+		storageName = filepath.Base(stored.Path)
+		storagePath = stored.Path
+		extension = stored.Extension
+		contentType = stored.ContentType
+		written = int(stored.Size)
+		if assetBytes+stored.Size > model.PlaygroundAssetMaxBytesPerUser {
+			_ = os.Remove(storagePath)
+			c.JSON(http.StatusTooManyRequests, gin.H{"success": false, "message": "temporary asset quota exceeded"})
+			return
 		}
-		common.ApiError(c, writeErr)
-		return
+	} else {
+		if err = os.MkdirAll(model.PlaygroundAssetStorageDir(), 0o750); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		output, openErr := os.OpenFile(storagePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o640)
+		if openErr != nil {
+			common.ApiError(c, openErr)
+			return
+		}
+		written, err = output.Write(prefix)
+		if err == nil {
+			var copied int64
+			copied, err = io.Copy(output, io.LimitReader(file, rule.maxSize-int64(written)+1))
+			written += int(copied)
+		}
+		closeErr := output.Close()
+		if err != nil || closeErr != nil || int64(written) > rule.maxSize {
+			_ = os.Remove(storagePath)
+			if err == nil {
+				err = closeErr
+			}
+			if err == nil {
+				err = fmt.Errorf("asset exceeds size limit")
+			}
+			common.ApiError(c, err)
+			return
+		}
 	}
 
 	filename := safePlaygroundAssetFilename(fileHeader.Filename, extension)
