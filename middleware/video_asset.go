@@ -31,31 +31,48 @@ func resolveVideoAssetReferences(c *gin.Context, usingGroup string) (int, error)
 		_, _ = storage.Seek(0, io.SeekStart)
 		c.Request.Body = io.NopCloser(storage)
 	}()
-	imageCount := int(gjson.GetBytes(data, "images.#").Int())
-	if usingGroup == "video-dddd" && imageCount > 4 {
-		return 0, errors.New("at most 4 reference images are supported")
+	type mediaField struct {
+		Name      string
+		AssetType string
+		Max       int
 	}
-	assetIDs := make([]string, 0, 4)
-	seen := make(map[string]struct{}, 4)
-	for index := 0; index < imageCount; index++ {
-		imageResult := gjson.GetBytes(data, "images."+strconv.Itoa(index))
-		if imageResult.Type != gjson.String {
-			return 0, fmt.Errorf("images[%d] must be a string", index)
+	mediaFields := []mediaField{
+		{Name: "images", AssetType: "Image", Max: 9},
+		{Name: "videos", AssetType: "Video", Max: 3},
+		{Name: "audios", AssetType: "Audio", Max: 3},
+	}
+	assetIDs := make([]string, 0, 9)
+	assetTypes := make(map[string]string, 9)
+	seen := make(map[string]struct{}, 9)
+	for _, field := range mediaFields {
+		count := int(gjson.GetBytes(data, field.Name+".#").Int())
+		if usingGroup == "video-dddd" && count > field.Max {
+			return 0, fmt.Errorf("at most %d reference %s are supported", field.Max, field.Name)
 		}
-		image := imageResult.String()
-		if !strings.HasPrefix(image, "asset://") {
-			continue
-		}
-		if usingGroup != "video-dddd" {
-			return 0, errors.New("video asset references are only available to the video-dddd group")
-		}
-		assetID := strings.TrimPrefix(image, "asset://")
-		if len(assetID) > 64 || assetID == "" || strings.ContainsAny(assetID, "/?#") || !strings.HasPrefix(assetID, "asset-") {
-			return 0, errors.New("video asset reference is invalid")
-		}
-		if _, exists := seen[assetID]; !exists {
-			seen[assetID] = struct{}{}
-			assetIDs = append(assetIDs, assetID)
+		for index := 0; index < count; index++ {
+			mediaResult := gjson.GetBytes(data, field.Name+"."+strconv.Itoa(index))
+			if mediaResult.Type != gjson.String {
+				return 0, fmt.Errorf("%s[%d] must be a string", field.Name, index)
+			}
+			mediaURL := mediaResult.String()
+			if !strings.HasPrefix(mediaURL, "asset://") {
+				continue
+			}
+			if usingGroup != "video-dddd" {
+				return 0, errors.New("video asset references are only available to the video-dddd group")
+			}
+			assetID := strings.TrimPrefix(mediaURL, "asset://")
+			if len(assetID) > 64 || assetID == "" || strings.ContainsAny(assetID, "/?#") || !strings.HasPrefix(assetID, "asset-") {
+				return 0, errors.New("video asset reference is invalid")
+			}
+			if previousType, exists := assetTypes[assetID]; exists && previousType != field.AssetType {
+				return 0, errors.New("video asset reference type does not match request field")
+			}
+			assetTypes[assetID] = field.AssetType
+			if _, exists := seen[assetID]; !exists {
+				seen[assetID] = struct{}{}
+				assetIDs = append(assetIDs, assetID)
+			}
 		}
 	}
 	if len(assetIDs) == 0 {
@@ -72,8 +89,9 @@ func resolveVideoAssetReferences(c *gin.Context, usingGroup string) (int, error)
 	references := make(map[string]string, len(assets))
 	for _, assetID := range assetIDs {
 		asset := assets[assetID]
-		if asset.AssetType != "Image" {
-			return 0, errors.New("video-dddd currently supports Image assets only")
+		expectedType := assetTypes[assetID]
+		if asset.AssetType != expectedType {
+			return 0, fmt.Errorf("%s references must use %s assets", strings.ToLower(expectedType), expectedType)
 		}
 		if channelID == 0 {
 			channelID = asset.ChannelID

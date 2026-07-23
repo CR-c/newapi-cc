@@ -7,12 +7,47 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestConvertToRequestPayloadMapsUnifiedVideoFields(t *testing.T) {
+	generateAudio := true
+	watermark := false
+	adaptor := &TaskAdaptor{}
+
+	payload, err := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Model:         "doubao-seedance-2-0-260128",
+		Prompt:        "animate the scene",
+		Images:        []string{"https://example.com/reference.png"},
+		Videos:        []string{"https://example.com/motion.mp4"},
+		Audios:        []string{"https://example.com/music.mp3"},
+		AspectRatio:   "16:9",
+		Resolution:    "1080p",
+		Seconds:       "8",
+		GenerateAudio: &generateAudio,
+		Watermark:     &watermark,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "16:9", payload.Ratio)
+	assert.Equal(t, "1080p", payload.Resolution)
+	require.NotNil(t, payload.Duration)
+	assert.Equal(t, dto.IntValue(8), *payload.Duration)
+	require.NotNil(t, payload.GenerateAudio)
+	assert.Equal(t, dto.BoolValue(true), *payload.GenerateAudio)
+	require.NotNil(t, payload.Watermark)
+	assert.Equal(t, dto.BoolValue(false), *payload.Watermark)
+	require.Len(t, payload.Content, 4)
+	assert.Equal(t, "image_url", payload.Content[0].Type)
+	assert.Equal(t, "video_url", payload.Content[1].Type)
+	assert.Equal(t, "audio_url", payload.Content[2].Type)
+	assert.Equal(t, "text", payload.Content[3].Type)
+}
 
 func TestEstimateBillingRecordsVideoCostTier(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -27,6 +62,26 @@ func TestEstimateBillingRecordsVideoCostTier(t *testing.T) {
 	})
 	info := &relaycommon.RelayInfo{
 		OriginModelName: "public-video-alias",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "doubao-seedance-2-0-260128",
+		},
+	}
+
+	ratios := (&TaskAdaptor{}).EstimateBilling(context, info)
+
+	assert.Equal(t, relaycommon.VideoCostTier1080pReference, info.CostTier)
+	assert.NotEmpty(t, ratios)
+}
+
+func TestEstimateBillingUsesUnifiedVideoFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Set("task_request", relaycommon.TaskSubmitReq{
+		Resolution: "1080p",
+		Videos:     []string{"https://example.com/reference.mp4"},
+	})
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "doubao-seedance-2-0-260128",
 		ChannelMeta: &relaycommon.ChannelMeta{
 			UpstreamModelName: "doubao-seedance-2-0-260128",
 		},

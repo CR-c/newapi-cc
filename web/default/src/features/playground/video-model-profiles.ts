@@ -17,7 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 export interface VideoModelProfile {
-  provider: 'grok' | 'sub2api' | 'service-inference' | 'kyy' | 'generic'
+  provider:
+    | 'grok'
+    | 'sub2api'
+    | 'service-inference'
+    | 'doubao'
+    | 'kyy'
+    | 'generic'
   durations: number[]
   aspectRatios: string[]
   resolutions: string[]
@@ -158,6 +164,21 @@ export function getVideoModelProfile(
       supportsWatermark: false,
     }
   }
+  if (group === 'sd-token' && model === 'doubao-seedance-2-0-260128') {
+    return {
+      provider: 'doubao',
+      durations: [],
+      aspectRatios: ['16:9', '9:16', '1:1'],
+      resolutions: ['480p', '720p', '1080p'],
+      maxImages: 9,
+      maxVideos: 3,
+      maxAudios: 3,
+      requiresImage: false,
+      requiresImageWithAudio: false,
+      supportsGenerateAudio: true,
+      supportsWatermark: true,
+    }
+  }
   if (model.startsWith('dreamina-seedance-2-0-')) {
     return {
       provider: 'service-inference',
@@ -167,9 +188,9 @@ export function getVideoModelProfile(
         model === 'dreamina-seedance-2-0-hc'
           ? ['480p', '720p', '1080p', '4k']
           : ['480p', '720p'],
-      maxImages: 4,
-      maxVideos: 0,
-      maxAudios: 0,
+      maxImages: 9,
+      maxVideos: 3,
+      maxAudios: 3,
       requiresImage: false,
       requiresImageWithAudio: false,
       supportsGenerateAudio: true,

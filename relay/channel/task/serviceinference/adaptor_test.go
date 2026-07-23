@@ -76,6 +76,101 @@ func TestBuildRequestBodyUploadsImagesAndPreservesOptionalParameters(t *testing.
 	assert.Equal(t, "reference_image", payload.Content[1].Role)
 }
 
+func TestBuildRequestBodyUploadsMixedMediaAndPreservesOrder(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var assetRequestsMu sync.Mutex
+	assetRequests := make(map[string]string, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.Method == http.MethodGet {
+			assetID := strings.TrimPrefix(request.URL.Path, "/v1/sd/assets/")
+			_, _ = fmt.Fprintf(writer, `{"success":true,"data":{"Id":%q,"Status":"Active","base_resp":{"status_code":0,"status_msg":"success"}}}`, assetID)
+			return
+		}
+		if request.Method != http.MethodPost || request.URL.Path != "/v1/sd/assets" {
+			http.NotFound(writer, request)
+			return
+		}
+		var payload map[string]string
+		require.NoError(t, common.DecodeJson(request.Body, &payload))
+		assetRequestsMu.Lock()
+		assetRequests[payload["URL"]] = payload["AssetType"]
+		assetRequestsMu.Unlock()
+		_, _ = fmt.Fprintf(writer, `{"success":true,"data":{"Id":"asset-%s","base_resp":{"status_code":0,"status_msg":"success"}}}`, strings.ToLower(payload["AssetType"]))
+	}))
+	defer server.Close()
+
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Set("task_request", relaycommon.TaskSubmitReq{
+		Model: "dreamina-seedance-2-0-hc", Prompt: "animate", Duration: 5,
+		Images: []string{"https://example.com/reference.png"},
+		Videos: []string{"https://example.com/reference.mp4"},
+		Audios: []string{"https://example.com/reference.mp3"},
+	})
+	adaptor := &TaskAdaptor{
+		baseURL: server.URL, apiKey: "test-key",
+		assetPollInterval: time.Millisecond,
+	}
+
+	body, err := adaptor.BuildRequestBody(context, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "dreamina-seedance-2-0-hc"},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, assetRequests, 3)
+	assert.Equal(t, "Image", assetRequests["https://example.com/reference.png"])
+	assert.Equal(t, "Video", assetRequests["https://example.com/reference.mp4"])
+	assert.Equal(t, "Audio", assetRequests["https://example.com/reference.mp3"])
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload requestPayload
+	require.NoError(t, common.Unmarshal(data, &payload))
+	require.Len(t, payload.Content, 4)
+	require.NotNil(t, payload.Content[1].ImageURL)
+	assert.Equal(t, "asset://asset-image", payload.Content[1].ImageURL.URL)
+	assert.Equal(t, "reference_image", payload.Content[1].Role)
+	require.NotNil(t, payload.Content[2].VideoURL)
+	assert.Equal(t, "asset://asset-video", payload.Content[2].VideoURL.URL)
+	assert.Equal(t, "reference_video", payload.Content[2].Role)
+	require.NotNil(t, payload.Content[3].AudioURL)
+	assert.Equal(t, "asset://asset-audio", payload.Content[3].AudioURL.URL)
+	assert.Equal(t, "reference_audio", payload.Content[3].Role)
+}
+
+func TestBuildRequestBodyPassesResolvedMixedAssetReferencesWithoutUploadingAgain(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+	context.Set("task_request", relaycommon.TaskSubmitReq{
+		Model: "dreamina-seedance-2-0-mini-hc", Prompt: "animate", Duration: 4,
+		Images: []string{"asset://asset-image-local"},
+		Videos: []string{"asset://asset-video-local"},
+		Audios: []string{"asset://asset-audio-local"},
+	})
+	common.SetContextKey(context, constant.ContextKeyVideoAssetReferences, map[string]string{
+		"asset-image-local": "asset-image-upstream",
+		"asset-video-local": "asset-video-upstream",
+		"asset-audio-local": "asset-audio-upstream",
+	})
+
+	body, err := (&TaskAdaptor{}).BuildRequestBody(context, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{},
+	})
+
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload requestPayload
+	require.NoError(t, common.Unmarshal(data, &payload))
+	require.Len(t, payload.Content, 4)
+	require.NotNil(t, payload.Content[1].ImageURL)
+	assert.Equal(t, "asset://asset-image-upstream", payload.Content[1].ImageURL.URL)
+	require.NotNil(t, payload.Content[2].VideoURL)
+	assert.Equal(t, "asset://asset-video-upstream", payload.Content[2].VideoURL.URL)
+	require.NotNil(t, payload.Content[3].AudioURL)
+	assert.Equal(t, "asset://asset-audio-upstream", payload.Content[3].AudioURL.URL)
+}
+
 func TestBuildRequestBodyWaitsForReferenceAssetToBecomeActive(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	requests := make([]string, 0, 3)
@@ -743,7 +838,6 @@ func TestValidateRequestRejectsInvalidSecondsAndUnsupportedAssetReferences(t *te
 	for _, body := range []string{
 		`{"model":"dreamina-seedance-2-0-mini-hc","prompt":"test","seconds":"invalid"}`,
 		`{"model":"dreamina-seedance-2-0-mini-hc","prompt":"test","seconds":"4","images":["asset://foreign-asset"]}`,
-		`{"model":"dreamina-seedance-2-0-mini-hc","prompt":"test","seconds":"4","videos":["https://example.com/ref.mp4"]}`,
 	} {
 		context, _ := gin.CreateTestContext(httptest.NewRecorder())
 		context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
@@ -754,6 +848,126 @@ func TestValidateRequestRejectsInvalidSecondsAndUnsupportedAssetReferences(t *te
 		})
 		require.NotNil(t, taskErr, body)
 		assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	}
+}
+
+func TestValidateRequestAllowsServiceInferenceMixedMedia(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/v1/videos",
+		strings.NewReader(`{
+			"model":"dreamina-seedance-2-0-mini-hc",
+			"prompt":"test",
+			"seconds":"4",
+			"images":["asset://asset-image"],
+			"videos":["asset://asset-video"],
+			"audios":["asset://asset-audio"]
+		}`),
+	)
+	context.Request.Header.Set("Content-Type", "application/json")
+	common.SetContextKey(context, constant.ContextKeyVideoAssetReferences, map[string]string{
+		"asset-image": "asset-image-upstream",
+		"asset-video": "asset-video-upstream",
+		"asset-audio": "asset-audio-upstream",
+	})
+
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(context, &relaycommon.RelayInfo{
+		OriginModelName: "dreamina-seedance-2-0-mini-hc",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	})
+
+	require.Nil(t, taskErr)
+	request, err := relaycommon.GetTaskRequest(context)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"asset://asset-image"}, request.Images)
+	assert.Equal(t, []string{"asset://asset-video"}, request.Videos)
+	assert.Equal(t, []string{"asset://asset-audio"}, request.Audios)
+}
+
+func TestValidateRequestRequiresPreparedServiceInferenceAssets(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name string
+		body string
+		code string
+	}{
+		{
+			name: "image URL",
+			body: `{"model":"dreamina-seedance-2-0-mini-hc","prompt":"test","seconds":"4","images":["https://example.com/ref.png"]}`,
+			code: "invalid_images",
+		},
+		{
+			name: "video URL",
+			body: `{"model":"dreamina-seedance-2-0-mini-hc","prompt":"test","seconds":"4","videos":["https://example.com/ref.mp4"]}`,
+			code: "invalid_videos",
+		},
+		{
+			name: "audio URL",
+			body: `{"model":"dreamina-seedance-2-0-mini-hc","prompt":"test","seconds":"4","audios":["https://example.com/ref.mp3"]}`,
+			code: "invalid_audios",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			context, _ := gin.CreateTestContext(httptest.NewRecorder())
+			context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(test.body))
+			context.Request.Header.Set("Content-Type", "application/json")
+
+			taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(context, &relaycommon.RelayInfo{
+				OriginModelName: "dreamina-seedance-2-0-mini-hc",
+				TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+			})
+
+			require.NotNil(t, taskErr)
+			assert.Equal(t, test.code, taskErr.Code)
+			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+			assert.Contains(t, taskErr.Message, "create the reference")
+		})
+	}
+}
+
+func TestValidateRequestEnforcesServiceInferenceMediaLimits(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name string
+		body string
+		code string
+	}{
+		{
+			name: "ten images",
+			body: `{"model":"dreamina-seedance-2-0-mini-hc","prompt":"test","seconds":"4","images":["https://example.com/1.png","https://example.com/2.png","https://example.com/3.png","https://example.com/4.png","https://example.com/5.png","https://example.com/6.png","https://example.com/7.png","https://example.com/8.png","https://example.com/9.png","https://example.com/10.png"]}`,
+			code: "invalid_images",
+		},
+		{
+			name: "four videos",
+			body: `{"model":"dreamina-seedance-2-0-mini-hc","prompt":"test","seconds":"4","videos":["https://example.com/1.mp4","https://example.com/2.mp4","https://example.com/3.mp4","https://example.com/4.mp4"]}`,
+			code: "invalid_videos",
+		},
+		{
+			name: "four audios",
+			body: `{"model":"dreamina-seedance-2-0-mini-hc","prompt":"test","seconds":"4","audios":["https://example.com/1.mp3","https://example.com/2.mp3","https://example.com/3.mp3","https://example.com/4.mp3"]}`,
+			code: "invalid_audios",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			context, _ := gin.CreateTestContext(httptest.NewRecorder())
+			context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(test.body))
+			context.Request.Header.Set("Content-Type", "application/json")
+
+			taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(context, &relaycommon.RelayInfo{
+				OriginModelName: "dreamina-seedance-2-0-mini-hc",
+				TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+			})
+
+			require.NotNil(t, taskErr)
+			assert.Equal(t, test.code, taskErr.Code)
+			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+		})
 	}
 }
 

@@ -89,4 +89,44 @@ describe('service inference video model profiles', () => {
     assert.deepEqual(fast.resolutions, ['480p', '720p'])
     assert.deepEqual(mini.resolutions, ['480p', '720p'])
   })
+
+  test('video-dddd exposes official SD video media inputs', () => {
+    const profile = getVideoModelProfile(
+      'dreamina-seedance-2-0-mini-hc',
+      'video-dddd'
+    )
+
+    assert.equal(profile.maxImages, 9)
+    assert.equal(profile.maxVideos, 3)
+    assert.equal(profile.maxAudios, 3)
+    assert.equal(profile.supportsGenerateAudio, true)
+    assert.equal(profile.supportsWatermark, true)
+  })
+})
+
+describe('Doubao video model profiles', () => {
+  test('sd-token exposes the supported Seedance controls', () => {
+    const profile = getVideoModelProfile(
+      'doubao-seedance-2-0-260128',
+      'sd-token'
+    )
+
+    assert.equal(profile.provider, 'doubao')
+    assert.deepEqual(profile.aspectRatios, ['16:9', '9:16', '1:1'])
+    assert.deepEqual(profile.resolutions, ['480p', '720p', '1080p'])
+    assert.equal(profile.maxImages, 9)
+    assert.equal(profile.maxVideos, 3)
+    assert.equal(profile.maxAudios, 3)
+    assert.equal(profile.supportsGenerateAudio, true)
+    assert.equal(profile.supportsWatermark, true)
+  })
+
+  test('the same model outside sd-token keeps the generic profile', () => {
+    const profile = getVideoModelProfile(
+      'doubao-seedance-2-0-260128',
+      'default'
+    )
+
+    assert.equal(profile.provider, 'generic')
+  })
 })

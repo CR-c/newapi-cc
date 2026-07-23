@@ -403,8 +403,10 @@
       <div>
         <a href="#start">接入准备</a>
         <a href="#images">图片生成</a>
+        <a href="#dddd-sd-image">dddd-sd-图</a>
         <a href="#videos">视频通用流程</a>
         <a href="#video-dddd">video-dddd 专区</a>
+        <a href="#sd-token">sd-token</a>
         <a href="#video-parameters">视频模型能力</a>
         <a href="#errors">错误处理</a>
       </div>
@@ -431,7 +433,7 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
           <code>GET /v1/models</code> 响应。
         </div>
         <p>
-          当前控制台公开分组为：<code>64生图</code>、<code>生图</code>、<code>grok按次</code>、<code>video-dddd</code>和<code>sd-video</code>。模型与价格可能由管理员调整，以控制台定价页和当前
+          当前控制台公开分组为：<code>64生图</code>、<code>生图</code>、<code>dddd-sd-图</code>、<code>grok按次</code>、<code>video-dddd</code>、<code>sd-token</code>和<code>sd-video</code>。模型与价格可能由管理员调整，以控制台定价页和当前
           API Key 的实际返回为准。
         </p>
       </section>
@@ -663,6 +665,83 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
   -F "image=@./input.png"</code></pre>
       </section>
 
+      <section id="dddd-sd-image" class="group-section">
+        <div class="section-heading">
+          <p class="eyebrow">Image upstream</p>
+          <h2><code>dddd-sd-图</code> 分组</h2>
+          <p>
+            该分组通过统一图片接口 <code>POST /v1/images/generations</code> 调用
+            Seedream 图片模型。API Key 必须绑定到
+            <code>dddd-sd-图</code>，请求体不要传 <code>group</code>。
+          </p>
+        </div>
+
+        <div class="note">
+          <strong>先查模型：</strong>使用同一把 Key 调用
+          <code>GET /v1/models</code>。仅使用响应中实际返回的模型名。
+        </div>
+
+        <h3>模型</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>模型</th>
+                <th>当前计费</th>
+                <th>已验证请求</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>dola-seedream-5-0-pro-260628</code></td>
+                <td>¥0.538650/次</td>
+                <td><code>1024x1024</code>、<code>n=1</code></td>
+              </tr>
+              <tr>
+                <td><code>seedream-4-5-251128</code></td>
+                <td>¥0.239400/次</td>
+                <td>文本生图</td>
+              </tr>
+              <tr>
+                <td><code>seedream-5-0-lite-260128</code></td>
+                <td>¥0.209475/次</td>
+                <td><code>1920x1920</code>、<code>n=1</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>价格可能调整，实际扣费以控制台定价页和调用日志为准。</p>
+
+        <h3>请求示例</h3>
+        <pre><code>curl "$BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "dola-seedream-5-0-pro-260628",
+    "prompt": "极简产品摄影，蓝色玻璃瓶放在白色台面上，柔和棚拍光",
+    "size": "1024x1024",
+    "n": 1,
+    "response_format": "url"
+  }'</code></pre>
+
+        <h3>使用须知</h3>
+        <div class="warning">
+          <strong>图片生成是同步长请求。</strong>客户端读取超时建议不低于 300
+          秒。请求仍在处理中时不要重复提交，以免生成和扣费两次。
+        </div>
+        <ul>
+          <li>
+            当前已验证文本生图；先用 <code>n=1</code> 和常用尺寸做接入测试。
+          </li>
+          <li>
+            响应使用 <code>data[].url</code>；调用方应及时下载并自行持久化结果。
+          </li>
+          <li>
+            演练场选择“图片”、<code>dddd-sd-图</code> 和目标模型即可走同一渠道。
+          </li>
+        </ul>
+      </section>
+
       <section id="videos">
         <h2>视频通用流程</h2>
         <div class="note">
@@ -840,8 +919,8 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
           <h2><code>video-dddd</code> 专区</h2>
           <p>
             本栏目只适用于绑定到 <code>video-dddd</code> 分组的 API
-            Key，集中说明 dddd 视频模型、素材库和计费方式。请求体不要传
-            <code>group</code>。
+            Key，集中说明 dddd 视频模型、素材库和计费方式。API Key
+            决定分组，请求体不要传 <code>group</code>。
           </p>
         </div>
 
@@ -852,7 +931,20 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
           的分组和模型权限。
         </div>
 
+        <div class="warning">
+          <strong>不要直接照搬上游原始接口。</strong>用户侧只调用本站
+          <code>POST /v1/videos</code>、<code>GET /v1/videos/{task_id}</code>
+          和 <code>GET /v1/videos/{task_id}/content</code>。上游文档里的
+          <code>POST /v1/video/generate</code>、<code>content[].image_url.url</code>、
+          <code>content[].video_url.url</code>、<code>content[].audio_url.url</code>、
+          <code>ratio</code> 和 <code>mvt-*</code> 上游任务 ID，会由本站自动转换与映射。
+        </div>
+
         <h3>模型与限制</h3>
+        <p>
+          参考素材参数与官方 SD 视频一致：图片走 <code>images</code>，视频走
+          <code>videos</code>，音频走 <code>audios</code>。
+        </p>
         <div class="table-wrap">
           <table>
             <thead>
@@ -868,26 +960,28 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
                 <td><code>dreamina-seedance-2-0-fast-hc</code></td>
                 <td>4–15 秒</td>
                 <td><code>480p/720p</code></td>
-                <td>最多 4 张图片</td>
+                <td>最多 9 张图片 / 3 个视频 / 3 个音频</td>
               </tr>
               <tr>
                 <td><code>dreamina-seedance-2-0-hc</code></td>
                 <td>4–15 秒</td>
                 <td><code>480p/720p/1080p/4k</code></td>
-                <td>最多 4 张图片</td>
+                <td>最多 9 张图片 / 3 个视频 / 3 个音频</td>
               </tr>
               <tr>
                 <td><code>dreamina-seedance-2-0-mini-hc</code></td>
                 <td>4–15 秒</td>
                 <td><code>480p/720p</code></td>
-                <td>最多 4 张图片</td>
+                <td>最多 9 张图片 / 3 个视频 / 3 个音频</td>
               </tr>
             </tbody>
           </table>
         </div>
         <div class="warning">
-          <strong>时长必须为 4–15 秒。</strong>例如 3 秒请求会返回
-          <code>400 invalid_duration</code>。三个模型都支持
+          <strong>时长必须为 4–15 秒。</strong><code>images</code> 超过 9 张返回
+          <code>400 invalid_images</code>；<code>videos</code> 超过 3 个返回
+          <code>400 invalid_videos</code>；<code>audios</code> 超过 3 个返回
+          <code>400 invalid_audios</code>。三个模型都支持
           <code>generate_audio</code> 和 <code>watermark</code>。
         </div>
 
@@ -896,10 +990,7 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
           <li>
             <div>
               <strong>准备素材 URL</strong>
-              <p>
-                使用本站上传接口或管理员批准的 HTTPS 素材域名，获得受控的素材
-                URL。
-              </p>
+              <p>使用本站上传接口或管理员批准的 HTTPS 素材域名，获得受控的素材 URL。</p>
             </div>
           </li>
           <li>
@@ -907,7 +998,8 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
               <strong>创建并查询素材</strong>
               <p>
                 注册素材 URL，保存返回的 ID，并等待 <code>Status</code> 变为
-                <code>Active</code>。
+                <code>Active</code>。<code>AssetType</code> 按素材类型填写
+                <code>Image</code>、<code>Video</code> 或 <code>Audio</code>。
               </p>
             </div>
           </li>
@@ -915,9 +1007,9 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
             <div>
               <strong>生成视频</strong>
               <p>
-                将图片素材写成
-                <code>asset://&lt;Id&gt;</code>，放入统一视频请求的
-                <code>images</code> 数组。
+                将素材写成 <code>asset://&lt;Id&gt;</code>：图片放
+                <code>images</code>，视频放 <code>videos</code>，音频放
+                <code>audios</code>。
               </p>
             </div>
           </li>
@@ -934,16 +1026,18 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
   -F "file=@./reference.png"</code></pre>
         <p>
           <code>kind</code> 可为 <code>image</code>、<code>video</code> 或
-          <code>audio</code>。若使用自有对象存储或
-          CDN，素材域名必须先由管理员加入可信域名列表； 任意第三方 URL
-          不会直接转交上游抓取。
+          <code>audio</code>。若使用自有对象存储或 CDN，素材域名必须先由管理员加入可信域名列表；创建视频时不要直接传任意第三方 URL。
         </p>
+        <div class="note">
+          <strong>多素材规则：</strong>每个参考素材都要分别执行上传、创建素材、查询
+          <code>Active</code>。多图不是一次传多张到 <code>/v1/sd/assets</code>，而是在
+          <code>/v1/videos.images</code> 中放入最多 9 个 <code>asset://</code> 素材 ID；视频和音频分别放入 <code>videos</code>、<code>audios</code>，各最多 3 个。
+        </div>
 
         <h3>2. 创建素材</h3>
         <p>
           创建接口为 <strong>POST /v1/sd/assets</strong>。接口使用当前
-          <code>video-dddd</code> API Key 鉴权，并返回仅属于当前账户的本站素材
-          ID。
+          <code>video-dddd</code> API Key 鉴权，并返回仅属于当前账户的本站素材 ID。
         </p>
         <div class="endpoint" aria-label="POST /v1/sd/assets">
           <span class="method post">POST</span><code>/v1/sd/assets</code>
@@ -970,9 +1064,7 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
               <tr>
                 <td><code>URL</code></td>
                 <td>string</td>
-                <td>
-                  必填，管理员批准域名下的 HTTPS 素材地址（仅默认 443 端口）
-                </td>
+                <td>必填，管理员批准域名下的 HTTPS 素材地址（仅默认 443 端口）</td>
               </tr>
               <tr>
                 <td><code>Name</code></td>
@@ -982,9 +1074,7 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
               <tr>
                 <td><code>AssetType</code></td>
                 <td>string</td>
-                <td>
-                  <code>Image</code>、<code>Video</code> 或 <code>Audio</code>
-                </td>
+                <td><code>Image</code>、<code>Video</code> 或 <code>Audio</code></td>
               </tr>
             </tbody>
           </table>
@@ -1003,7 +1093,7 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
 }</code></pre>
         <div class="note">
           <strong>保存 <code>data.Id</code>。</strong>这是 VP 生成的账户级素材
-          ID，不是上游 ID。其他用户的素材 ID、上游原始 ID或未经过本站创建的
+          ID，不是上游 ID。其他用户的素材 ID、上游原始 ID 或未经过本站创建的
           <code>asset://</code> 引用均不可使用。
         </div>
 
@@ -1013,8 +1103,7 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
           <code>asset_id</code> 使用创建响应里的 <code>data.Id</code>。
         </p>
         <div class="endpoint" aria-label="GET /v1/sd/assets/{asset_id}">
-          <span class="method get">GET</span
-          ><code>/v1/sd/assets/{asset_id}</code>
+          <span class="method get">GET</span><code>/v1/sd/assets/{asset_id}</code>
         </div>
         <pre><code>ASSET_ID="asset-N3w8cK7pQ2mR5tV9xY4zA6bD"
 
@@ -1041,17 +1130,31 @@ curl "$BASE_URL/v1/sd/assets/$ASSET_ID" \
 }</code></pre>
         <p>
           建议每 2 秒查询一次，直到 <code>Status</code> 为
-          <code>Active</code> 后再提交视频任务。 若返回
-          404，请确认素材由当前账户创建，并且查询时仍使用
-          <code>video-dddd</code> 分组的 API Key。
+          <code>Active</code> 后再提交视频任务。若返回 404，请确认素材由当前账户创建，并且查询时仍使用 <code>video-dddd</code> 分组的 API Key。
         </p>
 
-        <h3>4. 在视频请求中引用图片素材</h3>
+        <h3>4. 在视频请求中引用素材</h3>
         <p>
-          将素材 ID 加上 <code>asset://</code> 前缀后放入
-          <code>images</code>。本站会校验素材归属，
-          并自动固定到创建该素材的上游渠道。
+          将素材 ID 加上 <code>asset://</code> 前缀后放入对应字段：
+          <code>Image</code> 素材放 <code>images</code>，<code>Video</code> 素材放
+          <code>videos</code>，<code>Audio</code> 素材放 <code>audios</code>。本站会校验素材归属和类型，并自动固定到创建该素材的上游渠道。
         </p>
+
+        <h4>情况 A：无图文生视频</h4>
+        <pre><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "dreamina-seedance-2-0-mini-hc",
+    "prompt": "纸飞机在清晨天空中缓慢飞行",
+    "seconds": 4,
+    "aspect_ratio": "16:9",
+    "resolution": "480p",
+    "generate_audio": false,
+    "watermark": false
+  }'</code></pre>
+
+        <h4>情况 B：单图参考</h4>
         <pre><code>curl "$BASE_URL/v1/videos" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
@@ -1061,17 +1164,61 @@ curl "$BASE_URL/v1/sd/assets/$ASSET_ID" \
     "seconds": 4,
     "aspect_ratio": "9:16",
     "resolution": "480p",
+    "images": ["asset://asset-image-1"],
+    "generate_audio": false,
+    "watermark": false
+  }'</code></pre>
+
+        <h4>情况 C：多图参考（最多 9 张）</h4>
+        <pre><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "dreamina-seedance-2-0-hc",
+    "prompt": "参考多张人物设定图，生成同一角色在城市夜景中缓慢走动",
+    "seconds": 8,
+    "aspect_ratio": "16:9",
+    "resolution": "720p",
     "images": [
-      "asset://asset-N3w8cK7pQ2mR5tV9xY4zA6bD"
+      "asset://asset-image-1",
+      "asset://asset-image-2",
+      "asset://asset-image-3",
+      "asset://asset-image-4",
+      "asset://asset-image-5",
+      "asset://asset-image-6",
+      "asset://asset-image-7",
+      "asset://asset-image-8",
+      "asset://asset-image-9"
     ],
     "generate_audio": false,
     "watermark": false
   }'</code></pre>
+
+        <h4>情况 D：图 + 视频 + 音频参考</h4>
+        <pre><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "dreamina-seedance-2-0-hc",
+    "prompt": "参考人物图、动作视频和背景音乐，生成带节奏感的短视频",
+    "seconds": 8,
+    "aspect_ratio": "16:9",
+    "resolution": "720p",
+    "images": ["asset://asset-image-1"],
+    "videos": ["asset://asset-video-1"],
+    "audios": ["asset://asset-audio-1"],
+    "generate_audio": false,
+    "watermark": false
+  }'</code></pre>
+
+        <h4>情况 E：禁止直接 URL 创建视频</h4>
+        <p>
+          对外文档统一要求：不要在 <code>/v1/videos.images</code>、<code>videos</code>、<code>audios</code> 中直接传图片、视频或音频 HTTPS URL。请先调用 <code>/v1/sd/assets</code> 创建对应素材，查询确认 <code>Status</code> 为 <code>Active</code>，再在创建视频时传 <code>asset://&lt;素材ID&gt;</code>。
+        </p>
         <div class="warning">
-          <strong>当前统一视频接口只接受 <code>Image</code> 素材引用。</strong>
-          <code>Video</code> 和
-          <code>Audio</code> 可通过素材库创建与查询，但暂时不能放入
-          <code>video-dddd</code> 的 <code>images/videos/audios</code> 参数。
+          <strong>字段和素材类型必须匹配。</strong><code>images</code> 只能放
+          <code>Image</code> 素材，<code>videos</code> 只能放 <code>Video</code> 素材，
+          <code>audios</code> 只能放 <code>Audio</code> 素材。这样可以把“素材是否被上游接受”和“视频任务是否创建成功”拆开排查，避免素材问题混成视频创建 502。
         </div>
 
         <h3>三个模型的直接请求示例</h3>
@@ -1120,10 +1267,103 @@ curl "$BASE_URL/v1/sd/assets/$ASSET_ID" \
         <h3>计费</h3>
         <p>
           <code>video-dddd</code> 在提交时预扣额度，并在任务完成后按
-          <code>usage.total_tokens</code
-          >、模型倍率、分组倍率、清晰度和参考图档位重新结算。
+          <code>usage.total_tokens</code>、模型倍率、分组倍率、清晰度和参考素材档位重新结算。
           多扣部分自动退回，少扣部分自动补扣；任务失败会退回预扣额度。当前倍率和价格以控制台定价页为准。
         </p>
+      </section>
+
+      <section id="sd-token" class="group-section">
+        <div class="section-heading">
+          <p class="eyebrow">Token billing</p>
+          <h2><code>sd-token</code> 分组</h2>
+          <p>
+            该分组提供
+            <code>doubao-seedance-2-0-260128</code>，使用统一异步视频接口并按
+            Token 结算。API Key 必须绑定到 <code>sd-token</code>，请求体不要传
+            <code>group</code>。
+          </p>
+        </div>
+
+        <div class="note">
+          <strong>固定调用链：</strong><code>POST /v1/videos</code> 创建任务，
+          <code>GET /v1/videos/{task_id}</code> 轮询，完成后调用
+          <code>GET /v1/videos/{task_id}/content</code> 获取 MP4。
+        </div>
+
+        <h3>能力与计费</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>输出档位</th>
+                <th>官方基准价（含视频）</th>
+                <th>官方基准价（不含视频）</th>
+                <th><code>sd-token</code> 实际价（含视频）</th>
+                <th><code>sd-token</code> 实际价（不含视频）</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>480p/720p</code></td>
+                <td>¥28.00/百万 Token</td>
+                <td>¥46.00/百万 Token</td>
+                <td>¥21.84/百万 Token</td>
+                <td>¥35.88/百万 Token</td>
+              </tr>
+              <tr>
+                <td><code>1080p</code></td>
+                <td>¥31.00/百万 Token</td>
+                <td>¥51.00/百万 Token</td>
+                <td>¥24.18/百万 Token</td>
+                <td>¥39.78/百万 Token</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          官方基准价按输出分辨率和是否包含参考视频区分。当前 <code>sd-token</code> 分组倍率 <code>0.78</code>，实际价格为官方基准价乘以 <code>0.78</code>；图片或音频参考不属于“含视频”档。
+        </p>
+        <p>
+          支持 <code>480p</code>、<code>720p</code>、<code>1080p</code>；
+          <strong>4K 当前未启用</strong>。支持
+          <code>aspect_ratio</code>、图片/视频/音频参考、
+          <code>generate_audio</code> 和
+          <code>watermark</code>。素材数量和时长仍以上游实际校验为准。
+        </p>
+
+        <h3>请求示例</h3>
+        <pre><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "doubao-seedance-2-0-260128",
+    "prompt": "蓝色渐变背景缓慢流动，画面干净，无文字",
+    "seconds": 4,
+    "aspect_ratio": "16:9",
+    "resolution": "480p",
+    "generate_audio": false,
+    "watermark": false
+  }'</code></pre>
+
+        <h3>使用须知</h3>
+        <div class="warning">
+          <strong>提交时会先预扣，完成后再按实际 Token 重算。</strong>
+          多扣部分自动退回，少扣部分自动补扣，失败任务退回预扣。余额必须能覆盖提交时的预扣额度。
+        </div>
+        <ul>
+          <li>
+            接入测试建议先用 <code>4 秒 + 480p + 无音频</code>，降低等待和消耗。
+          </li>
+          <li>
+            建议每 5–10 秒轮询，整体超时不低于 600
+            秒；不要用高频轮询或重复提交代替等待。
+          </li>
+          <li>结果 URL 由本站代理，不要依赖或保存上游内部任务 ID。</li>
+          <li>
+            演练场选择“视频”、<code>sd-token</code>
+            和该模型即可使用同一参数与计费链路。
+          </li>
+        </ul>
       </section>
 
       <section id="video-parameters">
@@ -1184,7 +1424,7 @@ curl "$BASE_URL/v1/sd/assets/$ASSET_ID" \
                   <code>hc</code> 另支持 <code>1080p/4k</code>
                 </td>
                 <td>
-                  最多 4 张参考图；支持 <code>generate_audio</code> 和
+                  最多 9 张参考图；支持 <code>generate_audio</code> 和
                   <code>watermark</code>
                 </td>
                 <td>按实际 token</td>

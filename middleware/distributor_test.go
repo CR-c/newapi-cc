@@ -175,18 +175,135 @@ func TestResolveVideoAssetReferencesEnforcesOwnershipAndChannel(t *testing.T) {
 	assert.ErrorContains(t, err, "not found or unavailable")
 }
 
-func TestResolveVideoAssetReferencesRejectsOversizedImageArraysBeforeLookup(t *testing.T) {
+func TestResolveVideoAssetReferencesSupportsVideoAndAudioAssets(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.VideoAsset{}))
+	previousDB := model.DB
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+	})
+	for _, asset := range []*model.VideoAsset{
+		{ID: "asset-image", UserID: 7, Group: "video-dddd", ChannelID: 59, UpstreamID: "asset-image-upstream", AssetType: "Image"},
+		{ID: "asset-video", UserID: 7, Group: "video-dddd", ChannelID: 59, UpstreamID: "asset-video-upstream", AssetType: "Video"},
+		{ID: "asset-audio", UserID: 7, Group: "video-dddd", ChannelID: 59, UpstreamID: "asset-audio-upstream", AssetType: "Audio"},
+	} {
+		require.NoError(t, db.Create(asset).Error)
+	}
+
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewBufferString(`{
+		"model":"dreamina-seedance-2-0-mini-hc",
+		"images":["asset://asset-image"],
+		"videos":["asset://asset-video"],
+		"audios":["asset://asset-audio"]
+	}`))
+	context.Request.Header.Set("Content-Type", "application/json")
+	context.Set("id", 7)
+
+	channelID, err := resolveVideoAssetReferences(context, "video-dddd")
+
+	require.NoError(t, err)
+	assert.Equal(t, 59, channelID)
+	referencesValue, exists := common.GetContextKey(context, constant.ContextKeyVideoAssetReferences)
+	require.True(t, exists)
+	references, ok := referencesValue.(map[string]string)
+	require.True(t, ok)
+	assert.Equal(t, "asset-image-upstream", references["asset-image"])
+	assert.Equal(t, "asset-video-upstream", references["asset-video"])
+	assert.Equal(t, "asset-audio-upstream", references["asset-audio"])
+}
+
+func TestResolveVideoAssetReferencesRejectsMismatchedAssetType(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.VideoAsset{}))
+	previousDB := model.DB
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+	})
+	require.NoError(t, db.Create(&model.VideoAsset{
+		ID: "asset-video", UserID: 7, Group: "video-dddd", ChannelID: 59, UpstreamID: "asset-video-upstream", AssetType: "Video",
+	}).Error)
+
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewBufferString(`{
+		"model":"dreamina-seedance-2-0-mini-hc",
+		"images":["asset://asset-video"]
+	}`))
+	context.Request.Header.Set("Content-Type", "application/json")
+	context.Set("id", 7)
+
+	_, err = resolveVideoAssetReferences(context, "video-dddd")
+
+	assert.ErrorContains(t, err, "image references must use Image assets")
+}
+
+func TestResolveVideoAssetReferencesRejectsMoreThanThreeVideosAndAudiosBeforeLookup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "videos",
+			body: `{"model":"dreamina-seedance-2-0-mini-hc","videos":["asset://asset-1","asset://asset-2","asset://asset-3","asset://asset-4"]}`,
+			want: "at most 3 reference videos",
+		},
+		{
+			name: "audios",
+			body: `{"model":"dreamina-seedance-2-0-mini-hc","audios":["asset://asset-1","asset://asset-2","asset://asset-3","asset://asset-4"]}`,
+			want: "at most 3 reference audios",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			context, _ := gin.CreateTestContext(httptest.NewRecorder())
+			context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewBufferString(test.body))
+			context.Request.Header.Set("Content-Type", "application/json")
+
+			_, err := resolveVideoAssetReferences(context, "video-dddd")
+
+			assert.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
+func TestResolveVideoAssetReferencesRejectsMoreThanNineImagesBeforeLookup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	context, _ := gin.CreateTestContext(httptest.NewRecorder())
 	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewBufferString(`{
 		"model":"dreamina-seedance-2-0-mini-hc",
-		"images":["asset://asset-1","asset://asset-2","asset://asset-3","asset://asset-4","asset://asset-5"]
+		"images":["asset://asset-1","asset://asset-2","asset://asset-3","asset://asset-4","asset://asset-5","asset://asset-6","asset://asset-7","asset://asset-8","asset://asset-9","asset://asset-10"]
 	}`))
 	context.Request.Header.Set("Content-Type", "application/json")
 
 	_, err := resolveVideoAssetReferences(context, "video-dddd")
 
-	assert.ErrorContains(t, err, "at most 4")
+	assert.ErrorContains(t, err, "at most 9")
+}
+
+func TestResolveVideoAssetReferencesAllowsNineImages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewBufferString(`{
+		"model":"dreamina-seedance-2-0-mini-hc",
+		"images":[
+			"https://example.com/1.png","https://example.com/2.png","https://example.com/3.png",
+			"https://example.com/4.png","https://example.com/5.png","https://example.com/6.png",
+			"https://example.com/7.png","https://example.com/8.png","https://example.com/9.png"
+		]
+	}`))
+	context.Request.Header.Set("Content-Type", "application/json")
+
+	channelID, err := resolveVideoAssetReferences(context, "video-dddd")
+
+	require.NoError(t, err)
+	assert.Zero(t, channelID)
 }
 
 func TestResolveVideoAssetReferencesPreservesOtherGroupImageLimits(t *testing.T) {

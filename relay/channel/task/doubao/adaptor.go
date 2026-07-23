@@ -182,8 +182,11 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if err != nil {
 		return nil
 	}
-	hasVideo := hasVideoInMetadata(req.Metadata)
-	resolution, _ := req.Metadata["resolution"].(string)
+	hasVideo := len(req.Videos) > 0 || hasVideoInMetadata(req.Metadata)
+	resolution := req.Resolution
+	if metadataResolution, ok := req.Metadata["resolution"].(string); ok && metadataResolution != "" {
+		resolution = metadataResolution
+	}
 	info.CostTier = relaycommon.VideoCostTier(resolution, hasVideo)
 	billingModel := info.UpstreamModelName
 	if billingModel == "" {
@@ -366,10 +369,34 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 			})
 		}
 	}
+	for _, videoURL := range req.Videos {
+		r.Content = append(r.Content, ContentItem{
+			Type:     "video_url",
+			VideoURL: &MediaURL{URL: videoURL},
+		})
+	}
+	for _, audioURL := range req.Audios {
+		r.Content = append(r.Content, ContentItem{
+			Type:     "audio_url",
+			AudioURL: &MediaURL{URL: audioURL},
+		})
+	}
 
 	metadata := req.Metadata
 	if err := taskcommon.UnmarshalMetadata(metadata, &r); err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
+	}
+	if r.Resolution == "" {
+		r.Resolution = req.Resolution
+	}
+	if r.Ratio == "" {
+		r.Ratio = req.AspectRatio
+	}
+	if r.GenerateAudio == nil && req.GenerateAudio != nil {
+		r.GenerateAudio = lo.ToPtr(dto.BoolValue(*req.GenerateAudio))
+	}
+	if r.Watermark == nil && req.Watermark != nil {
+		r.Watermark = lo.ToPtr(dto.BoolValue(*req.Watermark))
 	}
 
 	if sec, _ := strconv.Atoi(req.Seconds); sec > 0 {

@@ -31,6 +31,12 @@ type contentItem struct {
 	ImageURL *struct {
 		URL string `json:"url"`
 	} `json:"image_url,omitempty"`
+	VideoURL *struct {
+		URL string `json:"url"`
+	} `json:"video_url,omitempty"`
+	AudioURL *struct {
+		URL string `json:"url"`
+	} `json:"audio_url,omitempty"`
 	Role string `json:"role,omitempty"`
 }
 type requestPayload struct {
@@ -112,28 +118,42 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if duration == 0 {
 		duration = defaultDurationSeconds
 	}
-	if len(req.Images) > 4 {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("at most 4 reference images are supported"), "invalid_images", http.StatusBadRequest)
+	if len(req.Images) > 9 {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("at most 9 reference images are supported"), "invalid_images", http.StatusBadRequest)
 	}
-	if len(req.Videos) > 0 || len(req.Audios) > 0 {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("this model only supports reference images"), "invalid_media", http.StatusBadRequest)
+	if len(req.Videos) > 3 {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("at most 3 reference videos are supported"), "invalid_videos", http.StatusBadRequest)
 	}
-	for _, imageURL := range req.Images {
-		if strings.HasPrefix(imageURL, "asset://") {
-			assetID := strings.TrimPrefix(imageURL, "asset://")
-			resolvedValue, ok := common.GetContextKey(c, constant.ContextKeyVideoAssetReferences)
-			if !ok {
-				return service.TaskErrorWrapperLocal(fmt.Errorf("video asset reference is not available"), "invalid_images", http.StatusBadRequest)
+	if len(req.Audios) > 3 {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("at most 3 reference audios are supported"), "invalid_audios", http.StatusBadRequest)
+	}
+	resolvedValue, hasResolvedAssets := common.GetContextKey(c, constant.ContextKeyVideoAssetReferences)
+	resolvedAssets, _ := resolvedValue.(map[string]string)
+	validateMedia := func(values []string, mediaType, code string) *dto.TaskError {
+		for _, mediaURL := range values {
+			if strings.HasPrefix(mediaURL, "asset://") {
+				assetID := strings.TrimPrefix(mediaURL, "asset://")
+				if !hasResolvedAssets || resolvedAssets[assetID] == "" {
+					return service.TaskErrorWrapperLocal(fmt.Errorf("video asset reference is not available"), code, http.StatusBadRequest)
+				}
+				continue
 			}
-			resolved, ok := resolvedValue.(map[string]string)
-			if !ok || resolved[assetID] == "" {
-				return service.TaskErrorWrapperLocal(fmt.Errorf("video asset reference is not available"), "invalid_images", http.StatusBadRequest)
-			}
-			continue
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("create the reference %s asset first and pass asset://<asset_id>", mediaType),
+				code,
+				http.StatusBadRequest,
+			)
 		}
-		if err = taskcommon.ValidateMediaURL(imageURL, false, taskcommon.MediaURLPortPolicyEnforceConfigured); err != nil {
-			return service.TaskErrorWrapperLocal(fmt.Errorf("invalid reference image: %w", err), "invalid_images", http.StatusBadRequest)
-		}
+		return nil
+	}
+	if taskErr := validateMedia(req.Images, "image", "invalid_images"); taskErr != nil {
+		return taskErr
+	}
+	if taskErr := validateMedia(req.Videos, "video", "invalid_videos"); taskErr != nil {
+		return taskErr
+	}
+	if taskErr := validateMedia(req.Audios, "audio", "invalid_audios"); taskErr != nil {
+		return taskErr
 	}
 	if duration < minDurationSeconds || duration > maxDurationSeconds {
 		return service.TaskErrorWrapperLocal(
@@ -260,6 +280,23 @@ func billingRatio(modelName, resolution string, hasRef bool) (float64, bool) {
 	return price / base, true
 }
 
+func mediaContentItem(assetURL, mediaType string) contentItem {
+	switch mediaType {
+	case "Video":
+		return contentItem{Type: "video_url", VideoURL: &struct {
+			URL string `json:"url"`
+		}{URL: assetURL}, Role: "reference_video"}
+	case "Audio":
+		return contentItem{Type: "audio_url", AudioURL: &struct {
+			URL string `json:"url"`
+		}{URL: assetURL}, Role: "reference_audio"}
+	default:
+		return contentItem{Type: "image_url", ImageURL: &struct {
+			URL string `json:"url"`
+		}{URL: assetURL}, Role: "reference_image"}
+	}
+}
+
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
@@ -286,36 +323,41 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 	assetContext, cancelAssetPreparation := context.WithTimeout(assetContext, a.assetPreparationMaxWait())
 	defer cancelAssetPreparation()
-	imageItems := make([]contentItem, len(req.Images))
-	for index, imageURL := range req.Images {
-		if !strings.HasPrefix(imageURL, "asset://") {
-			continue
-		}
-		assetID := strings.TrimPrefix(imageURL, "asset://")
-		resolvedValue, ok := common.GetContextKey(c, constant.ContextKeyVideoAssetReferences)
-		resolved, resolvedOK := resolvedValue.(map[string]string)
-		if !ok || !resolvedOK || resolved[assetID] == "" {
-			return nil, errors.New("video asset reference is not available")
-		}
-		imageItems[index] = contentItem{Type: "image_url", ImageURL: &struct {
-			URL string `json:"url"`
-		}{URL: "asset://" + resolved[assetID]}, Role: "reference_image"}
+	type mediaInput struct {
+		URL       string
+		MediaType string
 	}
+	mediaInputs := make([]mediaInput, 0, len(req.Images)+len(req.Videos)+len(req.Audios))
+	appendMediaInputs := func(values []string, mediaType string) {
+		for _, mediaURL := range values {
+			mediaInputs = append(mediaInputs, mediaInput{URL: mediaURL, MediaType: mediaType})
+		}
+	}
+	appendMediaInputs(req.Images, "Image")
+	appendMediaInputs(req.Videos, "Video")
+	appendMediaInputs(req.Audios, "Audio")
+
+	resolvedValue, hasResolvedAssets := common.GetContextKey(c, constant.ContextKeyVideoAssetReferences)
+	resolvedAssets, _ := resolvedValue.(map[string]string)
+	mediaItems := make([]contentItem, len(mediaInputs))
 	preparationGroup, preparationContext := errgroup.WithContext(assetContext)
-	for index, imageURL := range req.Images {
-		if strings.HasPrefix(imageURL, "asset://") {
+	for index, input := range mediaInputs {
+		if strings.HasPrefix(input.URL, "asset://") {
+			assetID := strings.TrimPrefix(input.URL, "asset://")
+			if !hasResolvedAssets || resolvedAssets[assetID] == "" {
+				return nil, errors.New("video asset reference is not available")
+			}
+			mediaItems[index] = mediaContentItem("asset://"+resolvedAssets[assetID], input.MediaType)
 			continue
 		}
 		index := index
-		imageURL := imageURL
+		input := input
 		preparationGroup.Go(func() error {
-			assetID, uploadErr := a.createImageAsset(preparationContext, info, imageURL)
+			assetID, uploadErr := a.createMediaAsset(preparationContext, info, input.URL, input.MediaType)
 			if uploadErr != nil {
 				return uploadErr
 			}
-			imageItems[index] = contentItem{Type: "image_url", ImageURL: &struct {
-				URL string `json:"url"`
-			}{URL: "asset://" + assetID}, Role: "reference_image"}
+			mediaItems[index] = mediaContentItem("asset://"+assetID, input.MediaType)
 			return nil
 		})
 	}
@@ -325,7 +367,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		}
 		return nil, err
 	}
-	body.Content = append(body.Content, imageItems...)
+	body.Content = append(body.Content, mediaItems...)
 	data, err := common.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -334,8 +376,12 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 }
 
 func (a *TaskAdaptor) createImageAsset(ctx context.Context, info *relaycommon.RelayInfo, imageURL string) (string, error) {
+	return a.createMediaAsset(ctx, info, imageURL, "Image")
+}
+
+func (a *TaskAdaptor) createMediaAsset(ctx context.Context, info *relaycommon.RelayInfo, mediaURL, mediaType string) (string, error) {
 	payload := map[string]string{
-		"URL": imageURL, "Name": "playground-reference", "AssetType": "Image",
+		"URL": mediaURL, "Name": "playground-reference", "AssetType": mediaType,
 	}
 	body, err := common.Marshal(payload)
 	if err != nil {
