@@ -106,7 +106,48 @@ const GPT_IMAGE_SIZES: Record<string, Record<string, string>> = {
 const GENERIC_SIZES = ['1024x1024', '1024x1792', '1792x1024']
 
 const SEEDREAM_SIZES = [
+  '1K',
+  '2K',
+  '3K',
+  '4K',
   '1024x1024',
+  '1920x1920',
+  '2048x2048',
+  '2560x1440',
+  '1440x2560',
+  '1024x1792',
+  '1792x1024',
+]
+
+/** Seedream 5.0 pro: 1K/2K or pixels; multi-ref up to 10. */
+const SEEDREAM_PRO_SIZES = [
+  '1K',
+  '2K',
+  '1024x1024',
+  '1920x1920',
+  '2048x2048',
+  '2560x1440',
+  '1440x2560',
+  '1024x1792',
+  '1792x1024',
+]
+
+/** Seedream 5.0 lite: 2K/3K or pixels; multi-ref up to 14. */
+const SEEDREAM_LITE_SIZES = [
+  '2K',
+  '3K',
+  '1920x1920',
+  '2048x2048',
+  '2560x1440',
+  '1440x2560',
+  '1024x1792',
+  '1792x1024',
+]
+
+/** Seedream 4.5: 2K/4K or pixels; multi-ref up to 14. */
+const SEEDREAM_45_SIZES = [
+  '2K',
+  '4K',
   '1920x1920',
   '2048x2048',
   '2560x1440',
@@ -243,21 +284,46 @@ function createGptImageBasicProfile(): ImageModelProfile {
   }
 }
 
-function createSeedreamProfile(): ImageModelProfile {
+function createSeedreamProfile(model?: string): ImageModelProfile {
+  const m = normalizeModel(model ?? '')
+  const isPro =
+    m.includes('seedream-5-0-pro') ||
+    m.includes('seedream-5.0-pro') ||
+    m.includes('dola-seedream-5-0-pro')
+  const isLite =
+    m.includes('seedream-5-0-lite') ||
+    m.includes('seedream-5.0-lite') ||
+    (m.includes('seedream-5-0') && m.includes('lite'))
+  const is45 = m.includes('seedream-4-5') || m.includes('seedream-4.5')
+
+  let sizes = SEEDREAM_SIZES
+  let maxReferences = 14
+  if (isPro) {
+    sizes = SEEDREAM_PRO_SIZES
+    maxReferences = 10
+  } else if (isLite) {
+    sizes = SEEDREAM_LITE_SIZES
+    maxReferences = 14
+  } else if (is45) {
+    sizes = SEEDREAM_45_SIZES
+    maxReferences = 14
+  }
+
   return {
     provider: 'seedream',
     aspectRatios: [],
     resolutions: [],
     presetSizes: GENERIC_PROFILE.presetSizes,
-    sizes: SEEDREAM_SIZES,
+    sizes,
     qualities: [],
     backgrounds: [],
-    responseFormats: ['url'],
+    // Official Seedream supports url and b64_json.
+    responseFormats: ['url', 'b64_json'],
     maxImages: 1,
-    // Seedream 4.x accepts multi-image reference via unified `image` field.
-    maxReferences: 10,
+    // Multi-image reference via unified `image` field (pro ≤10, lite/4.5 ≤14).
+    maxReferences,
     supportsAutoSize: false,
-    supportsExactSize: false,
+    supportsExactSize: true,
   }
 }
 
@@ -290,7 +356,7 @@ export function getImageModelProfile(
     return createGptImageBasicProfile()
   }
   if (isSeedreamModel(model) || group === 'dddd-sd-图') {
-    return createSeedreamProfile()
+    return createSeedreamProfile(model)
   }
   if (isImageEditModel(model)) {
     return createImageEditProfile()

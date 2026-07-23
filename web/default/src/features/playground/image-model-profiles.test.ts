@@ -65,17 +65,35 @@ describe('image model profiles', () => {
   })
 
   test('seedream models enable image-to-image references', () => {
-    const byName = getImageModelProfile(
-      'default',
+    const pro = getImageModelProfile(
+      'dddd-sd-图',
       'dola-seedream-5-0-pro-260628'
     )
-    assert.equal(byName.provider, 'seedream')
-    assert.equal(byName.maxReferences, 10)
-    assert.ok(byName.sizes?.includes('1920x1920'))
+    assert.equal(pro.provider, 'seedream')
+    assert.equal(pro.maxReferences, 10)
+    assert.ok(pro.sizes?.includes('1K'))
+    assert.ok(pro.sizes?.includes('2K'))
+    assert.ok(pro.sizes?.includes('2048x2048'))
+    assert.ok(pro.responseFormats.includes('b64_json'))
+
+    const lite = getImageModelProfile(
+      'dddd-sd-图',
+      'seedream-5-0-lite-260128'
+    )
+    assert.equal(lite.maxReferences, 14)
+    assert.ok(lite.sizes?.includes('2K'))
+    assert.ok(lite.sizes?.includes('3K'))
+    assert.ok(!lite.sizes?.includes('1K'))
+
+    const v45 = getImageModelProfile('dddd-sd-图', 'seedream-4-5-251128')
+    assert.equal(v45.maxReferences, 14)
+    assert.ok(v45.sizes?.includes('2K'))
+    assert.ok(v45.sizes?.includes('4K'))
 
     const byGroup = getImageModelProfile('dddd-sd-图', 'custom-seedream-alias')
     assert.equal(byGroup.provider, 'seedream')
-    assert.equal(byGroup.maxReferences, 10)
+    // Unknown seedream alias keeps the broader size list and 14-ref default.
+    assert.equal(byGroup.maxReferences, 14)
   })
 
   test('image-edit models expose reference uploads', () => {

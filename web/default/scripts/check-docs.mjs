@@ -35,16 +35,27 @@ const imageSectionMatch = source.match(
   /<section id="dddd-sd-image"[\s\S]*?<\/section>/
 )
 requireMatch(imageSectionMatch, 'dddd-sd-image section is missing')
+const imageSection = imageSectionMatch[0]
 for (const contract of [
   'dddd-sd-图',
   'dola-seedream-5-0-pro-260628',
   'seedream-4-5-251128',
   'seedream-5-0-lite-260128',
   'POST /v1/images/generations',
+  '支持的参数',
+  'watermark',
+  'response_format',
+  '1K',
+  '2K',
+  '3K',
+  '4K',
+  '0–10',
+  '0–14',
+  '多参考图',
   '使用须知',
 ]) {
   requireMatch(
-    imageSectionMatch[0].includes(contract),
+    imageSection.includes(contract),
     `dddd-sd-image section is missing ${contract}`
   )
 }

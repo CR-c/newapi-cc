@@ -665,13 +665,13 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
   -F "image=@./input.png"</code></pre>
       </section>
 
-      <section id="dddd-sd-image" class="group-section">
+            <section id="dddd-sd-image" class="group-section">
         <div class="section-heading">
-          <p class="eyebrow">Image upstream</p>
+          <p class="eyebrow">Image group</p>
           <h2><code>dddd-sd-图</code> 分组</h2>
           <p>
-            该分组通过统一图片接口 <code>POST /v1/images/generations</code> 调用
-            Seedream 图片模型。API Key 必须绑定到
+            Seedream 系列图片。统一接口
+            <code>POST /v1/images/generations</code>。API Key 必须绑定到
             <code>dddd-sd-图</code>，请求体不要传 <code>group</code>。
           </p>
         </div>
@@ -688,39 +688,168 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
               <tr>
                 <th>模型</th>
                 <th>当前计费</th>
-                <th>已验证请求</th>
+                <th>能力概要</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td><code>dola-seedream-5-0-pro-260628</code></td>
                 <td>¥0.538650/次</td>
-                <td><code>1024x1024</code>、<code>n=1</code></td>
+                <td>文生图 / 多参考图；<code>size</code>：<code>1K</code>/<code>2K</code> 或像素；参考图 ≤ 10</td>
               </tr>
               <tr>
                 <td><code>seedream-4-5-251128</code></td>
                 <td>¥0.239400/次</td>
-                <td>文本生图</td>
+                <td>文生图 / 参考图 / 组图；<code>size</code>：<code>2K</code>/<code>4K</code> 或像素；参考图 ≤ 14</td>
               </tr>
               <tr>
                 <td><code>seedream-5-0-lite-260128</code></td>
                 <td>¥0.209475/次</td>
-                <td><code>1920x1920</code>、<code>n=1</code></td>
+                <td>文生图 / 参考图 / 组图；<code>size</code>：<code>2K</code>/<code>3K</code> 或像素；参考图 ≤ 14</td>
               </tr>
             </tbody>
           </table>
         </div>
         <p>价格可能调整，实际扣费以控制台定价页和调用日志为准。</p>
 
+        <h3>支持的参数</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>参数</th>
+                <th>类型</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>model</code></td>
+                <td>string</td>
+                <td>必填，上表模型名</td>
+              </tr>
+              <tr>
+                <td><code>prompt</code></td>
+                <td>string</td>
+                <td>必填，提示词</td>
+              </tr>
+              <tr>
+                <td><code>size</code></td>
+                <td>string</td>
+                <td>
+                  二选一：分辨率档位（如 <code>2K</code>），或
+                  <code>宽x高</code> 像素（如 <code>2048x2048</code>）；不可混用
+                </td>
+              </tr>
+              <tr>
+                <td><code>n</code></td>
+                <td>integer</td>
+                <td>生成张数；接入建议先用 <code>1</code></td>
+              </tr>
+              <tr>
+                <td><code>image</code></td>
+                <td>string / string[]</td>
+                <td>
+                  可选参考图：HTTPS URL、Base64 或 data URL；pro ≤ 10，lite / 4.5 ≤ 14
+                </td>
+              </tr>
+              <tr>
+                <td><code>input_reference</code></td>
+                <td>string / string[]</td>
+                <td><code>image</code> 的兼容别名</td>
+              </tr>
+              <tr>
+                <td><code>watermark</code></td>
+                <td>boolean</td>
+                <td>是否水印；可显式传 <code>true</code>/<code>false</code></td>
+              </tr>
+              <tr>
+                <td><code>response_format</code></td>
+                <td>string</td>
+                <td><code>url</code>（推荐）或 <code>b64_json</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>按模型：size 与参考图</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>模型</th>
+                <th>分辨率档位</th>
+                <th>像素示例</th>
+                <th>参考图上限</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>dola-seedream-5-0-pro-260628</code></td>
+                <td><code>1K</code>、<code>2K</code></td>
+                <td><code>1024x1024</code>、<code>2048x2048</code>、<code>2560x1440</code></td>
+                <td>0–10</td>
+              </tr>
+              <tr>
+                <td><code>seedream-4-5-251128</code></td>
+                <td><code>2K</code>、<code>4K</code></td>
+                <td><code>2048x2048</code>、<code>2560x1440</code></td>
+                <td>0–14</td>
+              </tr>
+              <tr>
+                <td><code>seedream-5-0-lite-260128</code></td>
+                <td><code>2K</code>、<code>3K</code></td>
+                <td><code>1920x1920</code>、<code>2048x2048</code>、<code>2560x1440</code></td>
+                <td>0–14</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          宽高比建议约 <code>1:16</code>～<code>16:1</code>；单张参考图建议 ≤ 10MB，格式
+          jpeg / png / webp 等。
+        </p>
+
         <h3>请求示例</h3>
+        <p><strong>文生图（档位）</strong></p>
         <pre><code>curl "$BASE_URL/v1/images/generations" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "dola-seedream-5-0-pro-260628",
     "prompt": "极简产品摄影，蓝色玻璃瓶放在白色台面上，柔和棚拍光",
-    "size": "1024x1024",
+    "size": "2K",
     "n": 1,
+    "watermark": false,
+    "response_format": "url"
+  }'</code></pre>
+
+        <p><strong>文生图（像素）</strong></p>
+        <pre><code>curl "$BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "seedream-5-0-lite-260128",
+    "prompt": "清晨山间薄雾，写实风景",
+    "size": "1920x1920",
+    "n": 1,
+    "response_format": "url"
+  }'</code></pre>
+
+        <p><strong>多参考图</strong></p>
+        <pre><code>curl "$BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "dola-seedream-5-0-pro-260628",
+    "prompt": "保持人物外形一致，换成咖啡馆窗边光线",
+    "size": "2K",
+    "n": 1,
+    "image": [
+      "https://example.com/ref-1.png",
+      "https://example.com/ref-2.png"
+    ],
+    "watermark": false,
     "response_format": "url"
   }'</code></pre>
 
@@ -731,18 +860,22 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
         </div>
         <ul>
           <li>
-            当前已验证文本生图；先用 <code>n=1</code> 和常用尺寸做接入测试。
+            档位（如 <code>2K</code>）与像素（如 <code>2048x2048</code>）二选一，不要混用。
           </li>
           <li>
-            响应使用 <code>data[].url</code>；调用方应及时下载并自行持久化结果。
+            参考图：pro 最多 10 张，lite / 4.5 最多 14 张；接入可先用
+            <code>n=1</code> 和无参考图测试。
           </li>
           <li>
-            演练场选择“图片”、<code>dddd-sd-图</code> 和目标模型即可走同一渠道。
+            响应使用 <code>data[].url</code>；URL 通常有时效，调用方应及时下载并自行持久化。
+          </li>
+          <li>
+            演练场选择“图片”、<code>dddd-sd-图</code> 和目标模型即可。
           </li>
         </ul>
       </section>
 
-      <section id="videos">
+<section id="videos">
         <h2>视频通用流程</h2>
         <div class="note">
           <strong>统一规则：</strong

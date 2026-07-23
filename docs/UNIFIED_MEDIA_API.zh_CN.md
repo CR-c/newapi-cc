@@ -77,12 +77,13 @@ POST /v1/images/generations
 | 参数 | `dddd-sd-图` | `64生图` · Gemini | `64生图` · gpt-image-2 |
 | ---- | ------------ | ----------------- | ---------------------- |
 | `model` / `prompt` | ✓ | ✓ | ✓ |
-| `size` | ✓ 预设尺寸 | ✓ 映射比例（固定 2K 输出） | ✓ 1K/2K/4K/精确/`auto` |
-| `n` | ✓（建议先 `1`） | ✓ | ✓ |
-| `image` 参考图 | ✓ 最多约 10 张 | ✓ 最多 14 张 | ✓ 最多 14 张 |
+| `size` | ✓ 分辨率档位或 `宽x高` | ✓ 映射比例（固定 2K 输出） | ✓ 1K/2K/4K/精确/`auto` |
+| `n` | ✓（见模型表） | ✓ | ✓ |
+| `image` 参考图 | ✓ 最多 10 或 14 张（见模型） | ✓ 最多 14 张 | ✓ 最多 14 张 |
+| `watermark` | ✓ | — | — |
 | `quality` | — | — | ✓ `low`/`medium`/`high` |
 | `background` | — | — | ✓ `opaque`/`transparent` |
-| `response_format` | `url` | `url` / `b64_json` | `url` / `b64_json` |
+| `response_format` | `url` / `b64_json` | `url` / `b64_json` | `url` / `b64_json` |
 
 > 表中「—」表示该分组/模型不使用该参数；填了也可能无效。
 
@@ -90,24 +91,45 @@ POST /v1/images/generations
 
 ### `dddd-sd-图`
 
-| 模型 | 当前价格 | 说明 |
-| ---- | -------- | ---- |
-| `dola-seedream-5-0-pro-260628` | ¥0.538650/次 | 已验证 `1024x1024`、`n=1` |
-| `seedream-4-5-251128` | ¥0.239400/次 | 文本生图 |
-| `seedream-5-0-lite-260128` | ¥0.209475/次 | 已验证 `1920x1920`、`n=1` |
+Seedream 系列图片。统一端点 `POST /v1/images/generations`。token 绑定本分组，请求体不要传 `group`。
 
-**支持的参数**
+#### 模型
 
-| 参数 | 取值 / 说明 |
-| ---- | ----------- |
-| `model` | 上表模型名 |
-| `prompt` | 必填 |
-| `size` | 常用：`1024x1024`、`1920x1920`、`2048x2048`、`2560x1440`、`1440x2560`、`1024x1792`、`1792x1024` |
-| `n` | 生成数量，接入先用 `1` |
-| `image` | 可选参考图（URL / Base64） |
-| `response_format` | 建议 `url` |
+| 模型 | 当前价格 | 能力概要 |
+| ---- | -------- | -------- |
+| `dola-seedream-5-0-pro-260628` | ¥0.538650/次 | 文生图 / 单图与多参考图；`size`：`1K`/`2K` 或像素；参考图 ≤ 10 |
+| `seedream-4-5-251128` | ¥0.239400/次 | 文生图 / 参考图 / 组图；`size`：`2K`/`4K` 或像素；参考图 ≤ 14 |
+| `seedream-5-0-lite-260128` | ¥0.209475/次 | 文生图 / 参考图 / 组图；`size`：`2K`/`3K` 或像素；参考图 ≤ 14 |
 
-**示例**
+价格以控制台定价页与调用日志为准。
+
+#### 支持的参数（与 Seedream 能力一致）
+
+| 参数 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| `model` | string | 必填，上表模型名 |
+| `prompt` | string | 必填，提示词 |
+| `size` | string | **二选一**：分辨率档位，或 `宽x高` 像素；档位与像素不可混用，见下表 |
+| `n` | integer | 生成张数；接入建议先用 `1`。pro 以单图为主；lite / 4.5 可按组图能力提高 |
+| `image` | string / string[] | 可选参考图：公网 HTTPS URL、Base64 或 data URL |
+| `input_reference` | string / string[] | `image` 的兼容别名 |
+| `watermark` | boolean | 是否水印；默认随模型，显式传 `true`/`false` 可覆盖 |
+| `response_format` | string | `url`（推荐）或 `b64_json` |
+| `quality` / `background` | — | 本分组不使用 |
+
+#### 按模型：`size` 与参考图
+
+| 模型 | 分辨率档位 | 像素 `宽x高`（示例） | 参考图 `image` |
+| ---- | ---------- | -------------------- | -------------- |
+| `dola-seedream-5-0-pro-260628` | `1K`、`2K`（默认倾向 `2K`） | 如 `1024x1024`、`2048x2048`、`2560x1440` | 0–10 张 |
+| `seedream-4-5-251128` | `2K`、`4K` | 如 `2048x2048`、`2560x1440`、`4096x4096` 量级 | 0–14 张 |
+| `seedream-5-0-lite-260128` | `2K`、`3K` | 如 `1920x1920`、`2048x2048`、`2560x1440` | 0–14 张 |
+
+常用像素示例：`1024x1024`、`1920x1920`、`2048x2048`、`2560x1440`、`1440x2560`、`1024x1792`、`1792x1024`。宽高比建议在约 `1:16`～`16:1` 内；单张参考图建议 ≤ 10MB，格式 jpeg / png / webp 等。
+
+#### 示例
+
+**文生图（档位）**
 
 ```bash
 curl "$NEWAPI_BASE_URL/v1/images/generations" \
@@ -116,16 +138,54 @@ curl "$NEWAPI_BASE_URL/v1/images/generations" \
   -d '{
     "model": "dola-seedream-5-0-pro-260628",
     "prompt": "极简产品摄影，蓝色玻璃瓶放在白色台面上，柔和棚拍光",
-    "size": "1024x1024",
+    "size": "2K",
+    "n": 1,
+    "watermark": false,
+    "response_format": "url"
+  }'
+```
+
+**文生图（像素）**
+
+```bash
+curl "$NEWAPI_BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $NEWAPI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "seedream-5-0-lite-260128",
+    "prompt": "清晨山间薄雾，写实风景",
+    "size": "1920x1920",
     "n": 1,
     "response_format": "url"
   }'
 ```
 
-**提示**
+**多参考图**
+
+```bash
+curl "$NEWAPI_BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $NEWAPI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "dola-seedream-5-0-pro-260628",
+    "prompt": "保持人物外形一致，换成咖啡馆窗边光线",
+    "size": "2K",
+    "n": 1,
+    "image": [
+      "https://example.com/ref-1.png",
+      "https://example.com/ref-2.png"
+    ],
+    "watermark": false,
+    "response_format": "url"
+  }'
+```
+
+#### 提示
 
 - 同步长请求，读取超时建议 ≥ 300 秒；处理中不要重复提交。
-- 收到 `data[].url` 后尽快下载并自行持久化。
+- 响应 `data[].url` 通常有时效，请尽快下载并自行持久化。
+- 档位（如 `2K`）与像素（如 `2048x2048`）二选一，不要混用。
+- 参考图张数不要超过上表上限；pro 最多 10 张，lite / 4.5 最多 14 张。
 - token 绑定 `dddd-sd-图`，请求体不要传 `group`。
 
 ---
