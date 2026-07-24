@@ -32,6 +32,10 @@ type QuotaDataLogParams struct {
 	Quota     int
 	CreatedAt int64
 	TokenUsed int
+	// Count is the request-count delta for the dashboard row.
+	// Consume events typically pass 1; refund adjustments pass 0 so only
+	// money is corrected without inflating request counts.
+	Count     int
 	UseGroup  string
 	TokenID   int
 	ChannelID int
@@ -87,7 +91,7 @@ func LogQuotaData(params QuotaDataLogParams) {
 		TokenID:   params.TokenID,
 		ChannelID: params.ChannelID,
 		NodeName:  params.NodeName,
-		Count:     1,
+		Count:     params.Count,
 		Quota:     params.Quota,
 		TokenUsed: params.TokenUsed,
 	}

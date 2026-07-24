@@ -149,6 +149,7 @@ func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {
 		NodeName:  "node-a",
 		Quota:     100,
 		TokenUsed: 40,
+		Count:     1,
 	})
 	LogQuotaData(QuotaDataLogParams{
 		UserID:    1,
@@ -161,6 +162,7 @@ func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {
 		NodeName:  "node-a",
 		Quota:     50,
 		TokenUsed: 20,
+		Count:     1,
 	})
 	LogQuotaData(QuotaDataLogParams{
 		UserID:    1,
@@ -173,6 +175,7 @@ func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {
 		NodeName:  "node-a",
 		Quota:     25,
 		TokenUsed: 10,
+		Count:     1,
 	})
 
 	SaveQuotaDataCache()
@@ -190,4 +193,78 @@ func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {
 	require.Equal(t, 60, rows[0].TokenUsed)
 	require.Equal(t, "default", rows[1].UseGroup)
 	require.Equal(t, 25, rows[1].Quota)
+}
+
+func TestRecordTaskBillingLogRefundDeductsDashboardQuota(t *testing.T) {
+	truncateTables(t)
+	CacheQuotaDataLock.Lock()
+	CacheQuotaData = make(map[string]*QuotaData)
+	CacheQuotaDataLock.Unlock()
+
+	prevExport := common.DataExportEnabled
+	common.DataExportEnabled = true
+	t.Cleanup(func() {
+		common.DataExportEnabled = prevExport
+		CacheQuotaDataLock.Lock()
+		CacheQuotaData = make(map[string]*QuotaData)
+		CacheQuotaDataLock.Unlock()
+	})
+
+	require.NoError(t, DB.Create(&User{Id: 42, Username: "refund-user", Role: common.RoleCommonUser}).Error)
+
+	// Pre-consume style consume log (task submit).
+	RecordTaskBillingLog(RecordTaskBillingLogParams{
+		UserId:    42,
+		LogType:   LogTypeConsume,
+		ChannelId: 7,
+		ModelName: "sora-2",
+		Quota:     1000,
+		TokenId:   0,
+		Group:     "default",
+		NodeName:  "node-a",
+	})
+	// Full failure refund (video / MJ / async task failure).
+	RecordTaskBillingLog(RecordTaskBillingLogParams{
+		UserId:    42,
+		LogType:   LogTypeRefund,
+		ChannelId: 7,
+		ModelName: "sora-2",
+		Quota:     1000,
+		TokenId:   0,
+		Group:     "default",
+		NodeName:  "node-a",
+	})
+	// Partial delta refund (actual charge lower than pre-consume).
+	RecordTaskBillingLog(RecordTaskBillingLogParams{
+		UserId:    42,
+		LogType:   LogTypeConsume,
+		ChannelId: 7,
+		ModelName: "sora-2",
+		Quota:     500,
+		TokenId:   0,
+		Group:     "default",
+		NodeName:  "node-a",
+	})
+	RecordTaskBillingLog(RecordTaskBillingLogParams{
+		UserId:    42,
+		LogType:   LogTypeRefund,
+		ChannelId: 7,
+		ModelName: "sora-2",
+		Quota:     200,
+		TokenId:   0,
+		Group:     "default",
+		NodeName:  "node-a",
+	})
+
+	SaveQuotaDataCache()
+
+	var rows []QuotaData
+	require.NoError(t, DB.Where("username = ?", "refund-user").Find(&rows).Error)
+	require.Len(t, rows, 1)
+	// Net: +1000 -1000 +500 -200 = 300; request count only from consume events.
+	require.Equal(t, 300, rows[0].Quota)
+	require.Equal(t, 2, rows[0].Count)
+	require.Equal(t, "sora-2", rows[0].ModelName)
+	require.Equal(t, 7, rows[0].ChannelID)
+	require.Equal(t, "node-a", rows[0].NodeName)
 }
