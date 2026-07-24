@@ -59,6 +59,10 @@ import type {
   PlaygroundMode,
   VideoTaskResponse,
 } from '../../types'
+import {
+  getVideoReferenceValidationIssue,
+  isVideoReferenceSubmissionAllowed,
+} from '../../lib/media/media-capability-utils'
 import { getVideoModelProfile } from '../../video-model-profiles'
 import {
   ImageGenerationControls,
@@ -394,13 +398,21 @@ export function PlaygroundMedia(props: PlaygroundMediaProps) {
 
   const referenceImageCount =
     referenceFiles.images.length + referenceURLs.images.length
+  const referenceVideoCount =
+    referenceFiles.videos.length + referenceURLs.videos.length
   const referenceAudioCount =
     referenceFiles.audios.length + referenceURLs.audios.length
-  const hasRequiredReferences =
-    (!videoProfile.requiresImage || referenceImageCount === 1) &&
-    (!videoProfile.requiresImageWithAudio ||
-      referenceAudioCount === 0 ||
-      referenceImageCount > 0)
+  const videoReferenceCounts = {
+    images: referenceImageCount,
+    videos: referenceVideoCount,
+    audios: referenceAudioCount,
+  }
+  const videoReferenceIssue = isImage
+    ? null
+    : getVideoReferenceValidationIssue(videoProfile, videoReferenceCounts)
+  const hasRequiredReferences = isImage
+    ? true
+    : isVideoReferenceSubmissionAllowed(videoProfile, videoReferenceCounts)
 
   const exactImageSizeValid =
     !imageSettings.useExactSize ||
@@ -772,6 +784,18 @@ export function PlaygroundMedia(props: PlaygroundMediaProps) {
                 </div>
               )}
             </div>
+          )}
+
+          {!isImage && videoReferenceIssue && (
+            <p className='text-destructive text-xs leading-4'>
+              {t(videoReferenceIssue.key, {
+                ...videoReferenceIssue.values,
+                kind:
+                  videoReferenceIssue.values?.kind !== undefined
+                    ? t(String(videoReferenceIssue.values.kind))
+                    : undefined,
+              })}
+            </p>
           )}
 
           <Button

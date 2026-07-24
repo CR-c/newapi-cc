@@ -60,9 +60,11 @@ export const DEFAULT_CONFIG: PlaygroundConfig = {
   temperature: 0.7,
   top_p: 1,
   max_tokens: 4096,
+  max_completion_tokens: 4096,
   frequency_penalty: 0,
   presence_penalty: 0,
   seed: null,
+  reasoning_effort: 'medium',
   stream: true,
 }
 
@@ -70,9 +72,11 @@ export const DEFAULT_PARAMETER_ENABLED: ParameterEnabled = {
   temperature: true,
   top_p: true,
   max_tokens: false,
+  max_completion_tokens: false,
   frequency_penalty: true,
   presence_penalty: true,
   seed: false,
+  reasoning_effort: false,
 }
 
 // Storage keys

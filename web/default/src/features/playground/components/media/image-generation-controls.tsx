@@ -31,6 +31,10 @@ import {
 import { Switch } from '@/components/ui/switch'
 
 import type { ImageModelProfile } from '../../image-model-profiles'
+import {
+  getImageOutputCountHint,
+  getImageReferenceCapabilityHint,
+} from '../../lib/media/media-capability-utils'
 import { ImageReferenceInputs } from './video-reference-inputs'
 
 export interface ImageGenerationSettings {
@@ -62,6 +66,16 @@ export function ImageGenerationControls(props: ImageGenerationControlsProps) {
     key: K,
     value: ImageGenerationSettings[K]
   ) => props.onChange({ ...props.settings, [key]: value })
+
+  const referenceHint = getImageReferenceCapabilityHint(props.profile)
+  const outputCountHint = getImageOutputCountHint(props.profile)
+  const translatedReferenceHint = t(referenceHint.key, {
+    ...referenceHint.values,
+    kind:
+      referenceHint.values?.kind !== undefined
+        ? t(String(referenceHint.values.kind))
+        : undefined,
+  })
 
   if (
     props.profile.provider === 'generic' ||
@@ -113,6 +127,14 @@ export function ImageGenerationControls(props: ImageGenerationControlsProps) {
             </div>
           )}
         </div>
+        {props.profile.maxReferences > 0 && (
+          <div className='bg-muted/40 rounded-lg border px-3 py-2.5'>
+            <p className='text-sm font-medium'>{t('Model reference limits')}</p>
+            <p className='text-muted-foreground text-xs leading-4'>
+              {translatedReferenceHint}
+            </p>
+          </div>
+        )}
         <ImageReferenceInputs
           files={props.settings.referenceFiles}
           urls={props.settings.referenceURLs}
@@ -120,6 +142,8 @@ export function ImageGenerationControls(props: ImageGenerationControlsProps) {
           disabled={props.disabled}
           onChange={(files) => update('referenceFiles', files)}
           onURLsChange={(urls) => update('referenceURLs', urls)}
+          // Limit copy is shown in the summary card above; label keeps (n/max).
+          capabilityHint=''
         />
       </div>
     )
@@ -283,6 +307,11 @@ export function ImageGenerationControls(props: ImageGenerationControlsProps) {
               })}
             </SelectContent>
           </Select>
+          {outputCountHint && (
+            <p className='text-muted-foreground text-xs leading-4'>
+              {t(outputCountHint.key, outputCountHint.values)}
+            </p>
+          )}
         </div>
         <div className='space-y-2'>
           <Label>{t('Response format')}</Label>
@@ -308,6 +337,15 @@ export function ImageGenerationControls(props: ImageGenerationControlsProps) {
         </div>
       </div>
 
+      {props.profile.maxReferences > 0 && (
+        <div className='bg-muted/40 rounded-lg border px-3 py-2.5'>
+          <p className='text-sm font-medium'>{t('Model reference limits')}</p>
+          <p className='text-muted-foreground text-xs leading-4'>
+            {translatedReferenceHint}
+          </p>
+        </div>
+      )}
+
       <ImageReferenceInputs
         files={props.settings.referenceFiles}
         urls={props.settings.referenceURLs}
@@ -315,6 +353,7 @@ export function ImageGenerationControls(props: ImageGenerationControlsProps) {
         disabled={props.disabled}
         onChange={(files) => update('referenceFiles', files)}
         onURLsChange={(urls) => update('referenceURLs', urls)}
+        capabilityHint=''
       />
     </div>
   )

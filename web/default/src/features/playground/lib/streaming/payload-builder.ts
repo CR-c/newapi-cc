@@ -56,6 +56,10 @@ export function buildChatCompletionPayload(
     payload.max_tokens = config.max_tokens
   }
 
+  if (parameterEnabled.max_completion_tokens) {
+    payload.max_completion_tokens = config.max_completion_tokens
+  }
+
   if (parameterEnabled.frequency_penalty) {
     payload.frequency_penalty = config.frequency_penalty
   }
@@ -66,6 +70,10 @@ export function buildChatCompletionPayload(
 
   if (parameterEnabled.seed && config.seed !== null) {
     payload.seed = config.seed
+  }
+
+  if (parameterEnabled.reasoning_effort) {
+    payload.reasoning_effort = config.reasoning_effort
   }
 
   return payload

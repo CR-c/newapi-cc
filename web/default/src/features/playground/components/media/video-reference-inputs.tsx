@@ -33,6 +33,13 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
+import {
+  getReferenceKindLabelKey,
+  getReferenceLimitHintKey,
+  getReferenceLimitReachedKey,
+  getVideoReferenceCapabilitySummary,
+  getVideoReferenceRequirementHints,
+} from '../../lib/media/media-capability-utils'
 import type { PlaygroundAssetKind } from '../../types'
 import type { VideoModelProfile } from '../../video-model-profiles'
 
@@ -64,6 +71,8 @@ interface ImageReferenceInputsProps {
   disabled: boolean
   onChange: (files: File[]) => void
   onURLsChange: (urls: string[]) => void
+  /** Optional model-specific helper shown under the upload control. */
+  capabilityHint?: string
 }
 
 interface ReferenceFileInputProps {
@@ -76,6 +85,7 @@ interface ReferenceFileInputProps {
   onChange: (files: File[]) => void
   onURLsChange: (urls: string[]) => void
   allowImageDataURL: boolean
+  helperText?: string
 }
 
 const kindLabels: Record<PlaygroundAssetKind, string> = {
@@ -110,11 +120,21 @@ function ReferenceFileInput(props: ReferenceFileInputProps) {
     [previewURLs]
   )
 
+  const kindWord = t(getReferenceKindLabelKey(props.kind))
+  const limitReachedMessage = t(getReferenceLimitReachedKey(), {
+    count: props.maxFiles,
+    kind: kindWord,
+  })
+  const defaultHelper = t(getReferenceLimitHintKey(), {
+    count: props.maxFiles,
+    kind: kindWord,
+  })
+
   const addFiles = (fileList: FileList | null) => {
     if (!fileList) return
     const remaining = props.maxFiles - props.files.length - props.urls.length
     if (remaining <= 0) {
-      toast.error(t('Reference limit reached'))
+      toast.error(limitReachedMessage)
       return
     }
     const knownFiles = new Set(
@@ -133,7 +153,7 @@ function ReferenceFileInput(props: ReferenceFileInputProps) {
       })
       .slice(0, remaining)
     if (selected.length < fileList.length) {
-      toast.error(t('Reference limit reached'))
+      toast.error(limitReachedMessage)
     }
     props.onChange([...props.files, ...selected])
   }
@@ -159,7 +179,7 @@ function ReferenceFileInput(props: ReferenceFileInputProps) {
       props.files.length + props.urls.length >= props.maxFiles ||
       props.urls.includes(value)
     ) {
-      toast.error(t('Reference limit reached'))
+      toast.error(limitReachedMessage)
       return
     }
     props.onURLsChange([...props.urls, value])
@@ -203,6 +223,11 @@ function ReferenceFileInput(props: ReferenceFileInputProps) {
           }}
         />
       </div>
+      {(props.helperText ?? defaultHelper) && (
+        <p className='text-muted-foreground text-xs leading-4'>
+          {props.helperText ?? defaultHelper}
+        </p>
+      )}
       <div className='flex gap-2'>
         <Input
           id={urlInputId}
@@ -311,8 +336,36 @@ function ReferenceFileInput(props: ReferenceFileInputProps) {
 }
 
 export function VideoReferenceInputs(props: VideoReferenceInputsProps) {
+  const { t } = useTranslation()
+  const summary = getVideoReferenceCapabilitySummary(props.profile)
+  const requirements = getVideoReferenceRequirementHints(props.profile)
+  const hasAnyReferenceSlot =
+    props.profile.maxImages > 0 ||
+    props.profile.maxVideos > 0 ||
+    props.profile.maxAudios > 0
+
   return (
     <div className='space-y-4'>
+      <div className='bg-muted/40 space-y-1.5 rounded-lg border px-3 py-2.5'>
+        <p className='text-sm font-medium'>{t('Model reference limits')}</p>
+        <p className='text-muted-foreground text-xs leading-4'>
+          {t(summary.key, summary.values)}
+        </p>
+        {requirements.map((hint) => (
+          <p
+            key={hint.key}
+            className='text-muted-foreground text-xs leading-4'
+          >
+            {t(hint.key, hint.values)}
+          </p>
+        ))}
+        {!hasAnyReferenceSlot && (
+          <p className='text-muted-foreground text-xs leading-4'>
+            {t('Switch to a multimodal video model to upload references.')}
+          </p>
+        )}
+      </div>
+
       {props.profile.maxImages > 0 && (
         <ReferenceFileInput
           kind='image'
@@ -326,6 +379,8 @@ export function VideoReferenceInputs(props: VideoReferenceInputsProps) {
             props.onURLsChange({ ...props.urls, images })
           }
           allowImageDataURL={props.profile.provider === 'grok'}
+          // Summary card already states model-wide limits; keep field label counts.
+          helperText=''
         />
       )}
       {props.profile.maxVideos > 0 && (
@@ -341,6 +396,7 @@ export function VideoReferenceInputs(props: VideoReferenceInputsProps) {
             props.onURLsChange({ ...props.urls, videos })
           }
           allowImageDataURL={false}
+          helperText=''
         />
       )}
       {props.profile.maxAudios > 0 && (
@@ -356,6 +412,7 @@ export function VideoReferenceInputs(props: VideoReferenceInputsProps) {
             props.onURLsChange({ ...props.urls, audios })
           }
           allowImageDataURL={false}
+          helperText=''
         />
       )}
     </div>
@@ -363,7 +420,18 @@ export function VideoReferenceInputs(props: VideoReferenceInputsProps) {
 }
 
 export function ImageReferenceInputs(props: ImageReferenceInputsProps) {
+  const { t } = useTranslation()
+
+  // maxFiles === 0 means this model has no image-to-image path in playground.
   if (props.maxFiles <= 0) return null
+
+  const helperText =
+    props.capabilityHint !== undefined
+      ? props.capabilityHint
+      : t(getReferenceLimitHintKey(), {
+          count: props.maxFiles,
+          kind: t(getReferenceKindLabelKey('image')),
+        })
 
   return (
     <ReferenceFileInput
@@ -376,6 +444,7 @@ export function ImageReferenceInputs(props: ImageReferenceInputsProps) {
       onChange={props.onChange}
       onURLsChange={props.onURLsChange}
       allowImageDataURL
+      helperText={helperText}
     />
   )
 }

@@ -65,6 +65,14 @@ export interface ContentPart {
   }
 }
 
+export type ReasoningEffort =
+  | 'none'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+
 export interface ChatCompletionRequest {
   model: string
   group?: string
@@ -73,9 +81,11 @@ export interface ChatCompletionRequest {
   temperature?: number
   top_p?: number
   max_tokens?: number
+  max_completion_tokens?: number
   frequency_penalty?: number
   presence_penalty?: number
   seed?: number
+  reasoning_effort?: ReasoningEffort
 }
 
 export interface ChatCompletionChunk {
@@ -122,9 +132,11 @@ export interface PlaygroundConfig {
   temperature: number
   top_p: number
   max_tokens: number
+  max_completion_tokens: number
   frequency_penalty: number
   presence_penalty: number
   seed: number | null
+  reasoning_effort: ReasoningEffort
   stream: boolean
 }
 
@@ -132,9 +144,11 @@ export interface ParameterEnabled {
   temperature: boolean
   top_p: boolean
   max_tokens: boolean
+  max_completion_tokens: boolean
   frequency_penalty: boolean
   presence_penalty: boolean
   seed: boolean
+  reasoning_effort: boolean
 }
 
 // Model and group options
