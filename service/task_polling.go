@@ -579,6 +579,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 
 	isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
+	transitionedToDone := false
 	if isDone && snap.Status != task.Status {
 		won, err := task.UpdateWithStatus(snap.Status)
 		if err != nil {
@@ -589,6 +590,8 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			logger.LogWarn(ctx, fmt.Sprintf("Task %s already transitioned by another process, skip billing", task.TaskID))
 			shouldRefund = false
 			shouldSettle = false
+		} else {
+			transitionedToDone = true
 		}
 	} else if !snap.Equal(task.Snapshot()) {
 		if _, err := task.UpdateWithStatus(snap.Status); err != nil {
@@ -605,8 +608,27 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	if shouldRefund {
 		RefundTaskQuota(ctx, task, task.FailReason)
 	}
+	if transitionedToDone && task.Status == model.TaskStatusSuccess {
+		cleanupPlaygroundAssetsAfterVideoSuccess(ctx, task)
+	}
 
 	return nil
+}
+
+// cleanupPlaygroundAssetsAfterVideoSuccess deletes local /pg/assets files that this
+// video task referenced (tracked at submit in PrivateData.PlaygroundAssetIDs).
+func cleanupPlaygroundAssetsAfterVideoSuccess(ctx context.Context, task *model.Task) {
+	if task == nil || len(task.PrivateData.PlaygroundAssetIDs) == 0 {
+		return
+	}
+	deleted, err := model.DeletePlaygroundAssetsByIDs(model.DB, task.UserId, task.PrivateData.PlaygroundAssetIDs)
+	if err != nil {
+		logger.LogError(ctx, fmt.Sprintf("cleanup playground assets for task %s failed: %s", task.TaskID, err.Error()))
+		return
+	}
+	if deleted > 0 {
+		logger.LogInfo(ctx, fmt.Sprintf("task %s success: deleted %d temporary playground asset(s)", task.TaskID, deleted))
+	}
 }
 
 func redactVideoResponseBody(body []byte) []byte {

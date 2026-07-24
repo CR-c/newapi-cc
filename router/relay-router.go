@@ -62,7 +62,9 @@ func SetRelayRouter(router *gin.Engine) {
 	playgroundAssetUploadRouter := router.Group("/pg/assets")
 	playgroundAssetUploadRouter.Use(middleware.RouteTag("api"))
 	playgroundAssetUploadRouter.Use(middleware.SystemPerformanceCheck())
-	playgroundAssetUploadRouter.Use(middleware.TokenOrUserAuth(), middleware.CriticalRateLimit())
+	// Per-user upload budget (not CriticalRateLimit): Critical is 20/20min by IP with empty 429 body,
+	// which blocks multi-reference video uploads and surfaces as "HTTP429(上游未返回错误正文)".
+	playgroundAssetUploadRouter.Use(middleware.TokenOrUserAuth(), middleware.PlaygroundAssetUploadRateLimit())
 	playgroundAssetUploadRouter.POST("", controller.UploadPlaygroundAsset)
 	router.GET("/pg/assets/:asset_id/:filename", controller.GetPlaygroundAsset)
 

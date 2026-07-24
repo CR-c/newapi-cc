@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 
@@ -55,8 +54,6 @@ const (
 	playgroundReferenceImageMaxDimension = 6000
 )
 
-var playgroundAssetUploadLock sync.Mutex
-
 func UploadPlaygroundAsset(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, playgroundAssetUploadMaxBytes)
 	kind := strings.ToLower(strings.TrimSpace(c.PostForm("kind")))
@@ -75,8 +72,8 @@ func UploadPlaygroundAsset(c *gin.Context) {
 		return
 	}
 	userID := c.GetInt("id")
-	playgroundAssetUploadLock.Lock()
-	defer playgroundAssetUploadLock.Unlock()
+	// No process-wide mutex: concurrent multi-file uploads are expected for video refs.
+	// Global disk quota is enforced in ReservePlaygroundAssetStorage (DB row lock).
 	storageDirectory := model.PlaygroundAssetStorageDir()
 	reservationBytes := rule.maxSize
 	if kind == "image" {
@@ -98,7 +95,8 @@ func UploadPlaygroundAsset(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if assetCount >= model.PlaygroundAssetMaxItemsPerUser || assetBytes+fileHeader.Size > model.PlaygroundAssetMaxBytesPerUser {
+	quotaUnlimited := model.IsPlaygroundAssetQuotaUnlimited(userID)
+	if !quotaUnlimited && (assetCount >= model.PlaygroundAssetMaxItemsPerUser || assetBytes+fileHeader.Size > model.PlaygroundAssetMaxBytesPerUser) {
 		c.JSON(http.StatusTooManyRequests, gin.H{"success": false, "message": "temporary asset quota exceeded"})
 		return
 	}
@@ -189,7 +187,7 @@ func UploadPlaygroundAsset(c *gin.Context) {
 		extension = stored.Extension
 		contentType = stored.ContentType
 		written = int(stored.Size)
-		if assetBytes+stored.Size > model.PlaygroundAssetMaxBytesPerUser {
+		if !quotaUnlimited && assetBytes+stored.Size > model.PlaygroundAssetMaxBytesPerUser {
 			_ = os.Remove(storagePath)
 			c.JSON(http.StatusTooManyRequests, gin.H{"success": false, "message": "temporary asset quota exceeded"})
 			return
@@ -234,7 +232,8 @@ func UploadPlaygroundAsset(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	_ = model.CleanupExpiredPlaygroundAssets(model.DB, now, 100)
+	// Expired cleanup is handled by the background sweeper (every 5m); avoid doing
+	// it on the upload hot path so concurrent uploads are not serialized by GC work.
 	common.ApiSuccess(c, gin.H{
 		"id": asset.ID, "kind": asset.Kind, "url": playgroundAssetURL(c, asset), "filename": asset.Filename,
 		"content_type": asset.ContentType, "size": asset.Size, "expires_at": asset.ExpiresAt,
@@ -259,7 +258,7 @@ func hasPlaygroundAssetSignature(kind string, prefix []byte) bool {
 
 func GetPlaygroundAsset(c *gin.Context) {
 	now := time.Now().Unix()
-	_ = model.CleanupExpiredPlaygroundAssets(model.DB, now, 100)
+	_, _ = model.CleanupExpiredPlaygroundAssets(model.DB, now, 100)
 	asset, exists, err := model.GetPlaygroundAsset(model.DB, c.Param("asset_id"), now)
 	if err != nil {
 		common.ApiError(c, err)

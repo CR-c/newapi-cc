@@ -630,6 +630,27 @@ func RelayTask(c *gin.Context) {
 			PerCallBilling:   common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
 			ProfitGeneration: relayInfo.ProfitGeneration,
 		}
+		if taskReq, reqErr := relaycommon.GetTaskRequest(c); reqErr == nil {
+			mediaRefs := make([]string, 0, len(taskReq.Images)+len(taskReq.Videos)+len(taskReq.Audios)+2)
+			mediaRefs = append(mediaRefs, taskReq.Images...)
+			mediaRefs = append(mediaRefs, taskReq.Videos...)
+			mediaRefs = append(mediaRefs, taskReq.Audios...)
+			if taskReq.FirstImage != "" {
+				mediaRefs = append(mediaRefs, taskReq.FirstImage)
+			}
+			if taskReq.LastImage != "" {
+				mediaRefs = append(mediaRefs, taskReq.LastImage)
+			}
+			if taskReq.Image != "" {
+				mediaRefs = append(mediaRefs, taskReq.Image)
+			}
+			if taskReq.InputReference != "" {
+				mediaRefs = append(mediaRefs, taskReq.InputReference)
+			}
+			task.PrivateData.PlaygroundAssetIDs = model.ResolvePlaygroundAssetIDsFromMediaRefs(
+				relayInfo.UserId, relayInfo.UsingGroup, mediaRefs,
+			)
+		}
 		// Persist the amount already charged first. If post-submit settlement fails,
 		// later task refunds must never exceed this proven allocation.
 		task.Quota = relayInfo.FinalPreConsumedQuota

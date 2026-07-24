@@ -117,17 +117,36 @@ func UploadRateLimit() func(c *gin.Context) {
 }
 
 func VideoAssetCreateRateLimit() func(c *gin.Context) {
-	return userRateLimitFactory(20, 60, "VAC")
+	// Concurrent multi-ref registration: several assets per video, several videos in flight.
+	return userRateLimitFactory(180, 60, "VAC", "video asset create rate limit exceeded, please retry later")
 }
 
 func VideoAssetQueryRateLimit() func(c *gin.Context) {
-	return userRateLimitFactory(120, 60, "VAQ")
+	return userRateLimitFactory(300, 60, "VAQ", "video asset query rate limit exceeded, please retry later")
+}
+
+// PlaygroundAssetUploadRateLimit protects POST /pg/assets with a per-user budget
+// large enough for concurrent multi-reference video workflows.
+// Replaces CriticalRateLimit on this path: Critical is 20/20min by IP and returns empty body.
+func PlaygroundAssetUploadRateLimit() func(c *gin.Context) {
+	return userRateLimitFactory(180, 60, "PGA", "temporary asset upload rate limit exceeded, please retry later")
+}
+
+func abortRateLimited(c *gin.Context, message string) {
+	if message == "" {
+		message = "too many requests, please retry later"
+	}
+	c.JSON(http.StatusTooManyRequests, gin.H{
+		"success": false,
+		"message": message,
+	})
+	c.Abort()
 }
 
 // userRateLimitFactory creates a rate limiter keyed by authenticated user ID
 // instead of client IP, making it resistant to proxy rotation attacks.
-// Must be used AFTER authentication middleware (UserAuth).
-func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c *gin.Context) {
+// Must be used AFTER authentication middleware (UserAuth / TokenAuth).
+func userRateLimitFactory(maxRequestNum int, duration int64, mark, message string) func(c *gin.Context) {
 	if common.RedisEnabled {
 		return func(c *gin.Context) {
 			userId := c.GetInt("id")
@@ -137,7 +156,7 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 				return
 			}
 			key := fmt.Sprintf("rateLimit:%s:user:%d", mark, userId)
-			userRedisRateLimiter(c, maxRequestNum, duration, key)
+			userRedisRateLimiter(c, maxRequestNum, duration, key, message)
 		}
 	}
 	// It's safe to call multi times.
@@ -151,8 +170,7 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 		}
 		key := fmt.Sprintf("%s:user:%d", mark, userId)
 		if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
-			c.Status(http.StatusTooManyRequests)
-			c.Abort()
+			abortRateLimited(c, message)
 			return
 		}
 	}
@@ -160,7 +178,7 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 
 // userRedisRateLimiter is like redisRateLimiter but accepts a pre-built key
 // (to support user-ID-based keys).
-func userRedisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key string) {
+func userRedisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key, message string) {
 	ctx := context.Background()
 	rdb := common.RDB
 	listLength, err := rdb.LLen(ctx, key).Result()
@@ -192,8 +210,7 @@ func userRedisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key
 		}
 		if int64(nowTime.Sub(oldTime).Seconds()) < duration {
 			rdb.Expire(ctx, key, common.RateLimitKeyExpirationDuration)
-			c.Status(http.StatusTooManyRequests)
-			c.Abort()
+			abortRateLimited(c, message)
 			return
 		} else {
 			rdb.LPush(ctx, key, time.Now().Format(timeFormat))
@@ -209,5 +226,5 @@ func SearchRateLimit() func(c *gin.Context) {
 	if !common.SearchRateLimitEnable {
 		return defNext
 	}
-	return userRateLimitFactory(common.SearchRateLimitNum, common.SearchRateLimitDuration, "SR")
+	return userRateLimitFactory(common.SearchRateLimitNum, common.SearchRateLimitDuration, "SR", "search rate limit exceeded, please retry later")
 }
