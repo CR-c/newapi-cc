@@ -155,8 +155,94 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
-	// Accept only POST /v1/video/generations as "generate" action.
-	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+	if taskErr = relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate); taskErr != nil {
+		return taskErr
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	if code, err := validateDoubaoVideoRequest(&req); err != nil {
+		return service.TaskErrorWrapperLocal(err, code, http.StatusBadRequest)
+	}
+	return nil
+}
+
+// validateDoubaoVideoRequest enforces Official V3 (Seedance 2.0) request constraints
+// on the unified /v1/videos fields before they are mapped to content[].
+func validateDoubaoVideoRequest(req *relaycommon.TaskSubmitReq) (string, error) {
+	for _, key := range unsupportedMetadataKeys {
+		if req.Metadata != nil {
+			if _, ok := req.Metadata[key]; ok {
+				return "invalid_request", fmt.Errorf("%s is not supported", key)
+			}
+		}
+	}
+
+	firstImage := strings.TrimSpace(req.FirstImage)
+	lastImage := strings.TrimSpace(req.LastImage)
+	imageCount := len(req.Images)
+	if firstImage != "" {
+		imageCount++
+	}
+	if lastImage != "" {
+		imageCount++
+	}
+	if imageCount > maxReferenceImages {
+		return "invalid_images", fmt.Errorf("at most %d reference images are supported", maxReferenceImages)
+	}
+	if len(req.Videos) > maxReferenceVideos {
+		return "invalid_videos", fmt.Errorf("at most %d reference videos are supported", maxReferenceVideos)
+	}
+	if len(req.Audios) > maxReferenceAudios {
+		return "invalid_audios", fmt.Errorf("at most %d reference audios are supported", maxReferenceAudios)
+	}
+	if len(req.Audios) > 0 && imageCount == 0 && len(req.Videos) == 0 {
+		return "invalid_audios", fmt.Errorf("audio references require at least one reference image or video")
+	}
+
+	durationSet := req.Duration != 0 || req.Seconds != ""
+	if durationSet {
+		duration := req.Duration
+		if duration == 0 && req.Seconds != "" {
+			parsed, err := strconv.Atoi(req.Seconds)
+			if err != nil {
+				return "invalid_seconds", fmt.Errorf("seconds must be an integer")
+			}
+			duration = parsed
+		}
+		if duration != smartDuration && (duration < minDurationSeconds || duration > maxDurationSeconds) {
+			return "invalid_seconds", fmt.Errorf("seconds must be %d to %d, or %d for smart duration", minDurationSeconds, maxDurationSeconds, smartDuration)
+		}
+	}
+
+	if ratio := strings.TrimSpace(req.AspectRatio); ratio != "" {
+		if _, ok := allowedAspectRatios[ratio]; !ok {
+			return "invalid_aspect_ratio", fmt.Errorf("aspect_ratio must be one of adaptive, 16:9, 9:16, 1:1, 4:3, 3:4, 21:9")
+		}
+	}
+	if resolution := strings.ToLower(strings.TrimSpace(req.Resolution)); resolution != "" {
+		if _, ok := allowedResolutions[resolution]; !ok {
+			return "invalid_resolution", fmt.Errorf("resolution must be one of 480p, 720p, 1080p, 4k")
+		}
+	}
+
+	mediaURLs := make([]string, 0, imageCount+len(req.Videos)+len(req.Audios))
+	if firstImage != "" {
+		mediaURLs = append(mediaURLs, firstImage)
+	}
+	if lastImage != "" {
+		mediaURLs = append(mediaURLs, lastImage)
+	}
+	mediaURLs = append(mediaURLs, req.Images...)
+	mediaURLs = append(mediaURLs, req.Videos...)
+	mediaURLs = append(mediaURLs, req.Audios...)
+	for _, mediaURL := range mediaURLs {
+		if err := taskcommon.ValidateMediaURL(mediaURL, false, taskcommon.MediaURLPortPolicyEnforceConfigured); err != nil {
+			return "invalid_media_url", fmt.Errorf("invalid media URL: %w", err)
+		}
+	}
+	return "", nil
 }
 
 // BuildRequestURL constructs the upstream URL.
@@ -358,27 +444,41 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		Content: []ContentItem{},
 	}
 
-	// Add images if present
-	if req.HasImage() {
-		for _, imgURL := range req.Images {
-			r.Content = append(r.Content, ContentItem{
-				Type: "image_url",
-				ImageURL: &MediaURL{
-					URL: imgURL,
-				},
-			})
-		}
+	// Official V3 content roles: first_frame / last_frame / reference_image /
+	// reference_video / reference_audio. Unified fields map 1:1 to these roles.
+	if firstImage := strings.TrimSpace(req.FirstImage); firstImage != "" {
+		r.Content = append(r.Content, ContentItem{
+			Type:     "image_url",
+			ImageURL: &MediaURL{URL: firstImage},
+			Role:     "first_frame",
+		})
+	}
+	if lastImage := strings.TrimSpace(req.LastImage); lastImage != "" {
+		r.Content = append(r.Content, ContentItem{
+			Type:     "image_url",
+			ImageURL: &MediaURL{URL: lastImage},
+			Role:     "last_frame",
+		})
+	}
+	for _, imgURL := range req.Images {
+		r.Content = append(r.Content, ContentItem{
+			Type:     "image_url",
+			ImageURL: &MediaURL{URL: imgURL},
+			Role:     "reference_image",
+		})
 	}
 	for _, videoURL := range req.Videos {
 		r.Content = append(r.Content, ContentItem{
 			Type:     "video_url",
 			VideoURL: &MediaURL{URL: videoURL},
+			Role:     "reference_video",
 		})
 	}
 	for _, audioURL := range req.Audios {
 		r.Content = append(r.Content, ContentItem{
 			Type:     "audio_url",
 			AudioURL: &MediaURL{URL: audioURL},
+			Role:     "reference_audio",
 		})
 	}
 
@@ -386,11 +486,19 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	if err := taskcommon.UnmarshalMetadata(metadata, &r); err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}
+	// Defense in depth: never forward Official V3-rejected top-level fields.
+	r.CallbackURL = ""
+	r.Draft = nil
+	r.Frames = nil
+	r.Seed = nil
+	r.CameraFixed = nil
+	r.Tools = nil
+
 	if r.Resolution == "" {
-		r.Resolution = req.Resolution
+		r.Resolution = strings.ToLower(strings.TrimSpace(req.Resolution))
 	}
 	if r.Ratio == "" {
-		r.Ratio = req.AspectRatio
+		r.Ratio = strings.TrimSpace(req.AspectRatio)
 	}
 	if r.GenerateAudio == nil && req.GenerateAudio != nil {
 		r.GenerateAudio = lo.ToPtr(dto.BoolValue(*req.GenerateAudio))
@@ -399,10 +507,15 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		r.Watermark = lo.ToPtr(dto.BoolValue(*req.Watermark))
 	}
 
-	if sec, _ := strconv.Atoi(req.Seconds); sec > 0 {
-		r.Duration = lo.ToPtr(dto.IntValue(sec))
+	if r.Duration == nil {
+		if sec, err := strconv.Atoi(req.Seconds); err == nil && (sec > 0 || sec == smartDuration) {
+			r.Duration = lo.ToPtr(dto.IntValue(sec))
+		} else if req.Duration > 0 || req.Duration == smartDuration {
+			r.Duration = lo.ToPtr(dto.IntValue(req.Duration))
+		}
 	}
 
+	// Keep only media content from metadata merges; always append the unified prompt as text.
 	r.Content = lo.Reject(r.Content, func(c ContentItem, _ int) bool { return c.Type == "text" })
 	r.Content = append(r.Content, ContentItem{
 		Type: "text",

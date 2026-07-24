@@ -80,6 +80,10 @@ func TestTaskDurationBounds(t *testing.T) {
 			name: "normal duration is accepted",
 			body: `{"model":"sora-2","prompt":"a cat","seconds":"8"}`,
 		},
+		{
+			name: "smart duration sentinel is accepted at normalize layer",
+			body: `{"model":"doubao-seedance-2-0-260128","prompt":"a cat","seconds":-1}`,
+		},
 	}
 
 	for _, tt := range tests {

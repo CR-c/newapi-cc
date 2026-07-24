@@ -134,6 +134,36 @@ export function getVideoModelProfile(
       supportsWatermark: false,
     }
   }
+  if (model === 'grok-imagine-video-1.5-preview') {
+    return {
+      provider: 'wxart',
+      durations: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      aspectRatios: ['16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3'],
+      resolutions: ['720p', '480p'],
+      maxImages: 1,
+      maxVideos: 0,
+      maxAudios: 0,
+      requiresImage: true,
+      requiresImageWithAudio: false,
+      supportsGenerateAudio: false,
+      supportsWatermark: false,
+    }
+  }
+  if (model === 'grok-video-3') {
+    return {
+      provider: 'wxart',
+      durations: [6, 10, 12, 16, 20],
+      aspectRatios: ['16:9', '9:16', '1:1'],
+      resolutions: ['720p', '480p'],
+      maxImages: 7,
+      maxVideos: 0,
+      maxAudios: 0,
+      requiresImage: false,
+      requiresImageWithAudio: false,
+      supportsGenerateAudio: false,
+      supportsWatermark: false,
+    }
+  }
   if (model === 'grok-image-video') {
     return {
       provider: 'grok',
@@ -167,14 +197,15 @@ export function getVideoModelProfile(
   if (group === 'sd-token' && model === 'doubao-seedance-2-0-260128') {
     return {
       provider: 'doubao',
-      durations: [],
-      aspectRatios: ['16:9', '9:16', '1:1'],
+      // Official V3: 4–15 seconds, or omit / use -1 for smart duration at the API layer.
+      durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      aspectRatios: ['adaptive', '16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
       resolutions: ['480p', '720p', '1080p'],
       maxImages: 9,
       maxVideos: 3,
       maxAudios: 3,
       requiresImage: false,
-      requiresImageWithAudio: false,
+      requiresImageWithAudio: true,
       supportsGenerateAudio: true,
       supportsWatermark: true,
     }

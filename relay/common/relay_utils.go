@@ -97,6 +97,13 @@ func normalizeTaskDuration(req *TaskSubmitReq) *dto.TaskError {
 		}
 		seconds = parsedSeconds
 	}
+	// -1 is reserved for provider-specific "smart duration" (e.g. Seedance Official V3).
+	// Other negative values and zero remain invalid; each adaptor validates its own range.
+	if seconds == -1 {
+		req.Duration = -1
+		req.Seconds = "-1"
+		return nil
+	}
 	if ((durationSet || secondsSet) && seconds < 1) || seconds > MaxTaskDurationSeconds {
 		return createTaskError(fmt.Errorf("seconds must be between 1 and %d", MaxTaskDurationSeconds), "invalid_seconds", http.StatusBadRequest, true)
 	}

@@ -23,6 +23,8 @@ func TestConvertToRequestPayloadMapsUnifiedVideoFields(t *testing.T) {
 	payload, err := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
 		Model:         "doubao-seedance-2-0-260128",
 		Prompt:        "animate the scene",
+		FirstImage:    "https://example.com/first.png",
+		LastImage:     "https://example.com/last.png",
 		Images:        []string{"https://example.com/reference.png"},
 		Videos:        []string{"https://example.com/motion.mp4"},
 		Audios:        []string{"https://example.com/music.mp3"},
@@ -42,11 +44,138 @@ func TestConvertToRequestPayloadMapsUnifiedVideoFields(t *testing.T) {
 	assert.Equal(t, dto.BoolValue(true), *payload.GenerateAudio)
 	require.NotNil(t, payload.Watermark)
 	assert.Equal(t, dto.BoolValue(false), *payload.Watermark)
-	require.Len(t, payload.Content, 4)
+	require.Len(t, payload.Content, 6)
 	assert.Equal(t, "image_url", payload.Content[0].Type)
-	assert.Equal(t, "video_url", payload.Content[1].Type)
-	assert.Equal(t, "audio_url", payload.Content[2].Type)
-	assert.Equal(t, "text", payload.Content[3].Type)
+	assert.Equal(t, "first_frame", payload.Content[0].Role)
+	assert.Equal(t, "image_url", payload.Content[1].Type)
+	assert.Equal(t, "last_frame", payload.Content[1].Role)
+	assert.Equal(t, "image_url", payload.Content[2].Type)
+	assert.Equal(t, "reference_image", payload.Content[2].Role)
+	assert.Equal(t, "video_url", payload.Content[3].Type)
+	assert.Equal(t, "reference_video", payload.Content[3].Role)
+	assert.Equal(t, "audio_url", payload.Content[4].Type)
+	assert.Equal(t, "reference_audio", payload.Content[4].Role)
+	assert.Equal(t, "text", payload.Content[5].Type)
+	assert.Empty(t, payload.CallbackURL)
+	assert.Nil(t, payload.Draft)
+	assert.Nil(t, payload.Seed)
+	assert.Nil(t, payload.CameraFixed)
+	assert.Nil(t, payload.Tools)
+	assert.Nil(t, payload.Frames)
+}
+
+func TestConvertToRequestPayloadMapsSmartDuration(t *testing.T) {
+	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Model:  "doubao-seedance-2-0-260128",
+		Prompt: "natural coffee pour",
+		Seconds: "-1",
+		Duration: -1,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, payload.Duration)
+	assert.Equal(t, dto.IntValue(-1), *payload.Duration)
+}
+
+func TestValidateDoubaoVideoRequestEnforcesOfficialV3Limits(t *testing.T) {
+	tests := []struct {
+		name     string
+		req      relaycommon.TaskSubmitReq
+		wantCode string
+		wantErr  string
+	}{
+		{
+			name: "accepts max multimodal media",
+			req: relaycommon.TaskSubmitReq{
+				Prompt: "x",
+				Images: []string{
+					"https://example.com/1.png", "https://example.com/2.png", "https://example.com/3.png",
+					"https://example.com/4.png", "https://example.com/5.png", "https://example.com/6.png",
+					"https://example.com/7.png", "https://example.com/8.png", "https://example.com/9.png",
+				},
+				Videos: []string{"https://example.com/a.mp4", "https://example.com/b.mp4", "https://example.com/c.mp4"},
+				Audios: []string{"https://example.com/a.mp3", "https://example.com/b.mp3", "https://example.com/c.mp3"},
+				Seconds: "10", Duration: 10, AspectRatio: "21:9", Resolution: "1080p",
+			},
+		},
+		{
+			name: "accepts first and last frame with audio",
+			req: relaycommon.TaskSubmitReq{
+				Prompt: "x", FirstImage: "https://example.com/first.png", LastImage: "https://example.com/last.png",
+				Audios: []string{"https://example.com/a.mp3"}, Seconds: "8", Duration: 8,
+			},
+		},
+		{
+			name: "accepts smart duration",
+			req:  relaycommon.TaskSubmitReq{Prompt: "x", Seconds: "-1", Duration: -1, AspectRatio: "adaptive"},
+		},
+		{
+			name:     "rejects more than 9 images including frames",
+			req:      relaycommon.TaskSubmitReq{Prompt: "x", FirstImage: "https://example.com/first.png", Images: repeatedHTTPS("img", 9)},
+			wantCode: "invalid_images", wantErr: "at most 9",
+		},
+		{
+			name:     "rejects more than 3 videos",
+			req:      relaycommon.TaskSubmitReq{Prompt: "x", Videos: repeatedHTTPS("vid", 4)},
+			wantCode: "invalid_videos", wantErr: "at most 3",
+		},
+		{
+			name:     "rejects more than 3 audios",
+			req:      relaycommon.TaskSubmitReq{Prompt: "x", Images: []string{"https://example.com/a.png"}, Audios: repeatedHTTPS("aud", 4)},
+			wantCode: "invalid_audios", wantErr: "at most 3",
+		},
+		{
+			name:     "rejects audio without image or video",
+			req:      relaycommon.TaskSubmitReq{Prompt: "x", Audios: []string{"https://example.com/a.mp3"}},
+			wantCode: "invalid_audios", wantErr: "require at least one",
+		},
+		{
+			name:     "rejects duration below 4",
+			req:      relaycommon.TaskSubmitReq{Prompt: "x", Seconds: "3", Duration: 3},
+			wantCode: "invalid_seconds", wantErr: "4 to 15",
+		},
+		{
+			name:     "rejects unsupported aspect ratio",
+			req:      relaycommon.TaskSubmitReq{Prompt: "x", AspectRatio: "2:1"},
+			wantCode: "invalid_aspect_ratio", wantErr: "aspect_ratio",
+		},
+		{
+			name:     "rejects unsupported resolution",
+			req:      relaycommon.TaskSubmitReq{Prompt: "x", Resolution: "360p"},
+			wantCode: "invalid_resolution", wantErr: "resolution",
+		},
+		{
+			name:     "rejects unsupported metadata fields",
+			req:      relaycommon.TaskSubmitReq{Prompt: "x", Metadata: map[string]interface{}{"seed": 1}},
+			wantCode: "invalid_request", wantErr: "seed is not supported",
+		},
+		{
+			name:     "rejects non-https media",
+			req:      relaycommon.TaskSubmitReq{Prompt: "x", Images: []string{"asset://asset-1"}},
+			wantCode: "invalid_media_url", wantErr: "invalid media URL",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, err := validateDoubaoVideoRequest(&tt.req)
+			if tt.wantCode == "" {
+				require.NoError(t, err)
+				assert.Empty(t, code)
+				return
+			}
+			require.Error(t, err)
+			assert.Equal(t, tt.wantCode, code)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+func repeatedHTTPS(prefix string, n int) []string {
+	out := make([]string, n)
+	for i := 0; i < n; i++ {
+		out[i] = "https://example.com/" + prefix + string(rune('a'+i)) + ".bin"
+	}
+	return out
 }
 
 func TestEstimateBillingRecordsVideoCostTier(t *testing.T) {

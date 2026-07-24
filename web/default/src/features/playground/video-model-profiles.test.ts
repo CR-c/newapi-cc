@@ -112,11 +112,23 @@ describe('Doubao video model profiles', () => {
     )
 
     assert.equal(profile.provider, 'doubao')
-    assert.deepEqual(profile.aspectRatios, ['16:9', '9:16', '1:1'])
+    assert.deepEqual(profile.aspectRatios, [
+      'adaptive',
+      '16:9',
+      '9:16',
+      '1:1',
+      '4:3',
+      '3:4',
+      '21:9',
+    ])
     assert.deepEqual(profile.resolutions, ['480p', '720p', '1080p'])
+    assert.deepEqual(profile.durations, [
+      4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+    ])
     assert.equal(profile.maxImages, 9)
     assert.equal(profile.maxVideos, 3)
     assert.equal(profile.maxAudios, 3)
+    assert.equal(profile.requiresImageWithAudio, true)
     assert.equal(profile.supportsGenerateAudio, true)
     assert.equal(profile.supportsWatermark, true)
   })

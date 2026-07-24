@@ -13,6 +13,44 @@ var ModelList = []string{
 
 var ChannelName = "doubao-video"
 
+// Official V3 (Seedance 2.0) content limits — aligned with upstream
+// POST /api/v3/contents/generations/tasks content type caps.
+const (
+	maxReferenceImages = 9
+	maxReferenceVideos = 3
+	maxReferenceAudios = 3
+	minDurationSeconds = 4
+	maxDurationSeconds = 15
+	smartDuration      = -1
+)
+
+var allowedAspectRatios = map[string]struct{}{
+	"adaptive": {},
+	"16:9":     {},
+	"9:16":     {},
+	"1:1":      {},
+	"4:3":      {},
+	"3:4":      {},
+	"21:9":     {},
+}
+
+var allowedResolutions = map[string]struct{}{
+	"480p":  {},
+	"720p":  {},
+	"1080p": {},
+	"4k":    {},
+}
+
+// Top-level Official V3 fields that the upstream rejects with 400.
+var unsupportedMetadataKeys = []string{
+	"callback_url",
+	"draft",
+	"frames",
+	"seed",
+	"camera_fixed",
+	"tools",
+}
+
 // videoPriceKey 价格表的键：输出分辨率档（is1080p/is4k 均为 false 即 480p/720p 基准档）、输入是否含视频。
 type videoPriceKey struct {
 	is1080p  bool
