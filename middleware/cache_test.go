@@ -13,12 +13,21 @@ func TestCacheRevalidatesDocumentationPage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(Cache())
-	router.GET("/docs.html", func(c *gin.Context) {})
 
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest("GET", "/docs.html", nil)
-	router.ServeHTTP(recorder, request)
+	for _, path := range []string{"/docs.html", "/docs-official.html", "/docs.css", "/docs.js"} {
+		path := path
+		router.GET(path, func(c *gin.Context) {})
 
-	require.Equal(t, 200, recorder.Code)
-	assert.Equal(t, "no-cache, must-revalidate", recorder.Header().Get("Cache-Control"))
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest("GET", path, nil)
+		router.ServeHTTP(recorder, request)
+
+		require.Equal(t, 200, recorder.Code, path)
+		assert.Equal(
+			t,
+			"no-cache, must-revalidate",
+			recorder.Header().Get("Cache-Control"),
+			path,
+		)
+	}
 }

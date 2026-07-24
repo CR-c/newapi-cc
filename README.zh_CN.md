@@ -279,6 +279,7 @@ docker run --name new-api -d --restart always \
 
 - [聊天接口 (Chat Completions)](https://docs.newapi.pro/zh/docs/api/ai-model/chat/openai/createchatcompletion)
 - [响应接口 (Responses)](https://docs.newapi.pro/zh/docs/api/ai-model/chat/openai/createresponse)
+- [官方 New API 对接本站图片与视频](docs/OFFICIAL_NEWAPI_MEDIA_GUIDE.zh_CN.md)
 - [统一图片与视频接入（分组路由、模型参数、异步轮询）](docs/UNIFIED_MEDIA_API.zh_CN.md)
 - [图像接口 (Image)](https://docs.newapi.pro/zh/docs/api/ai-model/images/openai/post-v1-images-generations)
 - [音频接口 (Audio)](https://docs.newapi.pro/zh/docs/api/ai-model/audio/openai/create-transcription)

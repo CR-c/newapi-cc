@@ -7,7 +7,11 @@ import (
 func Cache() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		requestPath := c.Request.URL.Path
-		if requestPath == "/" || requestPath == "/docs.html" {
+		if requestPath == "/" ||
+			requestPath == "/docs.html" ||
+			requestPath == "/docs-official.html" ||
+			requestPath == "/docs.css" ||
+			requestPath == "/docs.js" {
 			c.Header("Cache-Control", "no-cache, must-revalidate")
 		} else {
 			c.Header("Cache-Control", "max-age=604800") // one week

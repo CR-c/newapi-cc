@@ -2,6 +2,8 @@
 
 New API 提供 OpenAI 兼容的图片与视频接口。选择模型、提交统一请求即可；鉴权、计费、任务状态与结果下载由本站处理。
 
+> **在线文档**：`/docs.html`（统一媒体详表）· `/docs-official.html`（官方 New API 对接指南，顶部切页）
+
 ## 通用约定
 
 | 项 | 说明 |
@@ -12,7 +14,7 @@ New API 提供 OpenAI 兼容的图片与视频接口。选择模型、提交统�
 | 分组 | **只绑定在 token 上**；请求体不要传 `group` |
 | 价格与能力 | 以控制台定价页、同一 token 的 `/v1/models` 为准 |
 
-当前公开分组：`64生图`、`生图`、`dddd-sd-图`、`grok按次`、`video-dddd`、`sd-token`、`sd-video`（可能调整）。
+当前公开分组：`64生图`、`生图`、`dddd-sd-图`、`grok按次`、`grok按次-x`、`video-dddd`、`sd-token`、`sd-video`（可能调整）。
 
 ### 分组一览
 
@@ -21,8 +23,10 @@ New API 提供 OpenAI 兼容的图片与视频接口。选择模型、提交统�
 | `dddd-sd-图` | 图片 | `POST /v1/images/generations` | 按次 | HTTPS / Base64（`image`） |
 | `64生图` | 图片 | `POST /v1/images/generations` | 按次 | HTTPS / Base64（`image`） |
 | `video-dddd` | 视频 | `POST /v1/videos` 等 | 按次 | 仅 `asset://`（先素材库） |
-| `sd-token` | 视频 | `POST /v1/videos` 等 | Token | 公网 HTTPS URL |
+| `sd-token` | 视频 | `POST /v1/videos` 等 | Token | 公网 HTTPS URL（最多 9 图 + 3 视频 + 3 音频） |
 | `sd-video` | 视频 | `POST /v1/videos` 等 | 按次 | 公网 HTTPS URL |
+| `grok按次` | 视频 | `POST /v1/videos` 等 | 按次 | 公网 HTTPS URL |
+| `grok按次-x` | 视频 | `POST /v1/videos` 等 | 按次 | 公网 HTTPS URL |
 
 ---
 
@@ -283,8 +287,8 @@ curl "$NEWAPI_BASE_URL/v1/images/generations" \
 | `audios` | string[] | 参考音频（通常不可单独使用） |
 | `generate_audio` | boolean | 是否生成有声视频 |
 | `watermark` | boolean | 是否水印 |
-| `first_image` | string | 首帧，须与 `last_image` 成对 |
-| `last_image` | string | 尾帧；不可与 `images`/`videos`/`audios` 混用 |
+| `first_image` | string | 首帧；`sd-video` 须与 `last_image` 成对且不可与参考素材混用；`sd-token` 可单独/成对，计入 9 图上限 |
+| `last_image` | string | 尾帧；规则同上 |
 | `auto_face` | boolean | 自动人脸处理（仅部分模型） |
 
 **任务创建响应**
@@ -320,18 +324,19 @@ curl "$NEWAPI_BASE_URL/v1/images/generations" \
 | 参数 | `video-dddd` | `sd-token` | `sd-video` |
 | ---- | ------------ | ---------- | ---------- |
 | `model` / `prompt` | ✓ | ✓ | ✓ |
-| `seconds` / `duration` | ✓ 4–15 | ✓（常用 4–15） | ✓ 见模型表 |
-| `aspect_ratio` | ✓ `1:1` `16:9` `9:16` | ✓ `16:9` `9:16` `1:1` | ✓ 见模型表 |
-| `resolution` | ✓ 见模型表 | ✓ `480p`/`720p`/`1080p` | ✓ 仅 `720p` |
-| `images` | ✓ 最多 9 · **仅 `asset://`** | ✓ 最多 9 · HTTPS | ✓ 见模型表 · HTTPS |
-| `videos` | ✓ 最多 3 · **仅 `asset://`** | ✓ 最多 3 · HTTPS | ✓ 部分模型 · HTTPS |
-| `audios` | ✓ 最多 3 · **仅 `asset://`** | ✓ 最多 3 · HTTPS | ✓ 部分模型 · HTTPS |
-| `generate_audio` | ✓ | ✓ | — |
-| `watermark` | ✓ | ✓ | — |
-| `first_image` + `last_image` | — | — | ✓（与多模态参考互斥） |
+| `seconds` / `duration` | ✓ 4–15 | ✓ 4–15，或 `-1` 智能时长 | ✓ 见模型表 |
+| `aspect_ratio` | ✓ `1:1` `16:9` `9:16` | ✓ `adaptive` / `16:9` / `9:16` / `1:1` / `4:3` / `3:4` / `21:9` | ✓ 见模型表 |
+| `resolution` | ✓ 见模型表 | ✓ `480p`/`720p`/`1080p`（`4k` 可传，当前价档未启用） | ✓ 仅 `720p` |
+| `images` | ✓ 最多 9 · **仅 `asset://`** | ✓ 最多 9 · HTTPS（`reference_image`） | ✓ 见模型表 · HTTPS |
+| `videos` | ✓ 最多 3 · **仅 `asset://`** | ✓ 最多 3 · HTTPS（`reference_video`） | ✓ 部分模型 · HTTPS |
+| `audios` | ✓ 最多 3 · **仅 `asset://`** | ✓ 最多 3 · HTTPS（`reference_audio`）；须再带图或视频 | ✓ 部分模型 · HTTPS |
+| `generate_audio` | ✓ | ✓（默认 `true`） | — |
+| `watermark` | ✓ | ✓（默认 `false`） | — |
+| `first_image` / `last_image` | — | ✓ 首帧/尾帧（计入 9 图上限，可与 `images` 同用） | ✓（与多模态参考互斥） |
+| `metadata.return_last_frame` 等 | — | ✓ 见 `sd-token` 高级参数 | — |
 | `auto_face` | — | — | ✓（仅 `sd2.0-933`） |
 
-> `audios` 一般需至少再带 1 张图或 1 段视频；具体以各分组规则为准。
+> `audios` 一般需至少再带 1 张图或 1 段视频；`sd-token` 本站会校验此规则。
 
 ---
 
@@ -513,7 +518,7 @@ curl "$NEWAPI_BASE_URL/v1/videos" \
 
 ### `sd-token`
 
-Token 计费视频；接口与上文统一三件套相同。
+Token 计费视频。对外仍是统一三件套（`POST/GET /v1/videos` + content 下载）；上游协议为 Seedance Official V3（`POST /api/v3/contents/generations/tasks`），本站将统一字段映射为 V3 `content[]`。
 
 #### 模型与价格
 
@@ -525,26 +530,48 @@ Token 计费视频；接口与上文统一三件套相同。
 | `1080p` | ¥31.00/百万 Token | ¥51.00/百万 Token | ¥24.18/百万 Token | ¥39.78/百万 Token |
 
 - 「含视频参考」= 请求带了 `videos`；仅图/音频不算该档。
-- 4K 当前未启用。
+- `4k` 可通过参数校验，但当前分组 4K 价档未启用，Quote/创建可能失败。
 
-#### 支持的参数
+#### 支持的参数（对齐 Official V3）
 
 | 参数 | 是否支持 | 取值 / 说明 |
 | ---- | -------- | ----------- |
-| `model` | ✓ | `doubao-seedance-2-0-260128` |
-| `prompt` | ✓ | 必填 |
-| `seconds` | ✓ | 常用 4–15 |
-| `aspect_ratio` | ✓ | `16:9`、`9:16`、`1:1` |
-| `resolution` | ✓ | `480p`、`720p`、`1080p` |
-| `images` | ✓ | 最多 9；**公网 HTTPS URL** |
-| `videos` | ✓ | 最多 3；公网 HTTPS URL |
-| `audios` | ✓ | 最多 3；公网 HTTPS URL；不宜单独只传音频 |
-| `generate_audio` | ✓ | `true` / `false` |
-| `watermark` | ✓ | `true` / `false` |
-| `first_image` / `last_image` | — | 不支持 |
+| `model` | ✓ | 固定 `doubao-seedance-2-0-260128` |
+| `prompt` | ✓ | 必填；映射为 `content` 中的 `type=text` |
+| `seconds` / `duration` | ✓ | `4`–`15`；或 `-1` 智能时长（省略时上游默认 `5`） |
+| `aspect_ratio` | ✓ | `adaptive`（默认）、`16:9`、`9:16`、`1:1`、`4:3`、`3:4`、`21:9` → 上游 `ratio` |
+| `resolution` | ✓ | `480p`、`720p`、`1080p`；`4k` 见上 |
+| `images` | ✓ | 最多 **9**；公网 **HTTPS** URL → `image_url` + `role=reference_image` |
+| `videos` | ✓ | 最多 **3**；HTTPS → `video_url` + `role=reference_video` |
+| `audios` | ✓ | 最多 **3**；HTTPS → `audio_url` + `role=reference_audio`；**不可单独只传音频**（须再带图或视频） |
+| `first_image` | ✓ | 首帧 HTTPS → `role=first_frame`；计入 9 图上限 |
+| `last_image` | ✓ | 尾帧 HTTPS → `role=last_frame`；计入 9 图上限；可与 `images`/`videos`/`audios` 同用 |
+| `generate_audio` | ✓ | `true` / `false`（上游默认 `true`） |
+| `watermark` | ✓ | `true` / `false`（上游默认 `false`） |
 | `auto_face` | — | 不支持 |
 
-**示例**
+**素材数量合计规则（本站 400 校验）**
+
+| 字段 | 上限 | 错误码 |
+| ---- | ---: | ------ |
+| `first_image` + `last_image` + `images` | ≤ 9 | `invalid_images` |
+| `videos` | ≤ 3 | `invalid_videos` |
+| `audios` | ≤ 3 | `invalid_audios` |
+| 仅 `audios` 无图无视频 | 禁止 | `invalid_audios` |
+
+**高级参数（经 `metadata` 透传 Official V3 顶层字段）**
+
+| `metadata` 键 | 说明 |
+| ------------- | ---- |
+| `return_last_frame` | `true` 时成功任务可保留末帧（本站任务详情字段见查询响应） |
+| `service_tier` | 当前仅 `default` |
+| `execution_expires_after` | `3600`–`259200` 秒，默认 `172800` |
+| `safety_identifier` | 非空且 ≤ 64 字符 |
+| `priority` | `0`–`9`，默认 `0` |
+
+以下字段上游明确拒绝，本站创建前也会 `400`：`callback_url`、`draft`、`frames`、`seed`、`camera_fixed`、`tools`。
+
+**示例：文生视频**
 
 ```bash
 curl "$NEWAPI_BASE_URL/v1/videos" \
@@ -561,10 +588,154 @@ curl "$NEWAPI_BASE_URL/v1/videos" \
   }'
 ```
 
+**示例：多模态参考（9 图 / 3 视频 / 3 音频上限内）**
+
+```bash
+curl "$NEWAPI_BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $NEWAPI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "doubao-seedance-2-0-260128",
+    "prompt": "沿用参考视频运镜，保持参考图人物与产品外观，动作与音频重拍同步",
+    "seconds": 10,
+    "aspect_ratio": "9:16",
+    "resolution": "720p",
+    "images": [
+      "https://cdn.example.com/character.jpg",
+      "https://cdn.example.com/product.jpg"
+    ],
+    "videos": ["https://cdn.example.com/camera-reference.mp4"],
+    "audios": ["https://cdn.example.com/rhythm-reference.mp3"],
+    "generate_audio": true,
+    "watermark": false
+  }'
+```
+
+**示例：首帧 + 尾帧**
+
+```bash
+curl "$NEWAPI_BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $NEWAPI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "doubao-seedance-2-0-260128",
+    "prompt": "从清晨安静街道自然过渡到夜晚霓虹，保持主体一致",
+    "seconds": 8,
+    "aspect_ratio": "16:9",
+    "resolution": "1080p",
+    "first_image": "https://cdn.example.com/first-frame.jpg",
+    "last_image": "https://cdn.example.com/last-frame.jpg",
+    "generate_audio": true,
+    "watermark": false
+  }'
+```
+
+**示例：智能时长 + 返回末帧**
+
+```bash
+curl "$NEWAPI_BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $NEWAPI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "doubao-seedance-2-0-260128",
+    "prompt": "一杯咖啡从研磨到拉花完成的连贯近景",
+    "seconds": -1,
+    "aspect_ratio": "adaptive",
+    "resolution": "720p",
+    "metadata": { "return_last_frame": true }
+  }'
+```
+
 **提示**
 
 - 提交预扣，完成后按 `usage.total_tokens` 多退少补；失败退回预扣。
+- 素材须为服务端与上游可访问的 HTTPS URL；勿使用即将过期的一次性签名链。
 - 接入建议：`4 秒 + 480p + 无参考`；超时 ≥ 600 秒；勿高频轮询。
+- 本站对外状态仍为 OpenAI 视频风格（`queued` / `in_progress` / `completed` / `failed`）；结果经 `/v1/videos/{id}/content` 代理下载。
+
+---
+
+### `grok按次-x`
+
+按次计费；接口与上文统一三件套相同（`POST /v1/videos` / 查询 / 内容下载）；参考图用公网 HTTPS URL。
+
+#### 模型
+
+| 模型 | 售价 | 上游 | 能力概要 |
+| ---- | ---- | ---- | -------- |
+| `grok-imagine-video-1.5-preview` | ¥0.70/次 | Grok Imagine Video 1.5 | 仅图生视频：必须且只能 1 张首帧图；时长 **1–15** 秒任意整数；7 种画幅；`480p`/`720p` |
+| `grok-video-3` | ¥0.55/次 | 实际上游为 Grok Imagine Video 1.0 | `mode=text` 文生视频、`mode=frame` 单图首帧、`mode=ref` 概念参考（1–7 张图）；时长 **6/10/12/16/20**；画幅 `16:9`/`9:16`/`1:1`；`480p`/`720p` |
+
+价格以控制台定价页与调用日志为准。
+
+#### 支持的参数
+
+| 参数 | 是否支持 | 取值 / 说明 |
+| ---- | -------- | ----------- |
+| `model` | ✓ | 上表模型名 |
+| `prompt` | ✓ | 必填 |
+| `seconds` / `duration` | ✓ | 见上表；也可用 `duration` 整数 |
+| `aspect_ratio` | ✓ | 见上表；默认 `16:9` |
+| `resolution` | ✓ | 仅 `480p`、`720p`；默认 `720p` |
+| `images` | 视模型 | 1.5 必须 1 张；video-3 按 `mode`（text=0，frame=1，ref=1–7） |
+| `mode` | 仅 `grok-video-3` | `text` / `frame` / `ref`；省略时按 `images` 数量推断 |
+| `videos` / `audios` | — | 不支持 |
+| `first_image` / `last_image` | — | 不支持（可用 `images` 传首帧） |
+| `generate_audio` / `watermark` | — | 不支持 |
+
+#### 示例
+
+**图生视频（Imagine 1.5）**
+
+```bash
+curl "$NEWAPI_BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $NEWAPI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "grok-imagine-video-1.5-preview",
+    "prompt": "让画面中的人物轻微转头，背景保持稳定，电影感光线",
+    "seconds": 6,
+    "aspect_ratio": "9:16",
+    "resolution": "720p",
+    "images": ["https://example.com/start.png"]
+  }'
+```
+
+**文生视频（Video 3）**
+
+```bash
+curl "$NEWAPI_BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $NEWAPI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "grok-video-3",
+    "prompt": "一只猫在月球表面缓慢行走，电影感光线",
+    "mode": "text",
+    "seconds": 6,
+    "aspect_ratio": "16:9",
+    "resolution": "480p"
+  }'
+```
+
+**概念参考 R2V（Video 3，1–7 张参考图）**
+
+```bash
+curl "$NEWAPI_BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $NEWAPI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "grok-video-3",
+    "prompt": "参考多张概念图生成同一角色的短镜头",
+    "mode": "ref",
+    "seconds": 10,
+    "aspect_ratio": "1:1",
+    "resolution": "720p",
+    "images": [
+      "https://example.com/ref1.png",
+      "https://example.com/ref2.png"
+    ]
+  }'
+```
 
 ---
 

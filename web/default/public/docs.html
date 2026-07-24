@@ -5,387 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
     <title>VP 统一图片与视频 API 文档</title>
-    <style>
-      :root {
-        color-scheme: light;
-        --background: #f8fafc;
-        --surface: #ffffff;
-        --text: #172033;
-        --muted: #5f6b7c;
-        --border: #d8dee9;
-        --accent: #166534;
-        --accent-strong: #104d29;
-        --accent-soft: #eaf6ee;
-        --warning: #8a4b08;
-        --warning-soft: #fff5e6;
-        --method-post: #166534;
-        --method-get: #1d4ed8;
-        --code: #111827;
-        --code-text: #e5edf7;
-      }
-
-      * {
-        box-sizing: border-box;
-      }
-
-      html {
-        scroll-behavior: smooth;
-      }
-
-      body {
-        margin: 0;
-        background: var(--background);
-        color: var(--text);
-        font:
-          15px/1.7 system-ui,
-          -apple-system,
-          BlinkMacSystemFont,
-          'Segoe UI',
-          sans-serif;
-      }
-
-      a {
-        color: var(--accent);
-      }
-
-      header {
-        border-bottom: 1px solid var(--border);
-        background: var(--surface);
-      }
-
-      header > div,
-      nav > div,
-      main,
-      footer > div {
-        width: min(1080px, calc(100% - 32px));
-        margin: 0 auto;
-      }
-
-      header > div {
-        padding: 40px 0 32px;
-      }
-
-      .eyebrow {
-        margin: 0 0 8px;
-        color: var(--accent);
-        font-size: 13px;
-        font-weight: 700;
-        text-transform: uppercase;
-      }
-
-      h1,
-      h2,
-      h3 {
-        line-height: 1.3;
-      }
-
-      h1 {
-        margin: 0 0 10px;
-        font-size: 32px;
-      }
-
-      h2 {
-        margin: 0 0 18px;
-        font-size: 24px;
-      }
-
-      h3 {
-        margin: 28px 0 12px;
-        font-size: 18px;
-      }
-
-      p {
-        margin: 10px 0;
-      }
-
-      .lede {
-        max-width: 760px;
-        margin: 0;
-        color: var(--muted);
-        font-size: 16px;
-      }
-
-      nav {
-        position: sticky;
-        top: 0;
-        z-index: 2;
-        overflow-x: auto;
-        border-bottom: 1px solid var(--border);
-        background: color-mix(in srgb, var(--surface) 94%, transparent);
-        backdrop-filter: blur(8px);
-      }
-
-      nav > div {
-        display: flex;
-        gap: 24px;
-        padding: 12px 0;
-        white-space: nowrap;
-      }
-
-      nav a {
-        color: var(--muted);
-        text-decoration: none;
-      }
-
-      nav a:hover {
-        color: var(--text);
-      }
-
-      nav a:focus-visible {
-        border-radius: 3px;
-        outline: 2px solid var(--accent);
-        outline-offset: 4px;
-      }
-
-      nav a[href='#video-dddd'] {
-        color: var(--accent);
-        font-weight: 700;
-      }
-
-      main {
-        background: var(--surface);
-      }
-
-      section {
-        padding: 36px 0;
-        border-bottom: 1px solid var(--border);
-        scroll-margin-top: 64px;
-      }
-
-      .section-heading {
-        max-width: 760px;
-        margin-bottom: 24px;
-      }
-
-      .section-heading p:last-child {
-        color: var(--muted);
-      }
-
-      .group-section {
-        position: relative;
-      }
-
-      .group-section::before {
-        position: absolute;
-        top: 0;
-        right: calc(50% - 50vw);
-        bottom: 0;
-        left: calc(50% - 50vw);
-        z-index: -1;
-        background: color-mix(in srgb, var(--accent-soft) 34%, var(--surface));
-        content: '';
-      }
-
-      code {
-        padding: 2px 5px;
-        border: 1px solid var(--border);
-        border-radius: 4px;
-        background: var(--background);
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        overflow-wrap: anywhere;
-      }
-
-      pre {
-        max-width: 100%;
-        margin: 14px 0 20px;
-        padding: 16px;
-        overflow: auto;
-        border-radius: 6px;
-        background: var(--code);
-        color: var(--code-text);
-        font:
-          13px/1.65 ui-monospace,
-          SFMono-Regular,
-          Menlo,
-          Consolas,
-          monospace;
-      }
-
-      pre code {
-        padding: 0;
-        border: 0;
-        background: transparent;
-        color: inherit;
-      }
-
-      table {
-        width: 100%;
-        margin: 14px 0 22px;
-        border-collapse: collapse;
-      }
-
-      th,
-      td {
-        padding: 10px 12px;
-        border: 1px solid var(--border);
-        text-align: left;
-        vertical-align: top;
-      }
-
-      th {
-        background: var(--background);
-        font-weight: 650;
-      }
-
-      .table-wrap {
-        max-width: 100%;
-        overflow-x: auto;
-      }
-
-      .table-wrap table {
-        min-width: 680px;
-      }
-
-      .note,
-      .warning {
-        margin: 18px 0;
-        padding: 12px 14px;
-        border-left: 4px solid var(--accent);
-        background: var(--accent-soft);
-      }
-
-      .warning {
-        border-left-color: var(--warning);
-        background: var(--warning-soft);
-      }
-
-      .steps {
-        padding-left: 22px;
-      }
-
-      .endpoint {
-        display: flex;
-        align-items: center;
-        width: fit-content;
-        max-width: 100%;
-        margin: 16px 0 12px;
-        overflow: hidden;
-        border: 1px solid var(--border);
-        border-radius: 5px;
-        background: var(--background);
-      }
-
-      .endpoint .method {
-        align-self: stretch;
-        display: inline-flex;
-        align-items: center;
-        padding: 8px 10px;
-        color: #f7fff9;
-        font-size: 12px;
-        font-weight: 750;
-      }
-
-      .endpoint .method.post {
-        background: var(--method-post);
-      }
-
-      .endpoint .method.get {
-        background: var(--method-get);
-      }
-
-      .endpoint code {
-        padding: 7px 11px;
-        overflow-x: auto;
-        border: 0;
-        border-radius: 0;
-        background: transparent;
-        white-space: nowrap;
-      }
-
-      .workflow {
-        margin: 18px 0 28px;
-        padding: 0;
-        border-top: 1px solid var(--border);
-        list-style: none;
-        counter-reset: workflow;
-      }
-
-      .workflow li {
-        display: grid;
-        grid-template-columns: 34px minmax(0, 1fr);
-        gap: 12px;
-        padding: 14px 0;
-        border-bottom: 1px solid var(--border);
-        counter-increment: workflow;
-      }
-
-      .workflow li::before {
-        display: grid;
-        width: 28px;
-        height: 28px;
-        place-items: center;
-        border-radius: 50%;
-        background: var(--accent-strong);
-        color: #f7fff9;
-        content: counter(workflow);
-        font-size: 13px;
-        font-weight: 750;
-      }
-
-      .workflow strong {
-        display: block;
-        margin-bottom: 2px;
-      }
-
-      .workflow p {
-        margin: 0;
-        color: var(--muted);
-      }
-
-      footer {
-        color: var(--muted);
-      }
-
-      footer > div {
-        padding: 24px 0 40px;
-      }
-
-      @media (prefers-color-scheme: dark) {
-        :root {
-          color-scheme: dark;
-          --background: #10151d;
-          --surface: #161d27;
-          --text: #e6edf7;
-          --muted: #a8b3c2;
-          --border: #344052;
-          --accent: #71d391;
-          --accent-strong: #2f8a4e;
-          --accent-soft: #173224;
-          --warning: #f1b665;
-          --warning-soft: #3b2a16;
-          --method-post: #287943;
-          --method-get: #315db5;
-          --code: #090d13;
-          --code-text: #e5edf7;
-        }
-      }
-
-      @media (max-width: 640px) {
-        header > div,
-        nav > div,
-        main,
-        footer > div {
-          width: min(100% - 24px, 1080px);
-        }
-
-        header > div {
-          padding: 28px 0 24px;
-        }
-
-        h1 {
-          font-size: 27px;
-        }
-
-        section {
-          padding: 30px 0;
-        }
-
-        .endpoint {
-          width: 100%;
-        }
-      }
-    </style>
-  </head>
+    <link rel="stylesheet" href="/docs.css" />
+    <script src="/docs.js" defer></script>
+</head>
   <body>
     <header>
       <div>
@@ -394,23 +16,32 @@
         <p class="lede">
           用户始终通过 VP
           的统一接口生成图片和视频。分组路由、请求鉴权、参数转换、
-          视频任务映射与结果代理均由平台自动处理。
+          视频任务映射与结果代理均由平台自动处理。若你使用官方 New API
+          / OpenAI 兼容客户端接入，请切换到顶部「官方 New API 对接」分页。
         </p>
       </div>
     </header>
 
-    <nav aria-label="文档目录">
-      <div>
-        <a href="#start">接入准备</a>
-        <a href="#images">图片生成</a>
-        <a href="#dddd-sd-image">dddd-sd-图</a>
-        <a href="#videos">视频通用流程</a>
-        <a href="#video-dddd">video-dddd 专区</a>
-        <a href="#sd-token">sd-token</a>
-        <a href="#video-parameters">视频模型能力</a>
-        <a href="#errors">错误处理</a>
-      </div>
-    </nav>
+    <div class="docs-sticky">
+      <nav class="page-tabs" aria-label="文档分页">
+        <div>
+          <a href="/docs.html" class="is-active" aria-current="page">统一图片与视频 API</a>
+          <a href="/docs-official.html">官方 New API 对接</a>
+        </div>
+      </nav>
+      <nav class="section-nav" aria-label="本章目录">
+        <div>
+          <a href="#start" class="is-active" aria-current="location">接入准备</a>
+          <a href="#images">图片生成</a>
+          <a href="#dddd-sd-image">dddd-sd-图</a>
+          <a href="#videos">视频通用流程</a>
+          <a href="#video-dddd">video-dddd 专区</a>
+          <a href="#sd-token">sd-token</a>
+          <a href="#video-parameters">视频模型能力</a>
+          <a href="#errors">错误处理</a>
+        </div>
+      </nav>
+    </div>
 
     <main>
       <section id="start">
@@ -433,7 +64,7 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
           <code>GET /v1/models</code> 响应。
         </div>
         <p>
-          当前控制台公开分组为：<code>64生图</code>、<code>生图</code>、<code>dddd-sd-图</code>、<code>grok按次</code>、<code>video-dddd</code>、<code>sd-token</code>和<code>sd-video</code>。模型与价格可能由管理员调整，以控制台定价页和当前
+          当前控制台公开分组为：<code>64生图</code>、<code>生图</code>、<code>dddd-sd-图</code>、<code>grok按次</code>、<code>grok按次-x</code>、<code>video-dddd</code>、<code>sd-token</code>和<code>sd-video</code>。模型与价格可能由管理员调整，以控制台定价页和当前
           API Key 的实际返回为准。
         </p>
       </section>
@@ -961,7 +592,10 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
                 <td><code>first_image</code> / <code>last_image</code></td>
                 <td>string</td>
                 <td>
-                  可选，支持首尾帧的模型必须成对传入，且不能与参考素材数组混用
+                  可选首帧 / 尾帧 URL。
+                  <code>sd-video</code> 须成对且不可与参考素材数组混用；
+                  <code>sd-token</code> 可单独或成对使用，并计入 9
+                  图上限，可与 <code>images</code> 等同用
                 </td>
               </tr>
               <tr>
@@ -1457,14 +1091,178 @@ curl "$BASE_URL/v1/sd/assets/$ASSET_ID" \
           官方基准价按输出分辨率和是否包含参考视频区分。当前 <code>sd-token</code> 分组倍率 <code>0.78</code>，实际价格为官方基准价乘以 <code>0.78</code>；图片或音频参考不属于“含视频”档。
         </p>
         <p>
-          支持 <code>480p</code>、<code>720p</code>、<code>1080p</code>；
-          <strong>4K 当前未启用</strong>。支持
-          <code>aspect_ratio</code>、图片/视频/音频参考、
-          <code>generate_audio</code> 和
-          <code>watermark</code>。素材数量和时长仍以上游实际校验为准。
+          上游协议为 Seedance Official V3（<code>POST /api/v3/contents/generations/tasks</code>）。本站把统一
+          <code>/v1/videos</code> 字段映射为 V3 的 <code>content[]</code>（含
+          <code>role</code>），并在创建前按上游约束做数量与参数校验。
+        </p>
+
+        <h3>参数（对齐 Official V3）</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>参数</th>
+                <th>是否支持</th>
+                <th>取值 / 说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>model</code></td>
+                <td>✓</td>
+                <td>固定 <code>doubao-seedance-2-0-260128</code></td>
+              </tr>
+              <tr>
+                <td><code>prompt</code></td>
+                <td>✓</td>
+                <td>必填；映射为 <code>content</code> 中 <code>type=text</code></td>
+              </tr>
+              <tr>
+                <td><code>seconds</code> / <code>duration</code></td>
+                <td>✓</td>
+                <td>
+                  <code>4</code>–<code>15</code>；或 <code>-1</code>
+                  智能时长（省略时上游默认 <code>5</code>）
+                </td>
+              </tr>
+              <tr>
+                <td><code>aspect_ratio</code></td>
+                <td>✓</td>
+                <td>
+                  <code>adaptive</code>（默认）、<code>16:9</code>、<code
+                    >9:16</code
+                  >、<code>1:1</code>、<code>4:3</code>、<code>3:4</code>、<code
+                    >21:9</code
+                  >
+                  → 上游 <code>ratio</code>
+                </td>
+              </tr>
+              <tr>
+                <td><code>resolution</code></td>
+                <td>✓</td>
+                <td>
+                  <code>480p</code>、<code>720p</code>、<code>1080p</code>；
+                  <code>4k</code> 可通过校验，但当前价档未启用
+                </td>
+              </tr>
+              <tr>
+                <td><code>images</code></td>
+                <td>✓</td>
+                <td>
+                  最多 <strong>9</strong>；公网 HTTPS →
+                  <code>image_url</code> +
+                  <code>role=reference_image</code>
+                </td>
+              </tr>
+              <tr>
+                <td><code>videos</code></td>
+                <td>✓</td>
+                <td>
+                  最多 <strong>3</strong>；HTTPS →
+                  <code>video_url</code> +
+                  <code>role=reference_video</code>
+                </td>
+              </tr>
+              <tr>
+                <td><code>audios</code></td>
+                <td>✓</td>
+                <td>
+                  最多 <strong>3</strong>；HTTPS →
+                  <code>audio_url</code> +
+                  <code>role=reference_audio</code>；
+                  <strong>不可单独只传音频</strong>（须再带图或视频）
+                </td>
+              </tr>
+              <tr>
+                <td><code>first_image</code> / <code>last_image</code></td>
+                <td>✓</td>
+                <td>
+                  首帧 / 尾帧 HTTPS →
+                  <code>first_frame</code> /
+                  <code>last_frame</code>；计入 9
+                  图上限，可与 <code>images</code> 等同用
+                </td>
+              </tr>
+              <tr>
+                <td><code>generate_audio</code></td>
+                <td>✓</td>
+                <td><code>true</code> / <code>false</code>（上游默认 true）</td>
+              </tr>
+              <tr>
+                <td><code>watermark</code></td>
+                <td>✓</td>
+                <td><code>true</code> / <code>false</code>（上游默认 false）</td>
+              </tr>
+              <tr>
+                <td><code>metadata.return_last_frame</code> 等</td>
+                <td>✓</td>
+                <td>
+                  可选透传 Official V3 顶层字段：
+                  <code>return_last_frame</code>、
+                  <code>service_tier</code>、
+                  <code>execution_expires_after</code>、
+                  <code>safety_identifier</code>、
+                  <code>priority</code>
+                </td>
+              </tr>
+              <tr>
+                <td><code>auto_face</code></td>
+                <td>—</td>
+                <td>不支持</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>素材上限与错误码</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>字段</th>
+                <th>上限</th>
+                <th>错误码</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <code>first_image</code> +
+                  <code>last_image</code> +
+                  <code>images</code>
+                </td>
+                <td>≤ 9</td>
+                <td><code>invalid_images</code></td>
+              </tr>
+              <tr>
+                <td><code>videos</code></td>
+                <td>≤ 3</td>
+                <td><code>invalid_videos</code></td>
+              </tr>
+              <tr>
+                <td><code>audios</code></td>
+                <td>≤ 3</td>
+                <td><code>invalid_audios</code></td>
+              </tr>
+              <tr>
+                <td>仅 <code>audios</code> 无图无视频</td>
+                <td>禁止</td>
+                <td><code>invalid_audios</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          以下字段上游拒绝，本站创建前也会返回
+          <code>400</code>：
+          <code>callback_url</code>、<code>draft</code>、<code>frames</code>、<code
+            >seed</code
+          >、<code>camera_fixed</code>、<code>tools</code>（勿放进
+          <code>metadata</code>）。
         </p>
 
         <h3>请求示例</h3>
+        <p>文生视频：</p>
         <pre><code>curl "$BASE_URL/v1/videos" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
@@ -1478,6 +1276,55 @@ curl "$BASE_URL/v1/sd/assets/$ASSET_ID" \
     "watermark": false
   }'</code></pre>
 
+        <p>多模态参考（最多 9 图 + 3 视频 + 3 音频）：</p>
+        <pre><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "doubao-seedance-2-0-260128",
+    "prompt": "沿用参考视频运镜，保持参考图人物与产品外观，动作与音频重拍同步",
+    "seconds": 10,
+    "aspect_ratio": "9:16",
+    "resolution": "720p",
+    "images": [
+      "https://cdn.example.com/character.jpg",
+      "https://cdn.example.com/product.jpg"
+    ],
+    "videos": ["https://cdn.example.com/camera-reference.mp4"],
+    "audios": ["https://cdn.example.com/rhythm-reference.mp3"],
+    "generate_audio": true,
+    "watermark": false
+  }'</code></pre>
+
+        <p>首帧 + 尾帧：</p>
+        <pre><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "doubao-seedance-2-0-260128",
+    "prompt": "从清晨安静街道自然过渡到夜晚霓虹，保持主体一致",
+    "seconds": 8,
+    "aspect_ratio": "16:9",
+    "resolution": "1080p",
+    "first_image": "https://cdn.example.com/first-frame.jpg",
+    "last_image": "https://cdn.example.com/last-frame.jpg",
+    "generate_audio": true,
+    "watermark": false
+  }'</code></pre>
+
+        <p>智能时长 + 返回末帧：</p>
+        <pre><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "doubao-seedance-2-0-260128",
+    "prompt": "一杯咖啡从研磨到拉花完成的连贯近景",
+    "seconds": -1,
+    "aspect_ratio": "adaptive",
+    "resolution": "720p",
+    "metadata": { "return_last_frame": true }
+  }'</code></pre>
+
         <h3>使用须知</h3>
         <div class="warning">
           <strong>提交时会先预扣，完成后再按实际 Token 重算。</strong>
@@ -1485,13 +1332,24 @@ curl "$BASE_URL/v1/sd/assets/$ASSET_ID" \
         </div>
         <ul>
           <li>
-            接入测试建议先用 <code>4 秒 + 480p + 无音频</code>，降低等待和消耗。
+            接入测试建议先用 <code>4 秒 + 480p + 无参考</code>，降低等待和消耗。
+          </li>
+          <li>
+            素材须为服务端与上游可访问的 HTTPS URL；勿使用即将过期的一次性签名链。
           </li>
           <li>
             建议每 5–10 秒轮询，整体超时不低于 600
             秒；不要用高频轮询或重复提交代替等待。
           </li>
           <li>结果 URL 由本站代理，不要依赖或保存上游内部任务 ID。</li>
+          <li>
+            对外任务状态仍为 OpenAI 视频风格（
+            <code>queued</code> /
+            <code>in_progress</code> /
+            <code>completed</code> /
+            <code>failed</code>
+            ）。
+          </li>
           <li>
             演练场选择“视频”、<code>sd-token</code>
             和该模型即可使用同一参数与计费链路。
@@ -1538,10 +1396,37 @@ curl "$BASE_URL/v1/sd/assets/$ASSET_ID" \
                   必须且只能 1 图
                 </td>
                 <td>
-                  <code>grok-image-video</code> $0.30/次；<code
+                  <code>grok-image-video</code> ¥0.60/次；<code
                     >grok-video-1.5</code
                   >
-                  $0.50/次
+                  ¥0.75/次
+                </td>
+              </tr>
+              <tr>
+                <td><code>grok按次-x</code></td>
+                <td>
+                  <code>grok-imagine-video-1.5-preview</code><br /><code
+                    >grok-video-3</code
+                  >
+                </td>
+                <td>
+                  1.5：1–15 秒任意整数；Video 3：<code>6/10/12/16/20</code>
+                </td>
+                <td>
+                  1.5：7 种画幅 + <code>480p/720p</code>；Video 3：<code
+                    >16:9/9:16/1:1</code
+                  >
+                  + <code>480p/720p</code>
+                </td>
+                <td>
+                  1.5：必须 1 张首帧图；Video 3：<code>mode=text|frame|ref</code
+                  >（ref 1–7 图；省略 mode 时按图数推断）
+                </td>
+                <td>
+                  <code>grok-imagine-video-1.5-preview</code> ¥0.70/次；<code
+                    >grok-video-3</code
+                  >
+                  ¥0.55/次
                 </td>
               </tr>
               <tr>
@@ -1561,6 +1446,26 @@ curl "$BASE_URL/v1/sd/assets/$ASSET_ID" \
                   <code>watermark</code>
                 </td>
                 <td>按实际 token</td>
+              </tr>
+              <tr>
+                <td><code>sd-token</code></td>
+                <td><code>doubao-seedance-2-0-260128</code></td>
+                <td>
+                  <code>4</code>–<code>15</code> 秒，或
+                  <code>-1</code> 智能时长
+                </td>
+                <td>
+                  <code>aspect_ratio</code>：
+                  <code>adaptive/16:9/9:16/1:1/4:3/3:4/21:9</code>；
+                  <code>resolution</code>：
+                  <code>480p/720p/1080p</code>（<code>4k</code> 未启用）
+                </td>
+                <td>
+                  最多 9 图 + 3 视频 + 3 音频（HTTPS）；支持
+                  <code>first_image</code>/<code>last_image</code>、
+                  <code>generate_audio</code>、<code>watermark</code>；音频须搭配图或视频
+                </td>
+                <td>Token 预扣 + 按用量结算</td>
               </tr>
               <tr>
                 <td><code>sd-video</code></td>
@@ -1619,6 +1524,61 @@ curl "$BASE_URL/v1/sd/assets/$ASSET_ID" \
     "aspect_ratio": "9:16",
     "resolution": "720p",
     "images": ["https://example.com/person.jpg"]
+  }'</code></pre>
+
+        <h3><code>grok按次-x</code> 请求示例</h3>
+        <p>
+          统一端点 <code>POST /v1/videos</code>；token 绑定
+          <code>grok按次-x</code>。参考图传公网 HTTPS URL。
+        </p>
+        <p>
+          <code>grok-imagine-video-1.5-preview</code> 必须且只能 1 张首帧图，时长
+          1–15 秒：
+        </p>
+        <pre><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "grok-imagine-video-1.5-preview",
+    "prompt": "让画面中的人物轻微转头，背景保持稳定，电影感光线",
+    "seconds": 6,
+    "aspect_ratio": "9:16",
+    "resolution": "720p",
+    "images": ["https://example.com/start.png"]
+  }'</code></pre>
+
+        <p>
+          <code>grok-video-3</code> 支持
+          <code>mode=text</code>（文生）、<code>mode=frame</code>（单图首帧）、<code
+            >mode=ref</code
+          >（1–7 张概念参考）。真实上游为 Grok Imagine Video 1.0。
+        </p>
+        <pre><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "grok-video-3",
+    "prompt": "一只猫在月球表面缓慢行走",
+    "mode": "text",
+    "seconds": 6,
+    "aspect_ratio": "16:9",
+    "resolution": "480p"
+  }'</code></pre>
+
+        <pre><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "grok-video-3",
+    "prompt": "参考多张概念图生成同一角色的短镜头",
+    "mode": "ref",
+    "seconds": 10,
+    "aspect_ratio": "1:1",
+    "resolution": "720p",
+    "images": [
+      "https://example.com/ref1.png",
+      "https://example.com/ref2.png"
+    ]
   }'</code></pre>
 
         <h3><code>sd-video</code> 请求示例</h3>
@@ -1716,7 +1676,7 @@ curl "$BASE_URL/v1/sd/assets/$ASSET_ID" \
 
         <h3>任务结算说明</h3>
         <p>
-          <code>grok按次</code> 和
+          <code>grok按次</code>、<code>grok按次-x</code> 和
           <code>sd-video</code> 按控制台标价按次结算。仅 <code>video-dddd</code>
           会在提交时预扣额度，并在任务完成后根据
           <code>usage.total_tokens</code
@@ -1784,6 +1744,8 @@ curl "$BASE_URL/v1/sd/assets/$ASSET_ID" \
     <footer>
       <div>
         公开入口：<a href="https://vp.735678.xyz">https://vp.735678.xyz</a>
+        · 文档入口：<a href="/docs.html">/docs.html</a>
+        · 官方对接：<a href="/docs-official.html">/docs-official.html</a>
       </div>
     </footer>
   </body>

@@ -1,7 +1,19 @@
 import { readFile } from 'node:fs/promises'
 
-const source = await readFile(
+const docsSource = await readFile(
   new URL('../public/docs.html', import.meta.url),
+  'utf8'
+)
+const officialSource = await readFile(
+  new URL('../public/docs-official.html', import.meta.url),
+  'utf8'
+)
+const cssSource = await readFile(
+  new URL('../public/docs.css', import.meta.url),
+  'utf8'
+)
+const jsSource = await readFile(
+  new URL('../public/docs.js', import.meta.url),
   'utf8'
 )
 
@@ -11,27 +23,137 @@ function requireMatch(condition, message) {
   }
 }
 
+// Shared chrome: page tabs + stylesheet
+for (const [name, source] of [
+  ['docs.html', docsSource],
+  ['docs-official.html', officialSource],
+]) {
+  requireMatch(
+    source.includes('href="/docs.css"') || source.includes("href='/docs.css'"),
+    `${name} must link shared docs.css`
+  )
+  requireMatch(
+    source.includes('src="/docs.js"') || source.includes("src='/docs.js'"),
+    `${name} must load docs.js for section highlight`
+  )
+  requireMatch(
+    source.includes('class="page-tabs"') || source.includes("class='page-tabs'"),
+    `${name} must include page-tabs nav`
+  )
+  requireMatch(
+    source.includes('href="/docs.html"'),
+    `${name} must link unified docs route /docs.html`
+  )
+  requireMatch(
+    source.includes('href="/docs-official.html"'),
+    `${name} must link official guide route /docs-official.html`
+  )
+  requireMatch(
+    source.includes('class="docs-sticky"') ||
+      source.includes("class='docs-sticky'"),
+    `${name} must use sticky docs chrome shell`
+  )
+}
+
 requireMatch(
-  (source.match(/id="video-dddd"/g) || []).length === 1,
+  docsSource.includes('aria-current="page"') &&
+    docsSource.includes('统一图片与视频 API'),
+  'docs.html must mark unified page as current'
+)
+requireMatch(
+  officialSource.includes('aria-current="page"') &&
+    officialSource.includes('官方 New API 对接'),
+  'docs-official.html must mark official page as current'
+)
+
+// Official page must be its own document (not merged into unified long page)
+requireMatch(
+  !docsSource.includes('官方 New API 对接本站图片与视频'),
+  'docs.html must not embed the full official integration guide title'
+)
+requireMatch(
+  officialSource.includes('官方 New API 对接本站图片与视频'),
+  'docs-official.html must contain official guide title'
+)
+
+// Official guide contracts
+for (const contract of [
+  'POST /v1/images/generations',
+  'POST /v1/videos',
+  '/v1/videos/{task_id}',
+  '/v1/videos/{task_id}/content',
+  'POST /v1/video/generations',
+  'POST /v1/sd/assets',
+  '/v1/sd/assets',
+  '/pg/assets',
+  'asset://',
+  'Authorization: Bearer',
+  'video-dddd',
+  'sd-token',
+  'sd-video',
+  'dddd-sd-图',
+  'github.com/QuantumNous/new-api',
+  'id="start"',
+  'id="images"',
+  'id="videos"',
+  'id="assets"',
+  'id="compat"',
+  'id="clients"',
+  'id="faq"',
+  'id="checklist"',
+]) {
+  requireMatch(
+    officialSource.includes(contract),
+    `docs-official.html is missing ${contract}`
+  )
+}
+
+requireMatch(cssSource.includes('.page-tabs'), 'docs.css must style page tabs')
+requireMatch(
+  cssSource.includes('.page-tabs a.is-active'),
+  'docs.css must highlight active page tab'
+)
+requireMatch(
+  cssSource.includes('.section-nav a.is-active'),
+  'docs.css must highlight active section link'
+)
+requireMatch(
+  cssSource.includes('.docs-sticky'),
+  'docs.css must style sticky docs shell'
+)
+requireMatch(
+  jsSource.includes('IntersectionObserver') || jsSource.includes('pickFromScroll'),
+  'docs.js must update section highlight on scroll'
+)
+requireMatch(
+  jsSource.includes("classList.toggle('is-active'") ||
+    jsSource.includes('classList.toggle("is-active"'),
+  'docs.js must toggle is-active on section links'
+)
+
+// --- Existing unified docs contracts ---
+
+requireMatch(
+  (docsSource.match(/id="video-dddd"/g) || []).length === 1,
   'docs must contain exactly one video-dddd section'
 )
 requireMatch(
-  source.includes('href="#video-dddd"'),
+  docsSource.includes('href="#video-dddd"'),
   'docs navigation must link to the video-dddd section'
 )
 
 for (const group of ['dddd-sd-image', 'sd-token']) {
   requireMatch(
-    (source.match(new RegExp(`id="${group}"`, 'g')) || []).length === 1,
+    (docsSource.match(new RegExp(`id="${group}"`, 'g')) || []).length === 1,
     `docs must contain exactly one ${group} section`
   )
   requireMatch(
-    source.includes(`href="#${group}"`),
+    docsSource.includes(`href="#${group}"`),
     `docs navigation must link to the ${group} section`
   )
 }
 
-const imageSectionMatch = source.match(
+const imageSectionMatch = docsSource.match(
   /<section id="dddd-sd-image"[\s\S]*?<\/section>/
 )
 requireMatch(imageSectionMatch, 'dddd-sd-image section is missing')
@@ -60,7 +182,7 @@ for (const contract of [
   )
 }
 
-const sdTokenSectionMatch = source.match(
+const sdTokenSectionMatch = docsSource.match(
   /<section id="sd-token"[\s\S]*?<\/section>/
 )
 requireMatch(sdTokenSectionMatch, 'sd-token section is missing')
@@ -85,7 +207,13 @@ for (const contract of [
   )
 }
 
-for (const [tier, officialWithVideo, officialWithoutVideo, saleWithVideo, saleWithoutVideo] of [
+for (const [
+  tier,
+  officialWithVideo,
+  officialWithoutVideo,
+  saleWithVideo,
+  saleWithoutVideo,
+] of [
   ['480p/720p', '28.00', '46.00', '21.84', '35.88'],
   ['1080p', '31.00', '51.00', '24.18', '39.78'],
 ]) {
@@ -96,7 +224,9 @@ for (const [tier, officialWithVideo, officialWithoutVideo, saleWithVideo, saleWi
   )
 }
 
-const sectionMatch = source.match(/<section id="video-dddd"[\s\S]*?<\/section>/)
+const sectionMatch = docsSource.match(
+  /<section id="video-dddd"[\s\S]*?<\/section>/
+)
 requireMatch(sectionMatch, 'video-dddd section is missing')
 
 const section = sectionMatch[0]
