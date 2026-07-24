@@ -11,12 +11,19 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/task/kyyvideo"
+	"github.com/QuantumNous/new-api/relay/channel/task/wxart"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGetTaskAdaptorReturnsKyyVideoAdaptor(t *testing.T) {
 	adaptor := GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKyyVideo)))
 	_, ok := adaptor.(*kyyvideo.TaskAdaptor)
+	require.True(t, ok)
+}
+
+func TestGetTaskAdaptorReturnsWxArtAdaptor(t *testing.T) {
+	adaptor := GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeWxArt)))
+	_, ok := adaptor.(*wxart.TaskAdaptor)
 	require.True(t, ok)
 }
 

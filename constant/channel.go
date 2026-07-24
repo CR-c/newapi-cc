@@ -58,6 +58,7 @@ const (
 	ChannelTypeAdvancedCustom   = 58
 	ChannelTypeServiceInference = 59
 	ChannelTypeKyyVideo         = 60
+	ChannelTypeWxArt            = 61
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -124,6 +125,7 @@ var ChannelBaseURLs = []string{
 	"",                                          //58
 	"https://console.service-inference.ai",      //59
 	"https://zcbservice.aizfw.cn/kyyReactApiServer", //60
+	"https://api.wxart.space",                       //61
 }
 
 var ChannelTypeNames = map[int]string{
@@ -184,6 +186,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeAdvancedCustom:   "Advanced Custom",
 	ChannelTypeServiceInference: "Service Inference",
 	ChannelTypeKyyVideo:         "KYY Video",
+	ChannelTypeWxArt:            "WxArt Video",
 }
 
 func GetChannelTypeName(channelType int) string {

@@ -271,7 +271,7 @@ func taskSubmitSucceeded(statusCode int) bool {
 }
 
 func taskSubmitHTTPError(resp *http.Response, channelType int) *dto.TaskError {
-	if channelType == constant.ChannelTypeKyyVideo || channelType == constant.ChannelTypeServiceInference || channelType == constant.ChannelTypeDoubaoVideo {
+	if channelType == constant.ChannelTypeKyyVideo || channelType == constant.ChannelTypeServiceInference || channelType == constant.ChannelTypeDoubaoVideo || channelType == constant.ChannelTypeWxArt {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 		_ = resp.Body.Close()
 		message := "Video upstream request failed"
@@ -279,6 +279,8 @@ func taskSubmitHTTPError(resp *http.Response, channelType int) *dto.TaskError {
 			message = "KYY video upstream request failed"
 		} else if channelType == constant.ChannelTypeDoubaoVideo {
 			message = "Doubao video upstream request failed"
+		} else if channelType == constant.ChannelTypeWxArt {
+			message = "WxArt video upstream request failed"
 		}
 		return service.TaskErrorWrapper(errors.New(message), "fail_to_fetch_task", resp.StatusCode)
 	}
@@ -599,7 +601,8 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Data:       task.Data,
 	}
 	isPrivateVideoPlatform := task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeServiceInference)) ||
-		task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKyyVideo))
+		task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKyyVideo)) ||
+		task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeWxArt))
 	if isPrivateVideoPlatform {
 		safeProperties := task.Properties
 		safeProperties.UpstreamModelName = ""
@@ -619,7 +622,8 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 			result.ResultURL = ""
 		}
 	}
-	if task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKyyVideo)) {
+	if task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKyyVideo)) ||
+		task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeWxArt)) {
 		if task.Status == model.TaskStatusSuccess {
 			result.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 		}
@@ -631,6 +635,7 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		if common.Unmarshal(result.Data, &data) == nil {
 			delete(data, "id")
 			delete(data, "video_url")
+			delete(data, "url")
 			delete(data, "amount")
 			delete(data, "error")
 			delete(data, "model")

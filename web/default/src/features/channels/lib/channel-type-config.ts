@@ -157,6 +157,16 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       'videos_pro_fast',
     ],
   },
+  61: {
+    id: 61,
+    name: CHANNEL_TYPES[61],
+    icon: 'openai',
+    defaultBaseUrl: 'https://api.wxart.space',
+    supportedModels: [
+      'grok-imagine-video-1.5-preview',
+      'grok-video-3',
+    ],
+  },
 }
 
 /**

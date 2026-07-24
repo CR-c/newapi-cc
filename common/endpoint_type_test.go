@@ -26,6 +26,7 @@ func TestGetEndpointTypesByChannelTypeRecognizesDedicatedVideoChannels(t *testin
 		constant.ChannelTypeDoubaoVideo,
 		constant.ChannelTypeSora,
 		constant.ChannelTypeKyyVideo,
+		constant.ChannelTypeWxArt,
 	} {
 		assert.Equal(t, []constant.EndpointType{constant.EndpointTypeOpenAIVideo}, GetEndpointTypesByChannelType(channelType, "video-model"))
 	}
