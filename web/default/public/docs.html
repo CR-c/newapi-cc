@@ -1057,6 +1057,19 @@ curl "$BASE_URL/v1/sd/assets/$ASSET_ID" \
           <code>GET /v1/videos/{task_id}/content</code> 获取 MP4。
         </div>
 
+        <div class="warning">
+          <strong>本分组没有素材库。</strong>不要调用
+          <code>/v1/sd/assets</code>，也不要传
+          <code>asset://</code>。参考图 / 视频 / 音频在创建视频时<strong
+            >直接</strong
+          >写入请求参数
+          <code>images</code>、<code>videos</code>、<code>audios</code>（以及可选的
+          <code>first_image</code> / <code>last_image</code>），值为公网可访问的
+          <strong>HTTPS URL</strong>。这与
+          <code>video-dddd</code>「先素材库再
+          <code>asset://</code>」不同。
+        </div>
+
         <h3>能力与计费</h3>
         <div class="table-wrap">
           <table>
@@ -1461,7 +1474,8 @@ curl "$BASE_URL/v1/sd/assets/$ASSET_ID" \
                   <code>480p/720p/1080p</code>（<code>4k</code> 未启用）
                 </td>
                 <td>
-                  最多 9 图 + 3 视频 + 3 音频（HTTPS）；支持
+                  <strong>无素材库</strong>；创建时直接传 HTTPS（最多 9 图 + 3
+                  视频 + 3 音频）；支持
                   <code>first_image</code>/<code>last_image</code>、
                   <code>generate_audio</code>、<code>watermark</code>；音频须搭配图或视频
                 </td>

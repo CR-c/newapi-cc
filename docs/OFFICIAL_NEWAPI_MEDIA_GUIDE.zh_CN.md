@@ -352,7 +352,7 @@ while True:
 | 分组 | 计费 | 参考素材传法 | 备注 |
 | ---- | ---- | ------------ | ---- |
 | `video-dddd` | 按次 | **仅** `asset://素材ID`（须先走素材库） | 多模态参考能力强 |
-| `sd-token` | Token | 公网 HTTPS URL（最多 9 图 + 3 视频 + 3 音频；支持首尾帧） | 提交预扣，完成后按用量结算；Official V3 映射 |
+| `sd-token` | Token | **无素材库**；创建时直接传公网 HTTPS（最多 9 图 + 3 视频 + 3 音频；支持首尾帧；勿用 `asset://`） | 提交预扣，完成后按用量结算；Official V3 映射 |
 | `sd-video` | 按次 | 公网 HTTPS URL | 部分模型支持首尾帧 |
 | `grok按次` | 按次 | 公网 HTTPS URL | Grok 图/文生视频（既有） |
 | `grok按次-x` | 按次 | 公网 HTTPS URL | Grok Imagine 1.5 / Grok Video 3 |

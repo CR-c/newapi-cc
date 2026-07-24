@@ -197,8 +197,13 @@ for (const contract of [
   '1080p',
   '官方基准价',
   '分组倍率 <code>0.78</code>',
-  '4K 当前未启用',
-  '按 Token',
+  '本分组没有素材库',
+  '/v1/sd/assets',
+  'asset://',
+  'HTTPS URL',
+  'images',
+  'videos',
+  'audios',
   '使用须知',
 ]) {
   requireMatch(
@@ -206,6 +211,12 @@ for (const contract of [
     `sd-token section is missing ${contract}`
   )
 }
+requireMatch(
+  sdTokenSection.includes('不要调用') &&
+    sdTokenSection.includes('/v1/sd/assets') &&
+    sdTokenSection.includes('直接'),
+  'sd-token section must tell users to pass HTTPS params directly without the asset library'
+)
 
 for (const [
   tier,

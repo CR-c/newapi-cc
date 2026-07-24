@@ -23,7 +23,7 @@ New API 提供 OpenAI 兼容的图片与视频接口。选择模型、提交统�
 | `dddd-sd-图` | 图片 | `POST /v1/images/generations` | 按次 | HTTPS / Base64（`image`） |
 | `64生图` | 图片 | `POST /v1/images/generations` | 按次 | HTTPS / Base64（`image`） |
 | `video-dddd` | 视频 | `POST /v1/videos` 等 | 按次 | 仅 `asset://`（先素材库） |
-| `sd-token` | 视频 | `POST /v1/videos` 等 | Token | 公网 HTTPS URL（最多 9 图 + 3 视频 + 3 音频） |
+| `sd-token` | 视频 | `POST /v1/videos` 等 | Token | **无素材库**；创建时直接传公网 HTTPS（最多 9 图 + 3 视频 + 3 音频） |
 | `sd-video` | 视频 | `POST /v1/videos` 等 | 按次 | 公网 HTTPS URL |
 | `grok按次` | 视频 | `POST /v1/videos` 等 | 按次 | 公网 HTTPS URL |
 | `grok按次-x` | 视频 | `POST /v1/videos` 等 | 按次 | 公网 HTTPS URL |
@@ -519,6 +519,10 @@ curl "$NEWAPI_BASE_URL/v1/videos" \
 ### `sd-token`
 
 Token 计费视频。对外仍是统一三件套（`POST/GET /v1/videos` + content 下载）；上游协议为 Seedance Official V3（`POST /api/v3/contents/generations/tasks`），本站将统一字段映射为 V3 `content[]`。
+
+> **本分组没有素材库。** 不要调用 `/v1/sd/assets`，也不要传 `asset://`。  
+> 参考图 / 视频 / 音频在 **创建视频时直接** 写入 `images` / `videos` / `audios`（以及可选的 `first_image` / `last_image`），值为公网可访问的 **HTTPS URL**。  
+> 这与 `video-dddd`「先素材库再 `asset://`」不同。
 
 #### 模型与价格
 
