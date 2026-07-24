@@ -34,7 +34,31 @@ type VideoAssetUpstreamData struct {
 
 type VideoAssetUpstreamResponse struct {
 	Success bool                   `json:"success"`
+	Message string                 `json:"message,omitempty"`
 	Data    VideoAssetUpstreamData `json:"data"`
+}
+
+// VideoAssetUpstreamError is returned when the asset library upstream rejects a request.
+// StatusCode is the HTTP status from upstream (0 when the body was a logical failure on 2xx).
+type VideoAssetUpstreamError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *VideoAssetUpstreamError) Error() string {
+	if e == nil {
+		return "video asset upstream request was rejected"
+	}
+	if e.Message != "" && e.StatusCode > 0 {
+		return fmt.Sprintf("video asset upstream returned status %d: %s", e.StatusCode, e.Message)
+	}
+	if e.Message != "" {
+		return e.Message
+	}
+	if e.StatusCode > 0 {
+		return fmt.Sprintf("video asset upstream returned status %d", e.StatusCode)
+	}
+	return "video asset upstream request was rejected"
 }
 
 func RequestVideoAsset(ctx context.Context, client *http.Client, method, baseURL, apiKey, assetID string, payload any) (*VideoAssetUpstreamResponse, error) {
@@ -73,15 +97,31 @@ func RequestVideoAsset(ctx context.Context, client *http.Client, method, baseURL
 	if len(data) > VideoAssetResponseMaxBytes {
 		return nil, errors.New("video asset upstream response is too large")
 	}
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("video asset upstream returned status %d", response.StatusCode)
-	}
+
 	var result VideoAssetUpstreamResponse
-	if err = common.Unmarshal(data, &result); err != nil {
+	unmarshalErr := common.Unmarshal(data, &result)
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		message := strings.TrimSpace(result.Message)
+		if unmarshalErr != nil || message == "" {
+			message = strings.TrimSpace(string(data))
+		}
+		if message == "" {
+			message = fmt.Sprintf("status %d", response.StatusCode)
+		}
+		return nil, &VideoAssetUpstreamError{StatusCode: response.StatusCode, Message: message}
+	}
+	if unmarshalErr != nil {
 		return nil, errors.New("video asset upstream returned an invalid response")
 	}
 	if !result.Success || result.Data.BaseResp == nil || result.Data.BaseResp.StatusCode != 0 {
-		return nil, errors.New("video asset upstream request was rejected")
+		message := strings.TrimSpace(result.Message)
+		if message == "" && result.Data.BaseResp != nil {
+			message = strings.TrimSpace(result.Data.BaseResp.StatusMsg)
+		}
+		if message == "" {
+			message = "video asset upstream request was rejected"
+		}
+		return nil, &VideoAssetUpstreamError{StatusCode: response.StatusCode, Message: message}
 	}
 	return &result, nil
 }

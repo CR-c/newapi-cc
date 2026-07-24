@@ -22,7 +22,6 @@ import (
 )
 
 const (
-	videoAssetGroup        = "video-dddd"
 	videoAssetRequestLimit = 64 << 10
 	videoAssetRequestWait  = 30 * time.Second
 )
@@ -37,16 +36,39 @@ func videoAssetError(c *gin.Context, status int, message string) {
 	c.JSON(status, gin.H{"success": false, "message": message})
 }
 
-func requireVideoAssetGroup(c *gin.Context) bool {
-	if common.GetContextKeyString(c, constant.ContextKeyUsingGroup) == videoAssetGroup {
-		return true
+// mapVideoAssetUpstreamError turns upstream asset-library failures into client-facing
+// status/message. 4xx from upstream (bad URL, DownloadFailed, invalid AssetType) stay
+// 400; other failures stay 502 without exposing credentials.
+func mapVideoAssetUpstreamError(err error, fallback string) (int, string) {
+	if fallback == "" {
+		fallback = "video asset upstream request failed"
 	}
-	videoAssetError(c, http.StatusForbidden, "this endpoint is only available to the video-dddd group")
-	return false
+	var upstreamErr *service.VideoAssetUpstreamError
+	if errors.As(err, &upstreamErr) && upstreamErr != nil {
+		message := strings.TrimSpace(upstreamErr.Message)
+		if message == "" {
+			message = fallback
+		}
+		if upstreamErr.StatusCode >= 400 && upstreamErr.StatusCode < 500 {
+			return http.StatusBadRequest, message
+		}
+		return http.StatusBadGateway, message
+	}
+	return http.StatusBadGateway, fallback
+}
+
+func requireVideoAssetGroup(c *gin.Context) (string, bool) {
+	usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+	if constant.IsVideoAssetGroup(usingGroup) {
+		return usingGroup, true
+	}
+	videoAssetError(c, http.StatusForbidden, "this endpoint is only available to video asset groups")
+	return "", false
 }
 
 func CreateVideoAsset(c *gin.Context) {
-	if !requireVideoAssetGroup(c) {
+	usingGroup, ok := requireVideoAssetGroup(c)
+	if !ok {
 		return
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, videoAssetRequestLimit)
@@ -71,7 +93,7 @@ func CreateVideoAsset(c *gin.Context) {
 		return
 	}
 
-	channel, err := model.GetEnabledChannelByGroupAndType(videoAssetGroup, constant.ChannelTypeServiceInference)
+	channel, err := model.GetEnabledChannelByGroupAndType(usingGroup, constant.ChannelTypeServiceInference)
 	if err != nil {
 		logger.LogError(c.Request.Context(), "video asset channel lookup failed: "+err.Error())
 		videoAssetError(c, http.StatusInternalServerError, "failed to select video asset channel")
@@ -95,11 +117,12 @@ func CreateVideoAsset(c *gin.Context) {
 			err = errors.New("upstream response did not include an asset id")
 		}
 		logger.LogError(c.Request.Context(), "video asset create failed: "+err.Error())
-		videoAssetError(c, http.StatusBadGateway, "failed to create video asset")
+		status, message := mapVideoAssetUpstreamError(err, "failed to create video asset")
+		videoAssetError(c, status, message)
 		return
 	}
 	asset := &model.VideoAsset{
-		UserID: c.GetInt("id"), TokenID: c.GetInt("token_id"), Group: videoAssetGroup,
+		UserID: c.GetInt("id"), TokenID: c.GetInt("token_id"), Group: usingGroup,
 		ChannelID: channel.Id, UpstreamID: upstream.Data.ID, AssetType: request.AssetType,
 		Name: request.Name, SourceURL: request.URL,
 	}
@@ -168,7 +191,8 @@ func videoAssetDomainAllowed(host string) bool {
 }
 
 func GetVideoAsset(c *gin.Context) {
-	if !requireVideoAssetGroup(c) {
+	usingGroup, ok := requireVideoAssetGroup(c)
+	if !ok {
 		return
 	}
 	assetID := c.Param("asset_id")
@@ -176,7 +200,7 @@ func GetVideoAsset(c *gin.Context) {
 		videoAssetError(c, http.StatusNotFound, "video asset not found")
 		return
 	}
-	asset, exists, err := model.GetVideoAssetForUser(c.GetInt("id"), assetID, videoAssetGroup)
+	asset, exists, err := model.GetVideoAssetForUser(c.GetInt("id"), assetID, usingGroup)
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("video asset lookup failed for user %d: %v", c.GetInt("id"), err))
 		videoAssetError(c, http.StatusInternalServerError, "failed to query video asset")
@@ -204,7 +228,8 @@ func GetVideoAsset(c *gin.Context) {
 	}
 	if err != nil {
 		logger.LogError(c.Request.Context(), "video asset query failed: "+err.Error())
-		videoAssetError(c, http.StatusBadGateway, "failed to query video asset")
+		status, message := mapVideoAssetUpstreamError(err, "failed to query video asset")
+		videoAssetError(c, status, message)
 		return
 	}
 	upstream.Data.ID = asset.ID

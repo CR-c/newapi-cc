@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -323,6 +324,62 @@ func TestResolveVideoAssetReferencesPreservesOtherGroupImageLimits(t *testing.T)
 
 	require.NoError(t, err)
 	assert.Zero(t, channelID)
+}
+
+func TestResolveVideoAssetReferencesSupportsSDAndCornGroups(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.VideoAsset{}, &model.Channel{}, &model.Ability{}))
+	previousDB := model.DB
+	previousCache := common.MemoryCacheEnabled
+	model.DB = db
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.MemoryCacheEnabled = previousCache
+	})
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 59, Type: constant.ChannelTypeServiceInference, Status: common.ChannelStatusEnabled, Key: "upstream-key",
+	}).Error)
+
+	for _, group := range []string{constant.VideoAssetGroupSD, constant.VideoAssetGroupCorn} {
+		require.NoError(t, db.Create(&model.Ability{
+			Group: group, Model: "dreamina-seedance-2-0-mini-hc", ChannelId: 59, Enabled: true,
+		}).Error)
+		assetID := "asset-sd-dddd"
+		if group == constant.VideoAssetGroupCorn {
+			assetID = "asset-corn"
+		}
+		require.NoError(t, db.Create(&model.VideoAsset{
+			ID: assetID, UserID: 7, Group: group, ChannelID: 59, UpstreamID: assetID + "-upstream", AssetType: "Image",
+		}).Error)
+
+		context, _ := gin.CreateTestContext(httptest.NewRecorder())
+		context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewBufferString(fmt.Sprintf(`{
+			"model":"dreamina-seedance-2-0-mini-hc","images":["asset://%s"]
+		}`, assetID)))
+		context.Request.Header.Set("Content-Type", "application/json")
+		context.Set("id", 7)
+
+		channelID, resolveErr := resolveVideoAssetReferences(context, group)
+		require.NoError(t, resolveErr, group)
+		assert.Equal(t, 59, channelID, group)
+
+		boundChannel, channelErr := resolveVideoAssetChannel(context, group, "dreamina-seedance-2-0-mini-hc")
+		require.NoError(t, channelErr, group)
+		require.NotNil(t, boundChannel, group)
+		assert.Equal(t, 59, boundChannel.Id, group)
+	}
+
+	// Assets are scoped to the token group: Corn cannot use an sd-dddd asset id.
+	crossContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+	crossContext.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewBufferString(`{
+		"model":"dreamina-seedance-2-0-mini-hc","images":["asset://asset-sd-dddd"]
+	}`))
+	crossContext.Request.Header.Set("Content-Type", "application/json")
+	crossContext.Set("id", 7)
+	_, crossErr := resolveVideoAssetReferences(crossContext, constant.VideoAssetGroupCorn)
+	assert.ErrorContains(t, crossErr, "video asset not found or unavailable")
 }
 
 func TestDistributeResolvesVideoAssetsForSpecifiedChannel(t *testing.T) {

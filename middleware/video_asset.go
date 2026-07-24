@@ -46,7 +46,7 @@ func resolveVideoAssetReferences(c *gin.Context, usingGroup string) (int, error)
 	seen := make(map[string]struct{}, 9)
 	for _, field := range mediaFields {
 		count := int(gjson.GetBytes(data, field.Name+".#").Int())
-		if usingGroup == "video-dddd" && count > field.Max {
+		if constant.IsVideoAssetGroup(usingGroup) && count > field.Max {
 			return 0, fmt.Errorf("at most %d reference %s are supported", field.Max, field.Name)
 		}
 		for index := 0; index < count; index++ {
@@ -58,8 +58,8 @@ func resolveVideoAssetReferences(c *gin.Context, usingGroup string) (int, error)
 			if !strings.HasPrefix(mediaURL, "asset://") {
 				continue
 			}
-			if usingGroup != "video-dddd" {
-				return 0, errors.New("video asset references are only available to the video-dddd group")
+			if !constant.IsVideoAssetGroup(usingGroup) {
+				return 0, errors.New("video asset references are only available to video asset groups")
 			}
 			assetID := strings.TrimPrefix(mediaURL, "asset://")
 			if len(assetID) > 64 || assetID == "" || strings.ContainsAny(assetID, "/?#") || !strings.HasPrefix(assetID, "asset-") {

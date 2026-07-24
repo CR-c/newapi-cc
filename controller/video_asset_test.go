@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -86,6 +87,7 @@ func TestCreateVideoAssetUsesUpstreamCredentialAndStoresOwnership(t *testing.T) 
 	require.True(t, exists)
 	assert.Equal(t, "asset-upstream", stored.UpstreamID)
 	assert.Equal(t, 59, stored.ChannelID)
+	assert.Equal(t, "video-dddd", stored.Group)
 
 	var count int64
 	require.NoError(t, db.Model(&model.VideoAsset{}).Count(&count).Error)
@@ -153,6 +155,89 @@ func TestCreateVideoAssetRejectsOtherGroups(t *testing.T) {
 	CreateVideoAsset(context)
 
 	assert.Equal(t, http.StatusForbidden, recorder.Code)
+}
+
+func TestCreateVideoAssetSurfacesUpstreamClientErrorMessage(t *testing.T) {
+	t.Setenv("VIDEO_ASSET_ALLOWED_DOMAINS", "example.com")
+	db := setupVideoAssetTestDB(t)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusBadRequest)
+		_, _ = writer.Write([]byte(`{"success":false,"message":"CreateAsset failed: DownloadFailed: Failed to download media from the provided URL."}`))
+	}))
+	defer server.Close()
+
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 59, Type: constant.ChannelTypeServiceInference, Status: common.ChannelStatusEnabled, BaseURL: &server.URL, Key: "upstream-secret",
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group: "video-dddd", Model: "dreamina-seedance-2-0-mini-hc", ChannelId: 59, Enabled: true,
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/sd/assets", bytes.NewBufferString(`{
+		"URL":"https://example.com/avatar.jpg","Name":"avatar_front","AssetType":"Image"
+	}`))
+	context.Request.Header.Set("Content-Type", "application/json")
+	context.Set("id", 7)
+	common.SetContextKey(context, constant.ContextKeyUsingGroup, "video-dddd")
+
+	CreateVideoAsset(context)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "DownloadFailed")
+	assert.Contains(t, recorder.Body.String(), `"success":false`)
+}
+
+func TestCreateVideoAssetAcceptsSDAndCornGroups(t *testing.T) {
+	t.Setenv("VIDEO_ASSET_ALLOWED_DOMAINS", "example.com")
+	db := setupVideoAssetTestDB(t)
+	createCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		createCount++
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(fmt.Sprintf(
+			`{"success":true,"data":{"Id":"asset-upstream-%d","base_resp":{"status_code":0,"status_msg":"success"}}}`,
+			createCount,
+		)))
+	}))
+	defer server.Close()
+
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 59, Type: constant.ChannelTypeServiceInference, Status: common.ChannelStatusEnabled, BaseURL: &server.URL, Key: "upstream-secret",
+	}).Error)
+
+	for _, group := range []string{constant.VideoAssetGroupSD, constant.VideoAssetGroupCorn} {
+		require.NoError(t, db.Create(&model.Ability{
+			Group: group, Model: "dreamina-seedance-2-0-mini-hc", ChannelId: 59, Enabled: true,
+		}).Error)
+
+		recorder := httptest.NewRecorder()
+		context, _ := gin.CreateTestContext(recorder)
+		context.Request = httptest.NewRequest(http.MethodPost, "/v1/sd/assets", bytes.NewBufferString(`{
+			"URL":"https://example.com/avatar.jpg","Name":"avatar_front","AssetType":"Image"
+		}`))
+		context.Request.Header.Set("Content-Type", "application/json")
+		context.Set("id", 7)
+		common.SetContextKey(context, constant.ContextKeyUsingGroup, group)
+
+		CreateVideoAsset(context)
+
+		require.Equal(t, http.StatusOK, recorder.Code, group)
+		var response struct {
+			Success bool `json:"success"`
+			Data    struct {
+				ID string `json:"Id"`
+			} `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response), group)
+		require.True(t, response.Success, group)
+		stored, exists, err := model.GetVideoAssetForUser(7, response.Data.ID, group)
+		require.NoError(t, err, group)
+		require.True(t, exists, group)
+		assert.Equal(t, group, stored.Group, group)
+	}
 }
 
 func TestCreateVideoAssetRejectsMultiKeyChannels(t *testing.T) {
