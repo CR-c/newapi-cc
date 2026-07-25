@@ -5290,6 +5290,11 @@
     "Switch to a multimodal video model to upload references.": "Переключитесь на мультимодальную видеомодель, чтобы загрузить референсы.",
     "images": "изображений",
     "videos": "видео",
-    "audios": "аудио"
+    "audios": "аудио",
+    "Real sales ratio": "Реальный коэффициент продаж",
+    "Real sales ratios": "Реальные коэффициенты продаж",
+    "Same as ratio": "Как у коэффициента",
+    "All group names live here. Ratio is the billing multiplier; real sales ratio is optional and used only by profit analysis (unset = same as ratio); top-up ratio applies to users whose account is in this group.": "Здесь хранятся все имена групп. Коэффициент — множитель биллинга; реальный коэффициент продаж необязателен и используется только в анализе прибыли (не задан = как коэффициент); коэффициент пополнения применяется к пользователям, чей аккаунт в этой группе.",
+    "Optional JSON map of group → real sales ratio used by profit analysis. Unset groups fall back to the billing group ratio. Use this for reseller groups where the billed ratio includes a partner markup.": "Необязательный JSON: группа → реальный коэффициент продаж для анализа прибыли. Для незаданных групп используется биллинговый коэффициент. Для реселлерских групп, где в тарифе есть наценка партнёра."
   }
 }

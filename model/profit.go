@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -366,6 +367,12 @@ func calculateProfitRecord(log *Log, rule *ModelCostRule, estimated bool) (*Prof
 			attributionKnown = true
 		}
 	}
+	// Platform profit only recognizes revenue at the group's real sales ratio.
+	// Reseller markups above that ratio (e.g. Corn 7.5 vs real sales 6.3) are
+	// not platform profit. Unset real sales ratio falls back to billing ratio.
+	if revenueMicros != 0 {
+		revenueMicros = scaleRevenueByGroupRealSalesRatio(revenueMicros, log.Group, snapshot.GroupRatio)
+	}
 	record := &ProfitRecord{
 		SourceLogKey:            profitSourceLogKey(log),
 		SourceRequestId:         log.RequestId,
@@ -441,6 +448,36 @@ func calculateProfitRecord(log *Log, rule *ModelCostRule, estimated bool) (*Prof
 	record.CostRuleId = rule.Id
 	record.CostRuleVersion = rule.Version
 	return record, nil
+}
+
+// scaleRevenueByGroupRealSalesRatio scales recognized revenue from the billed
+// group ratio down (or up) to the configured real sales ratio.
+// scale = realSalesRatio / billingGroupRatio.
+func scaleRevenueByGroupRealSalesRatio(revenueMicros int64, group string, billingGroupRatio float64) int64 {
+	if revenueMicros == 0 {
+		return 0
+	}
+	actualRatio := billingGroupRatio
+	if actualRatio <= 0 || math.IsNaN(actualRatio) || math.IsInf(actualRatio, 0) {
+		if group != "" {
+			actualRatio = ratio_setting.GetGroupRatio(group)
+		}
+	}
+	if actualRatio <= 0 || math.IsNaN(actualRatio) || math.IsInf(actualRatio, 0) {
+		return revenueMicros
+	}
+	realRatio := ratio_setting.ResolveGroupRealSalesRatio(group, actualRatio)
+	if realRatio <= 0 || math.IsNaN(realRatio) || math.IsInf(realRatio, 0) {
+		return revenueMicros
+	}
+	if realRatio == actualRatio {
+		return revenueMicros
+	}
+	return decimal.NewFromInt(revenueMicros).
+		Mul(decimal.NewFromFloat(realRatio)).
+		Div(decimal.NewFromFloat(actualRatio)).
+		Round(0).
+		IntPart()
 }
 
 func GetModelCostRules() ([]*ModelCostRule, error) {

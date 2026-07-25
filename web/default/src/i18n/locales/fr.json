@@ -5290,6 +5290,11 @@
     "Switch to a multimodal video model to upload references.": "Passez à un modèle vidéo multimodal pour téléverser des références.",
     "images": "images",
     "videos": "vidéos",
-    "audios": "audios"
+    "audios": "audios",
+    "Real sales ratio": "Ratio de vente réel",
+    "Real sales ratios": "Ratios de vente réels",
+    "Same as ratio": "Identique au ratio",
+    "All group names live here. Ratio is the billing multiplier; real sales ratio is optional and used only by profit analysis (unset = same as ratio); top-up ratio applies to users whose account is in this group.": "Tous les noms de groupes sont ici. Le ratio est le multiplicateur de facturation ; le ratio de vente réel est optionnel et utilisé pour l'analyse des profits (non défini = même ratio) ; le ratio de recharge s'applique aux utilisateurs dont le compte est dans ce groupe.",
+    "Optional JSON map of group → real sales ratio used by profit analysis. Unset groups fall back to the billing group ratio. Use this for reseller groups where the billed ratio includes a partner markup.": "JSON optionnel : groupe → ratio de vente réel pour l'analyse des profits. Les groupes non définis utilisent le ratio de facturation. Utile pour les groupes revendeurs dont le ratio facturé inclut une marge partenaire."
   }
 }

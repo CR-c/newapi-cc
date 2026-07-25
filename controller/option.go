@@ -223,7 +223,7 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
-	case "GroupRatio":
+	case "GroupRatio", "GroupRealSalesRatio":
 		err = ratio_setting.CheckGroupRatio(option.Value.(string))
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{

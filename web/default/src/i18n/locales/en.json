@@ -5290,6 +5290,11 @@
     "Switch to a multimodal video model to upload references.": "Switch to a multimodal video model to upload references.",
     "images": "images",
     "videos": "videos",
-    "audios": "audios"
+    "audios": "audios",
+    "Real sales ratio": "Real sales ratio",
+    "Real sales ratios": "Real sales ratios",
+    "Same as ratio": "Same as ratio",
+    "All group names live here. Ratio is the billing multiplier; real sales ratio is optional and used only by profit analysis (unset = same as ratio); top-up ratio applies to users whose account is in this group.": "All group names live here. Ratio is the billing multiplier; real sales ratio is optional and used only by profit analysis (unset = same as ratio); top-up ratio applies to users whose account is in this group.",
+    "Optional JSON map of group → real sales ratio used by profit analysis. Unset groups fall back to the billing group ratio. Use this for reseller groups where the billed ratio includes a partner markup.": "Optional JSON map of group → real sales ratio used by profit analysis. Unset groups fall back to the billing group ratio. Use this for reseller groups where the billed ratio includes a partner markup."
   }
 }

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -522,6 +523,52 @@ func TestCalculateProfitRecordRefundReversesRevenueAndCost(t *testing.T) {
 	assert.Equal(t, int64(-100000), record.LegacyConsumptionMicros)
 	assert.Equal(t, int64(-60000), record.CostMicros)
 	assert.Equal(t, int64(60000), record.ProfitMicros())
+}
+
+func TestCalculateProfitRecordScalesRevenueByGroupRealSalesRatio(t *testing.T) {
+	previousQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500000
+	t.Cleanup(func() { common.QuotaPerUnit = previousQuotaPerUnit })
+
+	// Corn-style reseller markup: billed at 7.5, platform real sales 6.3.
+	require.NoError(t, ratio_setting.UpdateGroupRealSalesRatioByJSONString(`{"Corn专用":6.3}`))
+	t.Cleanup(func() {
+		_ = ratio_setting.UpdateGroupRealSalesRatioByJSONString(`{}`)
+	})
+
+	rule := &ModelCostRule{Id: 9, ModelName: "image-model", PurchasePriceCNY: 0.06, Version: 1}
+	record, err := calculateProfitRecord(&Log{
+		RequestId: "req-real-sales",
+		CreatedAt: 100,
+		Type:      LogTypeConsume,
+		UserId:    7,
+		ModelName: "image-model",
+		Group:     "Corn专用",
+		Quota:     50000,
+		Other:     `{"model_price":0.1,"group_ratio":7.5,"wallet_funding":{"version":1,"paid_quota":50000}}`,
+	}, rule, false)
+	require.NoError(t, err)
+
+	// Gross stays full billed amount; revenue scaled by 6.3/7.5.
+	assert.Equal(t, int64(100000), record.GrossConsumptionMicros)
+	assert.Equal(t, int64(84000), record.RevenueMicros)
+	// cost = gross * 0.06 / (0.1 * 7.5) = 8000
+	assert.Equal(t, int64(8000), record.CostMicros)
+	assert.Equal(t, int64(76000), record.ProfitMicros())
+
+	// Unset group keeps full recognized revenue.
+	recordDefault, err := calculateProfitRecord(&Log{
+		RequestId: "req-default-group",
+		CreatedAt: 100,
+		Type:      LogTypeConsume,
+		UserId:    7,
+		ModelName: "image-model",
+		Group:     "video-dddd",
+		Quota:     50000,
+		Other:     `{"model_price":0.1,"group_ratio":6.3,"wallet_funding":{"version":1,"paid_quota":50000}}`,
+	}, rule, false)
+	require.NoError(t, err)
+	assert.Equal(t, int64(100000), recordDefault.RevenueMicros)
 }
 
 func TestCalculateProfitRecordForRatioModel(t *testing.T) {

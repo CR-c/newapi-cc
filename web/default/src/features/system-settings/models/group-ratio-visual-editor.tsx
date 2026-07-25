@@ -72,6 +72,7 @@ import { safeJsonParse } from '../utils/json-parser'
 
 type GroupRatioVisualEditorProps = {
   groupRatio: string
+  groupRealSalesRatio: string
   topupGroupRatio: string
   userUsableGroups: string
   groupGroupRatio: string
@@ -84,6 +85,7 @@ type GroupPricingRow = {
   _id: string
   name: string
   ratio: string
+  realSalesRatio: string
   topupRatio: string
   selectable: boolean
   description: string
@@ -134,14 +136,17 @@ function parseNestedRatioMap(
 
 function buildGroupPricingRows(
   groupRatio: string,
+  groupRealSalesRatio: string,
   userUsableGroups: string,
   topupGroupRatio: string
 ): GroupPricingRow[] {
   const ratioMap = parseRatioMap(groupRatio)
+  const realSalesMap = parseRatioMap(groupRealSalesRatio)
   const usableMap = parseUsableMap(userUsableGroups)
   const topupMap = parseRatioMap(topupGroupRatio)
   const names = new Set([
     ...Object.keys(ratioMap),
+    ...Object.keys(realSalesMap),
     ...Object.keys(usableMap),
     ...Object.keys(topupMap),
   ])
@@ -150,6 +155,9 @@ function buildGroupPricingRows(
     _id: createGroupPricingId(),
     name,
     ratio: String(normalizeRatio(ratioMap[name])),
+    realSalesRatio: Object.hasOwn(realSalesMap, name)
+      ? String(realSalesMap[name])
+      : '',
     topupRatio: Object.hasOwn(topupMap, name) ? String(topupMap[name]) : '',
     selectable: Object.hasOwn(usableMap, name),
     description: String(usableMap[name] ?? ''),
@@ -158,6 +166,7 @@ function buildGroupPricingRows(
 
 function serializeGroupPricingRows(rows: GroupPricingRow[]) {
   const groupRatio: Record<string, number> = {}
+  const groupRealSalesRatio: Record<string, number> = {}
   const userUsableGroups: Record<string, string> = {}
   const topupGroupRatio: Record<string, number> = {}
 
@@ -168,6 +177,10 @@ function serializeGroupPricingRows(rows: GroupPricingRow[]) {
     if (row.selectable) {
       userUsableGroups[name] = row.description
     }
+    const realSales = row.realSalesRatio.trim()
+    if (realSales !== '' && Number.isFinite(Number(realSales))) {
+      groupRealSalesRatio[name] = Number(realSales)
+    }
     const topup = row.topupRatio.trim()
     if (topup !== '' && Number.isFinite(Number(topup))) {
       topupGroupRatio[name] = Number(topup)
@@ -176,6 +189,7 @@ function serializeGroupPricingRows(rows: GroupPricingRow[]) {
 
   return {
     GroupRatio: JSON.stringify(groupRatio, null, 2),
+    GroupRealSalesRatio: JSON.stringify(groupRealSalesRatio, null, 2),
     UserUsableGroups: JSON.stringify(userUsableGroups, null, 2),
     TopupGroupRatio: JSON.stringify(topupGroupRatio, null, 2),
   }
@@ -185,6 +199,7 @@ function groupPricingSignature(rows: GroupPricingRow[]): string {
   const serialized = serializeGroupPricingRows(rows)
   return JSON.stringify({
     groupRatio: parseRatioMap(serialized.GroupRatio),
+    groupRealSalesRatio: parseRatioMap(serialized.GroupRealSalesRatio),
     userUsableGroups: parseUsableMap(serialized.UserUsableGroups),
     topupGroupRatio: parseRatioMap(serialized.TopupGroupRatio),
   })
@@ -192,11 +207,13 @@ function groupPricingSignature(rows: GroupPricingRow[]): string {
 
 function sourceGroupPricingSignature(
   groupRatio: string,
+  groupRealSalesRatio: string,
   userUsableGroups: string,
   topupGroupRatio: string
 ): string {
   return JSON.stringify({
     groupRatio: parseRatioMap(groupRatio),
+    groupRealSalesRatio: parseRatioMap(groupRealSalesRatio),
     userUsableGroups: parseUsableMap(userUsableGroups),
     topupGroupRatio: parseRatioMap(topupGroupRatio),
   })
@@ -253,6 +270,7 @@ function GroupNameSelect(props: GroupNameSelectProps) {
 
 export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
   groupRatio,
+  groupRealSalesRatio,
   topupGroupRatio,
   userUsableGroups,
   groupGroupRatio,
@@ -265,10 +283,12 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
 
   const registry = useMemo<RegistryEntry[]>(() => {
     const ratioMap = parseRatioMap(groupRatio)
+    const realSalesMap = parseRatioMap(groupRealSalesRatio)
     const usableMap = parseUsableMap(userUsableGroups)
     const topupMap = parseRatioMap(topupGroupRatio)
     const names = new Set([
       ...Object.keys(ratioMap),
+      ...Object.keys(realSalesMap),
       ...Object.keys(usableMap),
       ...Object.keys(topupMap),
     ])
@@ -276,7 +296,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
       name,
       ratio: normalizeRatio(ratioMap[name]),
     }))
-  }, [groupRatio, userUsableGroups, topupGroupRatio])
+  }, [groupRatio, groupRealSalesRatio, userUsableGroups, topupGroupRatio])
 
   const registryNames = useMemo(
     () => registry.map((entry) => entry.name),
@@ -327,6 +347,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
     <div className='space-y-4'>
       <GroupPricingTable
         groupRatio={groupRatio}
+        groupRealSalesRatio={groupRealSalesRatio}
         userUsableGroups={userUsableGroups}
         topupGroupRatio={topupGroupRatio}
         onChange={onChange}
@@ -418,6 +439,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
 
 type GroupPricingTableProps = {
   groupRatio: string
+  groupRealSalesRatio: string
   userUsableGroups: string
   topupGroupRatio: string
   onChange: (field: string, value: string) => void
@@ -426,6 +448,7 @@ type GroupPricingTableProps = {
 
 function GroupPricingTable({
   groupRatio,
+  groupRealSalesRatio,
   userUsableGroups,
   topupGroupRatio,
   onChange,
@@ -433,12 +456,18 @@ function GroupPricingTable({
 }: GroupPricingTableProps) {
   const { t } = useTranslation()
   const [rows, setRows] = useState<GroupPricingRow[]>(() =>
-    buildGroupPricingRows(groupRatio, userUsableGroups, topupGroupRatio)
+    buildGroupPricingRows(
+      groupRatio,
+      groupRealSalesRatio,
+      userUsableGroups,
+      topupGroupRatio
+    )
   )
 
   useEffect(() => {
     const incomingSignature = sourceGroupPricingSignature(
       groupRatio,
+      groupRealSalesRatio,
       userUsableGroups,
       topupGroupRatio
     )
@@ -448,17 +477,19 @@ function GroupPricingTable({
       }
       return buildGroupPricingRows(
         groupRatio,
+        groupRealSalesRatio,
         userUsableGroups,
         topupGroupRatio
       )
     })
-  }, [groupRatio, userUsableGroups, topupGroupRatio])
+  }, [groupRatio, groupRealSalesRatio, userUsableGroups, topupGroupRatio])
 
   const emitRows = useCallback(
     (nextRows: GroupPricingRow[]) => {
       setRows(nextRows)
       const serialized = serializeGroupPricingRows(nextRows)
       onChange('GroupRatio', serialized.GroupRatio)
+      onChange('GroupRealSalesRatio', serialized.GroupRealSalesRatio)
       onChange('UserUsableGroups', serialized.UserUsableGroups)
       onChange('TopupGroupRatio', serialized.TopupGroupRatio)
     },
@@ -492,6 +523,7 @@ function GroupPricingTable({
         _id: createGroupPricingId(),
         name,
         ratio: '1',
+        realSalesRatio: '',
         topupRatio: '',
         selectable: true,
         description: '',
@@ -526,7 +558,7 @@ function GroupPricingTable({
             <CardTitle>{t('Pricing groups')}</CardTitle>
             <CardDescription>
               {t(
-                'All group names live here. Ratio applies when calls are billed as this group; top-up ratio applies to users whose account is in this group.'
+                'All group names live here. Ratio is the billing multiplier; real sales ratio is optional and used only by profit analysis (unset = same as ratio); top-up ratio applies to users whose account is in this group.'
               )}
             </CardDescription>
           </div>
@@ -570,6 +602,23 @@ function GroupPricingTable({
                     value={row.ratio}
                     onChange={(event) =>
                       updateRow(row._id, 'ratio', event.target.value)
+                    }
+                  />
+                ),
+              },
+              {
+                id: 'real-sales-ratio',
+                header: t('Real sales ratio'),
+                className: 'w-32',
+                cell: (row) => (
+                  <Input
+                    type='number'
+                    min={0}
+                    step={0.1}
+                    value={row.realSalesRatio}
+                    placeholder={t('Same as ratio')}
+                    onChange={(event) =>
+                      updateRow(row._id, 'realSalesRatio', event.target.value)
                     }
                   />
                 ),

@@ -220,6 +220,7 @@ export type ModelSettings = {
   'tool_price_setting.prices': string
   TopupGroupRatio: string
   GroupRatio: string
+  GroupRealSalesRatio: string
   UserUsableGroups: string
   GroupGroupRatio: string
   'group_ratio_setting.group_model_price': string
@@ -275,6 +276,7 @@ export type BillingSettings = {
   'tool_price_setting.prices': string
   TopupGroupRatio: string
   GroupRatio: string
+  GroupRealSalesRatio: string
   UserUsableGroups: string
   GroupGroupRatio: string
   'group_ratio_setting.group_model_price': string

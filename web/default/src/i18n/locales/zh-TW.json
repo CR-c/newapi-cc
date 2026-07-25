@@ -5290,6 +5290,11 @@
     "Switch to a multimodal video model to upload references.": "請切換到支援多模態參考的影片模型後再上傳素材。",
     "images": "圖片",
     "videos": "影片",
-    "audios": "音訊"
+    "audios": "音訊",
+    "Real sales ratio": "真實銷售倍率",
+    "Real sales ratios": "真實銷售倍率",
+    "Same as ratio": "同計費倍率",
+    "All group names live here. Ratio is the billing multiplier; real sales ratio is optional and used only by profit analysis (unset = same as ratio); top-up ratio applies to users whose account is in this group.": "所有分組名稱在此維護。倍率用於計費；真實銷售倍率可選，僅用於利潤分析（未設定則等於計費倍率）；充值倍率作用於帳戶所屬該分組的用戶。",
+    "Optional JSON map of group → real sales ratio used by profit analysis. Unset groups fall back to the billing group ratio. Use this for reseller groups where the billed ratio includes a partner markup.": "可選的 JSON：分組 → 真實銷售倍率，用於利潤分析。未設定的分組回退到計費倍率。適用於計費倍率中含代理加價的轉售分組。"
   }
 }

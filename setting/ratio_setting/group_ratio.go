@@ -20,6 +20,10 @@ var defaultGroupRatio = map[string]float64{
 
 var groupRatioMap = types.NewRWMap[string, float64]()
 
+// groupRealSalesRatioMap stores optional platform settlement ratios used by
+// profit analysis. When a group is absent, profit uses the billing group ratio.
+var groupRealSalesRatioMap = types.NewRWMap[string, float64]()
+
 var defaultGroupGroupRatio = map[string]map[string]float64{
 	"vip": {
 		"edit_this": 0.9,
@@ -183,4 +187,47 @@ func CheckGroupRatio(jsonStr string) error {
 		}
 	}
 	return nil
+}
+
+func GroupRealSalesRatio2JSONString() string {
+	return groupRealSalesRatioMap.MarshalJSONString()
+}
+
+func UpdateGroupRealSalesRatioByJSONString(jsonStr string) error {
+	if strings.TrimSpace(jsonStr) == "" {
+		jsonStr = "{}"
+	}
+	if err := CheckGroupRatio(jsonStr); err != nil {
+		return err
+	}
+	return types.LoadFromJsonString(groupRealSalesRatioMap, jsonStr)
+}
+
+// GetGroupRealSalesRatio returns the configured real sales ratio for profit
+// analysis. ok is false when the group has no explicit override.
+func GetGroupRealSalesRatio(name string) (float64, bool) {
+	ratio, ok := groupRealSalesRatioMap.Get(name)
+	if !ok {
+		return 0, false
+	}
+	if ratio <= 0 || math.IsNaN(ratio) || math.IsInf(ratio, 0) {
+		return 0, false
+	}
+	return ratio, true
+}
+
+// ResolveGroupRealSalesRatio returns the ratio used for platform profit revenue.
+// Unset or invalid real-sales values fall back to billingGroupRatio (the group's
+// billing ratio from the log snapshot or group config).
+func ResolveGroupRealSalesRatio(groupName string, billingGroupRatio float64) float64 {
+	if ratio, ok := GetGroupRealSalesRatio(groupName); ok {
+		return ratio
+	}
+	if billingGroupRatio > 0 && !math.IsNaN(billingGroupRatio) && !math.IsInf(billingGroupRatio, 0) {
+		return billingGroupRatio
+	}
+	if groupName != "" {
+		return GetGroupRatio(groupName)
+	}
+	return 1
 }

@@ -5290,6 +5290,11 @@
     "Switch to a multimodal video model to upload references.": "Hãy chuyển sang mô hình video đa phương thức để tải lên tham chiếu.",
     "images": "ảnh",
     "videos": "video",
-    "audios": "audio"
+    "audios": "audio",
+    "Real sales ratio": "Tỷ lệ bán hàng thực tế",
+    "Real sales ratios": "Các tỷ lệ bán hàng thực tế",
+    "Same as ratio": "Giống hệ số",
+    "All group names live here. Ratio is the billing multiplier; real sales ratio is optional and used only by profit analysis (unset = same as ratio); top-up ratio applies to users whose account is in this group.": "Tất cả tên nhóm nằm ở đây. Hệ số là hệ số tính phí; hệ số bán hàng thực tế là tùy chọn và chỉ dùng cho phân tích lợi nhuận (không đặt = giống hệ số); hệ số nạp áp dụng cho người dùng có tài khoản trong nhóm này.",
+    "Optional JSON map of group → real sales ratio used by profit analysis. Unset groups fall back to the billing group ratio. Use this for reseller groups where the billed ratio includes a partner markup.": "JSON tùy chọn: nhóm → tỷ lệ bán hàng thực tế dùng cho phân tích lợi nhuận. Nhóm chưa đặt sẽ dùng hệ số tính phí. Dùng cho nhóm đại lý khi hệ số tính phí gồm phần markup đối tác."
   }
 }
