@@ -129,3 +129,18 @@ func GetUserFlowQuotaDates(c *gin.Context) {
 	})
 	return
 }
+
+// RebuildQuotaData rebuilds the data-dashboard quota_data table from consume and
+// refund billing logs so historical failure refunds are reflected correctly.
+func RebuildQuotaData(c *gin.Context) {
+	result, err := model.RebuildQuotaDataFromLogs()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    result,
+	})
+}

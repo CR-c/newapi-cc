@@ -268,3 +268,88 @@ func TestRecordTaskBillingLogRefundDeductsDashboardQuota(t *testing.T) {
 	require.Equal(t, 7, rows[0].ChannelID)
 	require.Equal(t, "node-a", rows[0].NodeName)
 }
+
+func TestRebuildQuotaDataFromLogsNetsRefunds(t *testing.T) {
+	truncateTables(t)
+	CacheQuotaDataLock.Lock()
+	CacheQuotaData = make(map[string]*QuotaData)
+	CacheQuotaDataLock.Unlock()
+
+	prevNode := common.NodeName
+	common.NodeName = "rebuild-node"
+	t.Cleanup(func() {
+		common.NodeName = prevNode
+		CacheQuotaDataLock.Lock()
+		CacheQuotaData = make(map[string]*QuotaData)
+		CacheQuotaDataLock.Unlock()
+	})
+
+	// Seed a stale dashboard row that should be wiped by rebuild.
+	require.NoError(t, DB.Create(&QuotaData{
+		UserID:    1,
+		Username:  "alice",
+		ModelName: "stale-model",
+		CreatedAt: 3600,
+		UseGroup:  "vip",
+		TokenID:   11,
+		ChannelID: 1,
+		NodeName:  "rebuild-node",
+		Count:     9,
+		Quota:     99999,
+		TokenUsed: 9,
+	}).Error)
+
+	// Consume + full refund in same hour, plus a later partial refund hour.
+	seedBillingLog(t, Log{
+		UserId: 1, Username: "alice", ModelName: "sora-2", CreatedAt: 3700,
+		Type: LogTypeConsume, Quota: 1000, PromptTokens: 10, CompletionTokens: 20,
+		TokenId: 11, ChannelId: 1, Group: "vip",
+	})
+	seedBillingLog(t, Log{
+		UserId: 1, Username: "alice", ModelName: "sora-2", CreatedAt: 3800,
+		Type: LogTypeRefund, Quota: 1000, TokenId: 11, ChannelId: 1, Group: "vip",
+	})
+	seedBillingLog(t, Log{
+		UserId: 1, Username: "alice", ModelName: "sora-2", CreatedAt: 7300,
+		Type: LogTypeConsume, Quota: 500, PromptTokens: 5, CompletionTokens: 5,
+		TokenId: 11, ChannelId: 1, Group: "vip",
+	})
+	seedBillingLog(t, Log{
+		UserId: 1, Username: "alice", ModelName: "sora-2", CreatedAt: 7400,
+		Type: LogTypeRefund, Quota: 200, TokenId: 11, ChannelId: 1, Group: "vip",
+	})
+	// Non-billing logs must be ignored.
+	seedBillingLog(t, Log{
+		UserId: 1, Username: "alice", ModelName: "sora-2", CreatedAt: 7500,
+		Type: LogTypeTopup, Quota: 12345, TokenId: 11, ChannelId: 1, Group: "vip",
+	})
+
+	result, err := RebuildQuotaDataFromLogs()
+	require.NoError(t, err)
+	require.Equal(t, 4, result.LogScanned)
+	require.Equal(t, 2, result.Rows)
+	require.Equal(t, 300, result.NetQuota) // 1000-1000+500-200
+	require.Equal(t, 2, result.Count)
+	require.Equal(t, 40, result.TokenUsed) // only consume tokens: 30 + 10
+
+	var rows []QuotaData
+	require.NoError(t, DB.Order("created_at ASC").Find(&rows).Error)
+	require.Len(t, rows, 2)
+	require.Equal(t, int64(3600), rows[0].CreatedAt)
+	require.Equal(t, 0, rows[0].Quota)
+	require.Equal(t, 1, rows[0].Count)
+	require.Equal(t, 30, rows[0].TokenUsed)
+	require.Equal(t, "rebuild-node", rows[0].NodeName)
+	require.Equal(t, int64(7200), rows[1].CreatedAt)
+	require.Equal(t, 300, rows[1].Quota)
+	require.Equal(t, 1, rows[1].Count)
+	require.Equal(t, 10, rows[1].TokenUsed)
+
+	// Stale cache entries must not survive rebuild.
+	require.Empty(t, CacheQuotaData)
+}
+
+func seedBillingLog(t *testing.T, log Log) {
+	t.Helper()
+	require.NoError(t, LOG_DB.Create(&log).Error)
+}

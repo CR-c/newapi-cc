@@ -185,3 +185,147 @@ func GetAllQuotaDates(startTime int64, endTime int64, username string) (quotaDat
 	err = DB.Table("quota_data").Select("model_name, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used, created_at").Where("created_at >= ? and created_at <= ?", startTime, endTime).Group("model_name, created_at").Find(&quotaDatas).Error
 	return quotaDatas, err
 }
+
+// RebuildQuotaDataResult is the summary returned after rebuilding the dashboard table.
+type RebuildQuotaDataResult struct {
+	Rows       int `json:"rows"`
+	LogScanned int `json:"log_scanned"`
+	NetQuota   int `json:"net_quota"`
+	Count      int `json:"count"`
+	TokenUsed  int `json:"token_used"`
+}
+
+// quotaDataSourceLog is a slim projection of billing logs used to rebuild quota_data.
+type quotaDataSourceLog struct {
+	UserId           int    `gorm:"column:user_id"`
+	Username         string `gorm:"column:username"`
+	ModelName        string `gorm:"column:model_name"`
+	CreatedAt        int64  `gorm:"column:created_at"`
+	Type             int    `gorm:"column:type"`
+	Quota            int    `gorm:"column:quota"`
+	PromptTokens     int    `gorm:"column:prompt_tokens"`
+	CompletionTokens int    `gorm:"column:completion_tokens"`
+	TokenId          int    `gorm:"column:token_id"`
+	ChannelId        int    `gorm:"column:channel_id"`
+	Group            string `gorm:"column:group"`
+}
+
+// RebuildQuotaDataFromLogs rebuilds quota_data from consume and refund billing logs.
+// It flushes the in-memory dashboard cache first so live increments cannot race
+// with the rebuild. Safe to re-run. Node name is not stored on logs; rebuilt rows
+// use common.NodeName (single-node deployments stay consistent with live writes).
+func RebuildQuotaDataFromLogs() (*RebuildQuotaDataResult, error) {
+	if DB == nil || LOG_DB == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+
+	CacheQuotaDataLock.Lock()
+	defer CacheQuotaDataLock.Unlock()
+	CacheQuotaData = make(map[string]*QuotaData)
+
+	if err := DB.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&QuotaData{}).Error; err != nil {
+		return nil, fmt.Errorf("clear quota_data: %w", err)
+	}
+
+	agg := make(map[string]*QuotaData)
+	const batchSize = 2000
+	offset := 0
+	logScanned := 0
+	nodeName := common.NodeName
+
+	for {
+		var batch []quotaDataSourceLog
+		err := LOG_DB.Table("logs").
+			Where("type IN ?", []int{LogTypeConsume, LogTypeRefund}).
+			Order("id ASC").
+			Limit(batchSize).
+			Offset(offset).
+			Find(&batch).Error
+		if err != nil {
+			return nil, fmt.Errorf("scan billing logs: %w", err)
+		}
+		if len(batch) == 0 {
+			break
+		}
+		logScanned += len(batch)
+		offset += len(batch)
+
+		for i := range batch {
+			src := &batch[i]
+			quotaDelta := 0
+			countDelta := 0
+			tokenUsedDelta := 0
+			switch src.Type {
+			case LogTypeConsume:
+				quotaDelta = src.Quota
+				countDelta = 1
+				tokenUsedDelta = src.PromptTokens + src.CompletionTokens
+			case LogTypeRefund:
+				quotaDelta = -src.Quota
+			default:
+				continue
+			}
+
+			createdAt := src.CreatedAt - (src.CreatedAt % 3600)
+			key := fmt.Sprintf("%d\x00%s\x00%s\x00%d\x00%s\x00%d\x00%d\x00%s",
+				src.UserId,
+				src.Username,
+				src.ModelName,
+				createdAt,
+				src.Group,
+				src.TokenId,
+				src.ChannelId,
+				nodeName,
+			)
+			if row, ok := agg[key]; ok {
+				row.Count += countDelta
+				row.Quota += quotaDelta
+				row.TokenUsed += tokenUsedDelta
+				continue
+			}
+			agg[key] = &QuotaData{
+				UserID:    src.UserId,
+				Username:  src.Username,
+				ModelName: src.ModelName,
+				CreatedAt: createdAt,
+				UseGroup:  src.Group,
+				TokenID:   src.TokenId,
+				ChannelID: src.ChannelId,
+				NodeName:  nodeName,
+				Count:     countDelta,
+				Quota:     quotaDelta,
+				TokenUsed: tokenUsedDelta,
+			}
+		}
+
+		if len(batch) < batchSize {
+			break
+		}
+	}
+
+	result := &RebuildQuotaDataResult{
+		Rows:       len(agg),
+		LogScanned: logScanned,
+	}
+	if len(agg) == 0 {
+		common.SysLog("rebuild quota_data: no billing logs found")
+		return result, nil
+	}
+
+	rows := make([]*QuotaData, 0, len(agg))
+	for _, row := range agg {
+		result.NetQuota += row.Quota
+		result.Count += row.Count
+		result.TokenUsed += row.TokenUsed
+		rows = append(rows, row)
+	}
+	if err := DB.CreateInBatches(rows, 200).Error; err != nil {
+		return nil, fmt.Errorf("insert rebuilt quota_data: %w", err)
+	}
+
+	common.SysLog(fmt.Sprintf(
+		"rebuild quota_data done: rows=%d logs=%d net_quota=%d count=%d",
+		result.Rows, result.LogScanned, result.NetQuota, result.Count,
+	))
+	return result, nil
+}
