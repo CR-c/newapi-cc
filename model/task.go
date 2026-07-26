@@ -118,15 +118,16 @@ type TaskPrivateData struct {
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。
 type TaskBillingContext struct {
-	ModelPrice       float64            `json:"model_price,omitempty"`       // 模型单价
-	GroupRatio       float64            `json:"group_ratio,omitempty"`       // 分组倍率
-	ModelRatio       float64            `json:"model_ratio,omitempty"`       // 模型倍率
-	OtherRatios      map[string]float64 `json:"other_ratios,omitempty"`      // 附加倍率（时长、分辨率等）
-	CostTier         string             `json:"cost_tier,omitempty"`         // 利润核算使用的进货成本档位
-	OtherMultiplier  float64            `json:"other_multiplier,omitempty"`  // 提交时附加倍率乘积
-	OriginModelName  string             `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
-	PerCallBilling   bool               `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
-	ProfitGeneration *int64             `json:"profit_generation,omitempty"` // 利润分析代次，保证异步结算与提交日志归属一致
+	ModelPrice               float64            `json:"model_price,omitempty"`                 // 模型单价
+	GroupRatio               float64            `json:"group_ratio,omitempty"`                 // 分组倍率
+	ModelRatio               float64            `json:"model_ratio,omitempty"`                 // 模型倍率
+	OtherRatios              map[string]float64 `json:"other_ratios,omitempty"`                // 附加倍率（时长、分辨率等）
+	CostTier                 string             `json:"cost_tier,omitempty"`                   // 利润核算使用的进货成本档位
+	OtherMultiplier          float64            `json:"other_multiplier,omitempty"`            // 提交时附加倍率乘积
+	OriginModelName          string             `json:"origin_model_name,omitempty"`           // 模型名称，必须为OriginModelName
+	PerCallBilling           bool               `json:"per_call_billing,omitempty"`            // 按次计费：跳过轮询阶段的差额结算
+	CapSettlementAtPrecharge bool               `json:"cap_settlement_at_precharge,omitempty"` // 最终扣费不得超过提交时预扣
+	ProfitGeneration         *int64             `json:"profit_generation,omitempty"`           // 利润分析代次，保证异步结算与提交日志归属一致
 }
 
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）

@@ -692,6 +692,9 @@ type TaskRelayInfo struct {
 	PublicTaskID string
 
 	ConsumeQuota bool
+	// CapSettlementAtPrecharge prevents terminal task settlement from charging
+	// more than the amount shown and held at submission time.
+	CapSettlementAtPrecharge bool
 
 	// LockedChannel holds the full channel object when the request is bound to
 	// a specific channel (e.g., remix on origin task's channel). Stored as any
@@ -837,6 +840,7 @@ type TaskInfo struct {
 	Progress         string `json:"progress,omitempty"`
 	CompletionTokens int    `json:"completion_tokens,omitempty"` // 用于按倍率计费
 	TotalTokens      int    `json:"total_tokens,omitempty"`      // 用于按倍率计费
+	BillingTokens    int    `json:"billing_tokens,omitempty"`    // 渠道明确指定的最终计费用量
 }
 
 func FailTaskInfo(reason string) *TaskInfo {

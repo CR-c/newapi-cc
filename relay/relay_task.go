@@ -19,6 +19,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
 
@@ -201,13 +202,28 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			info.PriceData.AddOtherRatio(k, v)
 		}
 	}
+	if policy, ok := adaptor.(channel.TaskSettlementPolicy); ok {
+		info.CapSettlementAtPrecharge = policy.CapSettlementAtPrecharge()
+	}
 
 	// 6. 将 OtherRatios 应用到基础额度（饱和转换，防止溢出成负数）
 	if !common.StringsContains(constant.TaskPricePatches, modelName) {
-		quotaWithRatios := info.PriceData.ApplyOtherRatiosToFloat(float64(info.PriceData.Quota))
-		quota, clamp := common.QuotaFromFloatChecked(quotaWithRatios)
-		info.PriceData.Quota = quota
-		noteTaskQuotaClamp(info, clamp)
+		estimatedUsage := 0
+		if estimator, ok := adaptor.(channel.TaskPrechargeUsageEstimator); ok {
+			estimatedUsage, err = estimator.EstimatePrechargeUsage(c, info)
+			if err != nil {
+				return nil, service.TaskErrorWrapperLocal(err, "invalid_billing_estimate", http.StatusBadRequest)
+			}
+		}
+		if quota, clamp, ok := calculateTaskPrechargeQuota(info.PriceData, estimatedUsage); ok {
+			info.PriceData.Quota = quota
+			noteTaskQuotaClamp(info, clamp)
+		} else {
+			quotaWithRatios := info.PriceData.ApplyOtherRatiosToFloat(float64(info.PriceData.Quota))
+			quota, clamp := common.QuotaFromFloatChecked(quotaWithRatios)
+			info.PriceData.Quota = quota
+			noteTaskQuotaClamp(info, clamp)
+		}
 	}
 
 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
@@ -264,6 +280,16 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		Platform:       platform,
 		Quota:          finalQuota,
 	}, nil
+}
+
+func calculateTaskPrechargeQuota(priceData types.PriceData, estimatedUsage int) (int, *common.QuotaClamp, bool) {
+	if estimatedUsage <= 0 || priceData.UsePrice || priceData.ModelRatio <= 0 || priceData.GroupRatioInfo.GroupRatio < 0 {
+		return 0, nil, false
+	}
+	quota := float64(estimatedUsage) * priceData.ModelRatio * priceData.GroupRatioInfo.GroupRatio
+	quota = priceData.ApplyOtherRatiosToFloat(quota)
+	result, clamp := common.QuotaFromFloatChecked(quota)
+	return result, clamp, true
 }
 
 func taskSubmitSucceeded(statusCode int) bool {

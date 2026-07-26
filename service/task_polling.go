@@ -675,7 +675,7 @@ func truncateBase64(s string) string {
 // settleTaskBillingOnComplete 任务完成时的统一计费调整。
 // 优先级：1. adaptor.AdjustBillingOnComplete 返回正数 → 使用 adaptor 计算的额度
 //
-//  2. taskResult.TotalTokens > 0 → 按 token 重算
+//  2. taskResult 有明确计费用量 → 按 token 重算
 //  3. 都不满足 → 保持预扣额度不变
 func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
 	// 0. 按次计费的任务不做差额结算
@@ -683,16 +683,30 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 按次计费，跳过差额结算", task.TaskID))
 		return
 	}
+	billingTokens := taskResultBillingTokens(taskResult)
 	// 1. 优先让 adaptor 决定最终额度
 	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {
-		RecalculateTaskQuota(ctx, task, actualQuota, max(taskResult.CompletionTokens, taskResult.TotalTokens), "adaptor计费调整")
+		RecalculateTaskQuota(ctx, task, actualQuota, billingTokens, "adaptor计费调整")
 		return
 	}
 	// 2. 回退到 token 重算
-	if taskResult.TotalTokens > 0 {
-		RecalculateTaskQuotaByTokens(ctx, task, taskResult.TotalTokens)
+	if billingTokens > 0 {
+		RecalculateTaskQuotaByTokens(ctx, task, billingTokens)
 		return
 	}
 	// 3. 无调整，保持预扣额度；将汇总日志行终结为已结算状态
 	finalizeTaskSummaryLog(task, taskSummaryPatch(task.Quota, task.Quota, 0, ""), 0)
+}
+
+func taskResultBillingTokens(taskResult *relaycommon.TaskInfo) int {
+	if taskResult == nil {
+		return 0
+	}
+	if taskResult.BillingTokens > 0 {
+		return taskResult.BillingTokens
+	}
+	if taskResult.CompletionTokens > 0 {
+		return taskResult.CompletionTokens
+	}
+	return max(taskResult.TotalTokens, 0)
 }

@@ -620,15 +620,16 @@ func RelayTask(c *gin.Context) {
 		task.PrivateData.TokenId = relayInfo.TokenId
 		task.PrivateData.NodeName = common.NodeName
 		task.PrivateData.BillingContext = &model.TaskBillingContext{
-			ModelPrice:       relayInfo.PriceData.ModelPrice,
-			GroupRatio:       relayInfo.PriceData.GroupRatioInfo.GroupRatio,
-			ModelRatio:       relayInfo.PriceData.ModelRatio,
-			OtherRatios:      relayInfo.PriceData.OtherRatios(),
-			CostTier:         relayInfo.CostTier,
-			OtherMultiplier:  relayInfo.PriceData.OtherRatioMultiplier(),
-			OriginModelName:  relayInfo.OriginModelName,
-			PerCallBilling:   common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
-			ProfitGeneration: relayInfo.ProfitGeneration,
+			ModelPrice:               relayInfo.PriceData.ModelPrice,
+			GroupRatio:               relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+			ModelRatio:               relayInfo.PriceData.ModelRatio,
+			OtherRatios:              relayInfo.PriceData.OtherRatios(),
+			CostTier:                 relayInfo.CostTier,
+			OtherMultiplier:          relayInfo.PriceData.OtherRatioMultiplier(),
+			OriginModelName:          relayInfo.OriginModelName,
+			PerCallBilling:           common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
+			CapSettlementAtPrecharge: relayInfo.CapSettlementAtPrecharge,
+			ProfitGeneration:         relayInfo.ProfitGeneration,
 		}
 		if taskReq, reqErr := relaycommon.GetTaskRequest(c); reqErr == nil {
 			mediaRefs := make([]string, 0, len(taskReq.Images)+len(taskReq.Videos)+len(taskReq.Audios)+2)

@@ -633,7 +633,7 @@ func TestEstimateBillingUsesMappedUpstreamModel(t *testing.T) {
 	context, _ := gin.CreateTestContext(httptest.NewRecorder())
 	context.Set("task_request", relaycommon.TaskSubmitReq{
 		Resolution: "720p",
-		Images:     []string{"https://example.com/reference.png"},
+		Videos:     []string{"asset://video-1"},
 	})
 	info := &relaycommon.RelayInfo{
 		OriginModelName: "public-video-alias",
@@ -643,8 +643,138 @@ func TestEstimateBillingUsesMappedUpstreamModel(t *testing.T) {
 	}
 
 	ratios := (&TaskAdaptor{}).EstimateBilling(context, info)
-	assert.InDelta(t, 2.1/3.5, ratios["reference_image"], 0.0000001)
+	assert.InDelta(t, 2.1/3.5, ratios["video_input"], 0.0000001)
 	assert.Equal(t, relaycommon.VideoCostTier480p720pReference, info.CostTier)
+}
+
+func TestEstimateBillingOnlyTreatsVideoAsLowerPriceTier(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name         string
+		req          relaycommon.TaskSubmitReq
+		wantRatio    float64
+		wantCostTier string
+	}{
+		{
+			name:         "video only",
+			req:          relaycommon.TaskSubmitReq{Resolution: "720p", Videos: []string{"asset://vid-1"}},
+			wantRatio:    2.1 / 3.5,
+			wantCostTier: relaycommon.VideoCostTier480p720pReference,
+		},
+		{
+			name:         "image only",
+			req:          relaycommon.TaskSubmitReq{Resolution: "720p", Images: []string{"asset://img-1"}},
+			wantRatio:    1,
+			wantCostTier: relaycommon.VideoCostTier480p720pNoReference,
+		},
+		{
+			name:         "audio only",
+			req:          relaycommon.TaskSubmitReq{Resolution: "720p", Audios: []string{"asset://aud-1"}},
+			wantRatio:    1,
+			wantCostTier: relaycommon.VideoCostTier480p720pNoReference,
+		},
+		{
+			name: "image and video",
+			req: relaycommon.TaskSubmitReq{
+				Resolution: "720p",
+				Images:     []string{"asset://img-1"},
+				Videos:     []string{"asset://vid-1"},
+			},
+			wantRatio:    2.1 / 3.5,
+			wantCostTier: relaycommon.VideoCostTier480p720pReference,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			context, _ := gin.CreateTestContext(httptest.NewRecorder())
+			context.Set("task_request", tt.req)
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "dreamina-seedance-2-0-mini-hc",
+				ChannelMeta: &relaycommon.ChannelMeta{
+					UpstreamModelName: "dreamina-seedance-2-0-mini-hc",
+				},
+			}
+			ratios := (&TaskAdaptor{}).EstimateBilling(context, info)
+			if tt.wantRatio == 1 {
+				assert.Nil(t, ratios)
+			} else {
+				assert.InDelta(t, tt.wantRatio, ratios["video_input"], 0.0000001)
+			}
+			assert.Equal(t, tt.wantCostTier, info.CostTier)
+		})
+	}
+
+	t.Run("no media is no-reference", func(t *testing.T) {
+		context, _ := gin.CreateTestContext(httptest.NewRecorder())
+		context.Set("task_request", relaycommon.TaskSubmitReq{Resolution: "720p"})
+		info := &relaycommon.RelayInfo{
+			OriginModelName: "dreamina-seedance-2-0-mini-hc",
+			ChannelMeta: &relaycommon.ChannelMeta{
+				UpstreamModelName: "dreamina-seedance-2-0-mini-hc",
+			},
+		}
+		ratios := (&TaskAdaptor{}).EstimateBilling(context, info)
+		assert.Nil(t, ratios) // ratio==1 → no OtherRatios
+		assert.Equal(t, relaycommon.VideoCostTier480p720pNoReference, info.CostTier)
+	})
+}
+
+func TestEstimatePrechargeUsageMatchesOfficialCalculator(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name string
+		req  relaycommon.TaskSubmitReq
+		want int
+	}{
+		{
+			name: "720p 5 seconds widescreen",
+			req:  relaycommon.TaskSubmitReq{Resolution: "720p", AspectRatio: "16:9", Duration: 5},
+			want: 108900,
+		},
+		{
+			name: "720p 5 seconds square",
+			req:  relaycommon.TaskSubmitReq{Resolution: "720p", AspectRatio: "1:1", Duration: 5},
+			want: 108900,
+		},
+		{
+			name: "480p 4 seconds includes encoder boundary frame",
+			req:  relaycommon.TaskSubmitReq{Resolution: "480p", AspectRatio: "16:9", Duration: 4},
+			want: 40594,
+		},
+		{
+			name: "1080p 15 seconds",
+			req:  relaycommon.TaskSubmitReq{Resolution: "1080p", AspectRatio: "16:9", Duration: 15},
+			want: 731025,
+		},
+		{
+			name: "4k 4 seconds",
+			req:  relaycommon.TaskSubmitReq{Resolution: "4k", AspectRatio: "16:9", Duration: 4},
+			want: 785700,
+		},
+		{
+			name: "video input reserves official maximum total input duration",
+			req: relaycommon.TaskSubmitReq{
+				Resolution: "720p", AspectRatio: "16:9", Duration: 5,
+				Videos: []string{"asset://video-1"},
+			},
+			want: 432900,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			context, _ := gin.CreateTestContext(httptest.NewRecorder())
+			context.Set("task_request", tt.req)
+
+			usage, err := (&TaskAdaptor{}).EstimatePrechargeUsage(context, &relaycommon.RelayInfo{})
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, usage)
+		})
+	}
 }
 
 func TestTaskResolutionMapsPlaygroundVideoSizes(t *testing.T) {
@@ -672,6 +802,20 @@ func TestParseTaskResultMapsCompletedUsage(t *testing.T) {
 	assert.Equal(t, "100%", result.Progress)
 	assert.Equal(t, "https://cdn.example/video.mp4", result.Url)
 	assert.Equal(t, 40594, result.TotalTokens)
+	assert.Equal(t, 40594, result.BillingTokens)
+}
+
+func TestParseTaskResultUsesCompletionTokensForBilling(t *testing.T) {
+	result, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{
+		"task": {
+			"id": "mvt-usage",
+			"status": "completed",
+			"usage": {"completion_tokens": 324900, "total_tokens": 400000}
+		}
+	}`))
+
+	require.NoError(t, err)
+	assert.Equal(t, 324900, result.BillingTokens)
 }
 
 func TestParseTaskResultPreservesBilledUsageOnFailure(t *testing.T) {
@@ -690,13 +834,14 @@ func TestParseTaskResultPreservesBilledUsageOnFailure(t *testing.T) {
 	assert.Contains(t, result.Reason, "SensitiveContentDetected")
 }
 
-func TestKeepChargeOnFailureMatchesOnlyBilledModerationFailures(t *testing.T) {
+func TestKeepChargeOnFailureRefundsRejectedVideoTasks(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 
-	assert.True(t, adaptor.KeepChargeOnFailure(nil, &relaycommon.TaskInfo{
-		Reason: "OutputVideoSensitiveContentDetected: blocked",
+	assert.False(t, adaptor.KeepChargeOnFailure(nil, &relaycommon.TaskInfo{
+		Reason:      "OutputVideoSensitiveContentDetected: blocked",
+		TotalTokens: 40594,
 	}))
-	assert.True(t, adaptor.KeepChargeOnFailure(&model.Task{
+	assert.False(t, adaptor.KeepChargeOnFailure(&model.Task{
 		FailReason: "OutputAudioSensitiveContentDetected: blocked",
 	}, nil))
 	assert.False(t, adaptor.KeepChargeOnFailure(nil, &relaycommon.TaskInfo{
@@ -785,6 +930,48 @@ func TestValidateRequestEnforcesResolutionByModel(t *testing.T) {
 			assert.Contains(t, taskErr.Message, tt.wantError)
 		})
 	}
+}
+
+func TestValidateRequestNormalizesBillingDimensions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("defaults to 720p widescreen", func(t *testing.T) {
+		context, _ := gin.CreateTestContext(httptest.NewRecorder())
+		context.Request = httptest.NewRequest(
+			http.MethodPost,
+			"/v1/videos",
+			strings.NewReader(`{"model":"dreamina-seedance-2-0-mini-hc","prompt":"test","duration":5}`),
+		)
+		context.Request.Header.Set("Content-Type", "application/json")
+
+		taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(context, &relaycommon.RelayInfo{
+			TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+		})
+
+		require.Nil(t, taskErr)
+		request, err := relaycommon.GetTaskRequest(context)
+		require.NoError(t, err)
+		assert.Equal(t, "720p", request.Resolution)
+		assert.Equal(t, "16:9", request.AspectRatio)
+	})
+
+	t.Run("rejects unsupported aspect ratio", func(t *testing.T) {
+		context, _ := gin.CreateTestContext(httptest.NewRecorder())
+		context.Request = httptest.NewRequest(
+			http.MethodPost,
+			"/v1/videos",
+			strings.NewReader(`{"model":"dreamina-seedance-2-0-mini-hc","prompt":"test","duration":5,"aspect_ratio":"4:3"}`),
+		)
+		context.Request.Header.Set("Content-Type", "application/json")
+
+		taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(context, &relaycommon.RelayInfo{
+			TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+		})
+
+		require.NotNil(t, taskErr)
+		assert.Equal(t, "invalid_aspect_ratio", taskErr.Code)
+		assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	})
 }
 
 func TestDoResponseHidesServiceInferenceUpstreamIdentifiers(t *testing.T) {

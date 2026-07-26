@@ -94,6 +94,7 @@ const (
 	serviceInferenceAssetMaxPolls       = 30
 	serviceInferenceAssetMaxWait        = 20 * time.Second
 	serviceInferenceAssetResponseMaxLen = 1 << 20
+	maxReferenceVideoDurationSeconds    = 15
 )
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
@@ -170,22 +171,35 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		modelName = req.Model
 	}
 	resolution := strings.ToLower(taskResolution(req))
-	if resolution != "" {
-		allowedResolution := resolution == "480p" || resolution == "720p"
-		if modelName == "dreamina-seedance-2-0-hc" {
-			allowedResolution = allowedResolution || resolution == "1080p" || resolution == "4k"
-		}
-		if !allowedResolution {
-			return service.TaskErrorWrapperLocal(
-				fmt.Errorf("resolution %s is not supported by %s", resolution, modelName),
-				"invalid_resolution",
-				http.StatusBadRequest,
-			)
-		}
+	if resolution == "" {
+		resolution = "720p"
+	}
+	allowedResolution := resolution == "480p" || resolution == "720p"
+	if modelName == "dreamina-seedance-2-0-hc" {
+		allowedResolution = allowedResolution || resolution == "1080p" || resolution == "4k"
+	}
+	if !allowedResolution {
+		return service.TaskErrorWrapperLocal(
+			fmt.Errorf("resolution %s is not supported by %s", resolution, modelName),
+			"invalid_resolution",
+			http.StatusBadRequest,
+		)
+	}
+	aspectRatio := strings.TrimSpace(req.AspectRatio)
+	if aspectRatio == "" {
+		aspectRatio = "16:9"
+	}
+	if aspectRatio != "1:1" && aspectRatio != "16:9" && aspectRatio != "9:16" {
+		return service.TaskErrorWrapperLocal(
+			fmt.Errorf("aspect_ratio %s is not supported by %s", aspectRatio, modelName),
+			"invalid_aspect_ratio",
+			http.StatusBadRequest,
+		)
 	}
 	req.Duration = duration
 	req.Seconds = ""
 	req.Resolution = resolution
+	req.AspectRatio = aspectRatio
 	c.Set("task_request", req)
 	return nil
 }
@@ -198,36 +212,86 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 	return nil
 }
 
-// KeepChargeOnFailure: 上游对"生成完成但输出触发内容审核"的失败任务照常按 token 计费
-// （实测 request-logs 中 SensitiveContentDetected 失败均有扣费记录），因此这类
-// 失败不退款，保留预扣额度作为最终扣费，与上游保持一致。
-func (a *TaskAdaptor) KeepChargeOnFailure(task *model.Task, taskResult *relaycommon.TaskInfo) bool {
-	reason := ""
-	if taskResult != nil {
-		reason = taskResult.Reason
-	}
-	if reason == "" && task != nil {
-		reason = task.FailReason
-	}
-	return strings.Contains(reason, "SensitiveContentDetected")
-}
-
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return nil
 	}
 	resolution := taskResolution(req)
-	info.CostTier = relaycommon.VideoCostTier(resolution, req.HasImage())
+	hasVideoInput := len(req.Videos) > 0
+	info.CostTier = relaycommon.VideoCostTier(resolution, hasVideoInput)
 	billingModel := info.UpstreamModelName
 	if billingModel == "" {
 		billingModel = info.OriginModelName
 	}
-	ratio, ok := billingRatio(billingModel, resolution, req.HasImage())
+	ratio, ok := billingRatio(billingModel, resolution, hasVideoInput)
 	if !ok || ratio == 1 {
 		return nil
 	}
-	return map[string]float64{"reference_image": ratio}
+	return map[string]float64{"video_input": ratio}
+}
+
+func (a *TaskAdaptor) EstimatePrechargeUsage(c *gin.Context, _ *relaycommon.RelayInfo) (int, error) {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return 0, err
+	}
+	width, height, ok := outputDimensions(taskResolution(req), req.AspectRatio)
+	if !ok {
+		return 0, fmt.Errorf("unsupported video dimensions")
+	}
+	chargeableSeconds := req.Duration
+	if len(req.Videos) > 0 {
+		// The upstream contract caps all reference videos at 15 seconds total.
+		// Reserve that maximum because local asset mappings do not retain trusted
+		// media duration; final completion-token settlement refunds the difference.
+		chargeableSeconds += maxReferenceVideoDurationSeconds
+	}
+	// Actual usage includes one encoder boundary frame in addition to 24 fps.
+	estimatedTokens := float64(width*height) * float64(24*chargeableSeconds+1) / 1024
+	return common.QuotaFromFloat(estimatedTokens), nil
+}
+
+func (a *TaskAdaptor) CapSettlementAtPrecharge() bool {
+	return true
+}
+
+func outputDimensions(resolution, aspectRatio string) (int, int, bool) {
+	if aspectRatio == "" {
+		aspectRatio = "16:9"
+	}
+	dimensions := map[string]map[string][2]int{
+		"480p": {
+			"16:9": {864, 496},
+			"9:16": {496, 864},
+			"1:1":  {640, 640},
+		},
+		"720p": {
+			"16:9": {1280, 720},
+			"9:16": {720, 1280},
+			"1:1":  {960, 960},
+		},
+		"1080p": {
+			"16:9": {1920, 1080},
+			"9:16": {1080, 1920},
+			"1:1":  {1440, 1440},
+		},
+		"4k": {
+			"16:9": {3840, 2160},
+			"9:16": {2160, 3840},
+			"1:1":  {2880, 2880},
+		},
+	}
+	resolution = strings.ToLower(resolution)
+	if resolution == "" {
+		resolution = "720p"
+	}
+	byAspectRatio, ok := dimensions[resolution]
+	if !ok {
+		return 0, 0, false
+	}
+	value, ok := byAspectRatio[aspectRatio]
+	return value[0], value[1], ok
 }
 
 func taskResolution(req relaycommon.TaskSubmitReq) string {
@@ -248,42 +312,55 @@ func taskResolution(req relaycommon.TaskSubmitReq) string {
 		return ""
 	}
 }
-func billingRatio(modelName, resolution string, hasRef bool) (float64, bool) {
+
+// billingRatio returns other_multiplier = tierListPrice / baseListPrice.
+//
+// Prices are BytePlus official list rates (划线价, $/1M tokens) — NOT the
+// org's 20%-off purchase rate. Selling markup is applied only via GroupRatio
+// (e.g. video-dddd = 6.3 ≈ 7×0.9). Purchase cost for profit analysis lives in
+// model_cost_rules (8折 × 6.8 RMB/$).
+//
+//	mini:  480/720 no-ref $3.50, with-ref $2.10
+//	fast:  480/720 no-ref $5.60, with-ref $3.30
+//	hc:    480/720 no-ref $7.00, with-ref $4.30
+//	       1080p   no-ref $7.70, with-ref $4.70
+//	       4k      no-ref $4.00, with-ref $2.40
+func billingRatio(modelName, resolution string, hasVideoInput bool) (float64, bool) {
 	base := 0.0
 	price := 0.0
 	switch modelName {
 	case "dreamina-seedance-2-0-fast-hc":
-		base = 5.6
-		if hasRef {
+		base = 5.6 // list 480/720 no-ref
+		if hasVideoInput {
 			price = 3.3
 		} else {
 			price = 5.6
 		}
 	case "dreamina-seedance-2-0-hc":
-		base = 7
+		base = 7 // list 480/720 no-ref
 		switch strings.ToLower(resolution) {
 		case "4k":
-			if hasRef {
+			if hasVideoInput {
 				price = 2.4
 			} else {
 				price = 4
 			}
 		case "1080p":
-			if hasRef {
+			if hasVideoInput {
 				price = 4.7
 			} else {
 				price = 7.7
 			}
-		default:
-			if hasRef {
+		default: // 480p / 720p / empty
+			if hasVideoInput {
 				price = 4.3
 			} else {
 				price = 7
 			}
 		}
 	case "dreamina-seedance-2-0-mini-hc":
-		base = 3.5
-		if hasRef {
+		base = 3.5 // list 480/720 no-ref
+		if hasVideoInput {
 			price = 2.1
 		} else {
 			price = 3.5
@@ -649,7 +726,15 @@ func (a *TaskAdaptor) ParseTaskResult(body []byte) (*relaycommon.TaskInfo, error
 	if err := common.Unmarshal(body, &upstream); err != nil {
 		return nil, errors.Wrap(err, "unmarshal task result")
 	}
-	result := &relaycommon.TaskInfo{TotalTokens: upstream.Task.Usage.TotalTokens, CompletionTokens: upstream.Task.Usage.CompletionTokens}
+	billingTokens := upstream.Task.Usage.CompletionTokens
+	if billingTokens <= 0 {
+		billingTokens = upstream.Task.Usage.TotalTokens
+	}
+	result := &relaycommon.TaskInfo{
+		TotalTokens:      upstream.Task.Usage.TotalTokens,
+		CompletionTokens: upstream.Task.Usage.CompletionTokens,
+		BillingTokens:    billingTokens,
+	}
 	switch upstream.Task.Status {
 	case "completed":
 		result.Status = model.TaskStatusSuccess

@@ -541,6 +541,73 @@ func TestTaskBillingContextPriceDataFiltersMultiplier(t *testing.T) {
 	}, priceData.OtherRatios())
 }
 
+func TestCalculateTaskTokenQuotaUsesFrozenBillingSnapshot(t *testing.T) {
+	task := &model.Task{
+		Quota: 9000,
+		Group: "runtime-group-must-not-be-used",
+		PrivateData: model.TaskPrivateData{BillingContext: &model.TaskBillingContext{
+			ModelRatio:  2,
+			GroupRatio:  3,
+			OtherRatios: map[string]float64{"video_input": 0.5},
+		}},
+	}
+
+	quota, clamp, ok := calculateTaskTokenQuota(task, 1000)
+
+	require.True(t, ok)
+	assert.Nil(t, clamp)
+	assert.Equal(t, 3000, quota)
+}
+
+func TestCalculateTaskTokenQuotaCapsServiceInferenceAtPrecharge(t *testing.T) {
+	task := &model.Task{
+		Quota: 1000,
+		PrivateData: model.TaskPrivateData{BillingContext: &model.TaskBillingContext{
+			ModelRatio:               2,
+			GroupRatio:               1,
+			CapSettlementAtPrecharge: true,
+		}},
+	}
+
+	quota, clamp, ok := calculateTaskTokenQuota(task, 1000)
+
+	require.True(t, ok)
+	assert.Nil(t, clamp)
+	assert.Equal(t, 1000, quota)
+}
+
+func TestCalculateTaskTokenQuotaPreservesZeroGroupRatioSnapshot(t *testing.T) {
+	task := &model.Task{
+		Quota: 0,
+		PrivateData: model.TaskPrivateData{BillingContext: &model.TaskBillingContext{
+			ModelRatio:               2,
+			GroupRatio:               0,
+			CapSettlementAtPrecharge: true,
+		}},
+	}
+
+	quota, clamp, ok := calculateTaskTokenQuota(task, 1000)
+
+	require.True(t, ok)
+	assert.Nil(t, clamp)
+	assert.Zero(t, quota)
+}
+
+func TestTaskResultBillingTokensPrefersExplicitBillingUsage(t *testing.T) {
+	result := &relaycommon.TaskInfo{
+		BillingTokens:    324900,
+		CompletionTokens: 324900,
+		TotalTokens:      400000,
+	}
+
+	assert.Equal(t, 324900, taskResultBillingTokens(result))
+	assert.Equal(t, 324900, taskResultBillingTokens(&relaycommon.TaskInfo{
+		CompletionTokens: 324900,
+		TotalTokens:      400000,
+	}))
+	assert.Equal(t, 400000, taskResultBillingTokens(&relaycommon.TaskInfo{TotalTokens: 400000}))
+}
+
 // ---------------------------------------------------------------------------
 // Read-back helpers
 // ---------------------------------------------------------------------------
@@ -1327,6 +1394,7 @@ func TestRefundTaskQuota_FinalizesSummaryAsRefund(t *testing.T) {
 	task := makeTask(userID, channelID, preConsumed, 0, BillingSourceWallet, 0)
 	logId := seedSummaryLog(t, userID, preConsumed, task.TaskID)
 	task.PrivateData.ConsumeLogId = logId
+	require.True(t, model.UpdateTaskLogSummary(logId, map[string]any{"no_refund": true}, 0))
 
 	RefundTaskQuota(ctx, task, "task failed: upstream error")
 
@@ -1336,6 +1404,7 @@ func TestRefundTaskQuota_FinalizesSummaryAsRefund(t *testing.T) {
 	assert.Equal(t, float64(preConsumed), other["pre_consumed_quota"])
 	assert.Equal(t, float64(0), other["actual_quota"])
 	assert.Equal(t, "task failed: upstream error", other["reason"])
+	assert.Equal(t, false, other["no_refund"])
 
 	// 退款明细行仍写入（供看板/利润统计），但带隐藏标记，被列表排除
 	refund := getLastLog(t)

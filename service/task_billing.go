@@ -399,6 +399,7 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 	// 3. 汇总行终结为全额退款状态；成功后退款明细行从列表隐藏（仍写入供统计）
 	summaryPatch := taskSummaryPatch(quota, 0, 0, reason)
 	summaryPatch["task_billing_stage"] = "refund"
+	summaryPatch["no_refund"] = false
 	summaryFinalized := finalizeTaskSummaryLog(task, summaryPatch, 0)
 
 	// 4. 记录退款日志
@@ -534,54 +535,65 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	return true
 }
 
-// RecalculateTaskQuotaByTokens 根据实际 token 消耗重新计费（异步差额结算）。
-// 当任务到达终态且返回了 totalTokens 时，根据模型倍率和分组倍率重新计算实际扣费额度，
-// 与预扣费的差额进行补扣或退还。支持钱包和订阅计费来源。
-func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTokens int) bool {
-	if totalTokens <= 0 {
-		return false
+// calculateTaskTokenQuota uses the immutable submit-time billing snapshot when
+// available. Runtime settings are only a compatibility fallback for old tasks.
+func calculateTaskTokenQuota(task *model.Task, totalTokens int) (int, *common.QuotaClamp, bool) {
+	if task == nil || totalTokens <= 0 {
+		return 0, nil, false
 	}
 
-	modelName := taskModelName(task)
-
-	// 获取模型价格和倍率
-	modelRatio, hasRatioSetting, _ := ratio_setting.GetModelRatio(modelName)
-	// 只有配置了倍率(非固定价格)时才按 token 重新计费
-	if !hasRatioSetting || modelRatio <= 0 {
-		return false
+	billingContext := task.PrivateData.BillingContext
+	modelRatio := 0.0
+	groupRatio := 0.0
+	hasBillingSnapshot := billingContext != nil && billingContext.ModelRatio > 0
+	if billingContext != nil {
+		modelRatio = billingContext.ModelRatio
+		groupRatio = billingContext.GroupRatio
 	}
-
-	// 获取用户和组的倍率信息
-	group := task.Group
-	if group == "" {
-		user, err := model.GetUserById(task.UserId, false)
-		if err == nil {
-			group = user.Group
+	if modelRatio <= 0 {
+		var hasRatioSetting bool
+		modelRatio, hasRatioSetting, _ = ratio_setting.GetModelRatio(taskModelName(task))
+		if !hasRatioSetting || modelRatio <= 0 {
+			return 0, nil, false
 		}
 	}
-	if group == "" {
-		return false
+	if !hasBillingSnapshot {
+		usingGroup := task.Group
+		if usingGroup == "" {
+			return 0, nil, false
+		}
+		groupRatio = ratio_setting.GetGroupRatio(usingGroup)
+		if user, err := model.GetUserById(task.UserId, false); err == nil {
+			if specialRatio, ok := ratio_setting.GetGroupGroupRatio(user.Group, usingGroup); ok {
+				groupRatio = specialRatio
+			}
+		}
+	}
+	if groupRatio < 0 {
+		return 0, nil, false
 	}
 
-	groupRatio := ratio_setting.GetGroupRatio(group)
-	userGroupRatio, hasUserGroupRatio := ratio_setting.GetGroupGroupRatio(group, group)
-
-	var finalGroupRatio float64
-	if hasUserGroupRatio {
-		finalGroupRatio = userGroupRatio
-	} else {
-		finalGroupRatio = groupRatio
-	}
-
-	// 计算 OtherRatios 乘积（视频折扣、时长等）
 	otherMultiplier := 1.0
-	if priceData := taskBillingContextPriceData(task.PrivateData.BillingContext); priceData != nil {
+	if priceData := taskBillingContextPriceData(billingContext); priceData != nil {
 		otherMultiplier = priceData.OtherRatioMultiplier()
 	}
+	actualQuota, clamp := common.QuotaFromFloatChecked(float64(totalTokens) * modelRatio * groupRatio * otherMultiplier)
+	if billingContext != nil && billingContext.CapSettlementAtPrecharge && actualQuota > task.Quota {
+		actualQuota = task.Quota
+	}
+	return actualQuota, clamp, true
+}
 
-	// 计算实际应扣费额度: totalTokens * modelRatio * groupRatio * otherMultiplier（饱和转换，防止溢出成负数）
-	actualQuota, clamp := common.QuotaFromFloatChecked(float64(totalTokens) * modelRatio * finalGroupRatio * otherMultiplier)
-
-	reason := fmt.Sprintf("token重算：tokens=%d, modelRatio=%.2f, groupRatio=%.2f, otherMultiplier=%.4f", totalTokens, modelRatio, finalGroupRatio, otherMultiplier)
+// RecalculateTaskQuotaByTokens 根据实际 token 消耗重新计费（异步差额结算）。
+// 提交时计费快照优先于运行时配置，避免任务执行期间改价改变用户账单。
+func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTokens int) bool {
+	actualQuota, clamp, ok := calculateTaskTokenQuota(task, totalTokens)
+	if !ok {
+		return false
+	}
+	reason := fmt.Sprintf("token重算：tokens=%d，按提交时计费快照结算", totalTokens)
+	if task.PrivateData.BillingContext != nil && task.PrivateData.BillingContext.CapSettlementAtPrecharge && actualQuota == task.Quota {
+		reason += "，不超过预扣额度"
+	}
 	return RecalculateTaskQuota(ctx, task, actualQuota, totalTokens, reason, clamp)
 }

@@ -88,6 +88,19 @@ type TaskAdaptor interface {
 	ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error)
 }
 
+// TaskPrechargeUsageEstimator provides a request-specific token estimate for
+// task pre-consumption. The estimate sizes the hold only and is not persisted
+// as an OtherRatio, so actual usage is not multiplied by it during settlement.
+type TaskPrechargeUsageEstimator interface {
+	EstimatePrechargeUsage(c *gin.Context, info *relaycommon.RelayInfo) (int, error)
+}
+
+// TaskSettlementPolicy allows an adaptor to make the pre-consumed amount the
+// maximum customer charge for a task. Actual usage below the hold is refunded.
+type TaskSettlementPolicy interface {
+	CapSettlementAtPrecharge() bool
+}
+
 type OpenAIVideoConverter interface {
 	ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error)
 }
