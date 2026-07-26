@@ -249,10 +249,13 @@ func billingRatio(modelName, resolution string, hasRef bool) (float64, bool) {
 		base = 7
 		switch strings.ToLower(resolution) {
 		case "4k":
+			// 4K 消耗约 2.92M token（≈480p 的 19.4 倍），上游按 token 计费
+			// （无参考 $3.20/M、含参考 $1.92/M），单条成本约 $9.36/$5.61。
+			// 按次售价 = 成本 ÷ 0.8，与其他档位保持相同利润率。
 			if hasRef {
-				price = 2.4
+				price = 7.0
 			} else {
-				price = 4
+				price = 11.7
 			}
 		case "1080p":
 			if hasRef {
