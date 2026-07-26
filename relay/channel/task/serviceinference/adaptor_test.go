@@ -613,8 +613,8 @@ func TestBillingRatio(t *testing.T) {
 	}{
 		{"dreamina-seedance-2-0-fast-hc", "480p", false, 1},
 		{"dreamina-seedance-2-0-fast-hc", "720p", true, 3.3 / 5.6},
-		{"dreamina-seedance-2-0-hc", "4k", false, 11.7 / 7.0},
-		{"dreamina-seedance-2-0-hc", "4k", true, 7.0 / 7.0},
+		{"dreamina-seedance-2-0-hc", "4k", false, 4.0 / 7.0},
+		{"dreamina-seedance-2-0-hc", "4k", true, 2.4 / 7.0},
 		{"dreamina-seedance-2-0-hc", "1080p", true, 4.7 / 7.0},
 		{"dreamina-seedance-2-0-mini-hc", "720p", true, 2.1 / 3.5},
 	}
