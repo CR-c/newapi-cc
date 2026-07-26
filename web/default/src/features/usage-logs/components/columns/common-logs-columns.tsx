@@ -49,6 +49,7 @@ import {
   formatModelName,
   getFirstResponseTimeColor,
   getResponseTimeColor,
+  getTaskBillingStage,
   getTieredBillingSummary,
   hasAnyCacheTokens,
   parseLogOther,
@@ -132,11 +133,45 @@ function buildTypeDetailSegments(
     return text ? [{ text }] : []
   }
 
+  const taskStage = getTaskBillingStage(log.type, other)
+
   if (log.type === 6) {
-    return [{ text: t('Async task refund') }]
+    if (taskStage === 'settle') {
+      const segments: DetailSegment[] = [
+        { text: `${t('Task settlement refund')} ${formatLogQuota(log.quota)}` },
+      ]
+      if (other?.actual_quota != null) {
+        segments.push({
+          text: `${t('Actual Charge')}: ${formatLogQuota(other.actual_quota)}`,
+          muted: true,
+        })
+      }
+      return segments
+    }
+    const segments: DetailSegment[] = [{ text: t('Async task refund') }]
+    if (taskStage === 'refund') {
+      segments.push({ text: formatLogQuota(log.quota), muted: true })
+      if (other?.reason) {
+        segments.push({ text: other.reason, muted: true })
+      }
+    }
+    return segments
   }
 
   if (log.type !== 2) return []
+
+  if (taskStage === 'settle') {
+    const segments: DetailSegment[] = [
+      { text: `${t('Task settlement charge')} +${formatLogQuota(log.quota)}` },
+    ]
+    if (other?.actual_quota != null) {
+      segments.push({
+        text: `${t('Actual Charge')}: ${formatLogQuota(other.actual_quota)}`,
+        muted: true,
+      })
+    }
+    return segments
+  }
 
   const isViolation = isViolationFeeLog(other)
   if (isViolation) {
@@ -158,6 +193,12 @@ function buildTypeDetailSegments(
   if (!other) return []
 
   const segments: DetailSegment[] = []
+
+  if (taskStage === 'pre_consume') {
+    segments.push({ text: t('Pre-consumed') })
+  } else if (taskStage === 'final') {
+    segments.push({ text: t('Per-call (final)') })
+  }
 
   const priceOpts = { digitsLarge: 4, digitsSmall: 6, abbreviate: false }
   const formatPrice = (price: number) =>

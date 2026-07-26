@@ -482,6 +482,40 @@ func TestLogTaskConsumptionRecordsVideoMetadata(t *testing.T) {
 	assert.Equal(t, "video", other["media_type"])
 	assert.Equal(t, "task_media_log", other["task_id"])
 	assert.Equal(t, float64(3), other["profit_generation"])
+	assert.Equal(t, "pre_consume", other["task_billing_stage"])
+}
+
+func TestLogTaskConsumptionMarksPerCallBillingAsFinal(t *testing.T) {
+	truncate(t)
+	seedUser(t, 1, 1000)
+	seedChannel(t, 1)
+
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+	context.Set("token_name", "per-call-token")
+
+	info := &relaycommon.RelayInfo{
+		UserId:          1,
+		OriginModelName: "per-call-video-model",
+		UsingGroup:      "default",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId: 1,
+		},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{
+			PublicTaskID: "task_per_call",
+			Action:       constant.TaskActionGenerate,
+		},
+	}
+	info.PriceData.UsePrice = true
+
+	LogTaskConsumption(context, info)
+
+	var log model.Log
+	require.NoError(t, model.DB.Where("user_id = ?", 1).First(&log).Error)
+	var other map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
+	assert.Equal(t, "final", other["task_billing_stage"])
 }
 
 func TestTaskBillingContextPriceDataFiltersMultiplier(t *testing.T) {
@@ -594,6 +628,12 @@ func TestRefundTaskQuota_Wallet(t *testing.T) {
 	assert.Equal(t, preConsumed, log.Quota)
 	assert.Equal(t, "test-model", log.ModelName)
 
+	var other map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
+	assert.Equal(t, "refund", other["task_billing_stage"])
+	assert.Equal(t, float64(preConsumed), other["pre_consumed_quota"])
+	assert.Equal(t, float64(0), other["actual_quota"])
+
 	var user model.User
 	require.NoError(t, model.DB.Select("used_quota", "request_count").First(&user, userID).Error)
 	assert.Zero(t, user.UsedQuota)
@@ -693,7 +733,7 @@ func TestRecalculate_PositiveDelta(t *testing.T) {
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 
-	RecalculateTaskQuota(ctx, task, actualQuota, "adaptor adjustment")
+	RecalculateTaskQuota(ctx, task, actualQuota, 12345, "adaptor adjustment")
 
 	// User quota should decrease by the delta (1000 additional charge)
 	assert.Equal(t, initQuota-(actualQuota-preConsumed), getUserQuota(t, userID))
@@ -709,6 +749,13 @@ func TestRecalculate_PositiveDelta(t *testing.T) {
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeConsume, log.Type)
 	assert.Equal(t, actualQuota-preConsumed, log.Quota)
+	assert.Equal(t, 12345, log.CompletionTokens)
+
+	var other map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
+	assert.Equal(t, "settle", other["task_billing_stage"])
+	assert.Equal(t, float64(preConsumed), other["pre_consumed_quota"])
+	assert.Equal(t, float64(actualQuota), other["actual_quota"])
 }
 
 func TestRecalculate_NegativeDelta(t *testing.T) {
@@ -731,7 +778,7 @@ func TestRecalculate_NegativeDelta(t *testing.T) {
 	}).Error)
 	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", channelID).Update("used_quota", preConsumed).Error)
 
-	RecalculateTaskQuota(ctx, task, actualQuota, "adaptor adjustment")
+	RecalculateTaskQuota(ctx, task, actualQuota, 800, "adaptor adjustment")
 
 	// User quota should increase by abs(delta) = 2000 (refund overpayment)
 	assert.Equal(t, initQuota+(preConsumed-actualQuota), getUserQuota(t, userID))
@@ -747,6 +794,13 @@ func TestRecalculate_NegativeDelta(t *testing.T) {
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
 	assert.Equal(t, preConsumed-actualQuota, log.Quota)
+	assert.Equal(t, 800, log.CompletionTokens)
+
+	var other map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
+	assert.Equal(t, "settle", other["task_billing_stage"])
+	assert.Equal(t, float64(preConsumed), other["pre_consumed_quota"])
+	assert.Equal(t, float64(actualQuota), other["actual_quota"])
 
 	var user model.User
 	require.NoError(t, model.DB.Select("used_quota", "request_count").First(&user, userID).Error)
@@ -769,13 +823,45 @@ func TestRecalculate_ZeroDelta(t *testing.T) {
 
 	task := makeTask(userID, 0, preConsumed, 0, BillingSourceWallet, 0)
 
-	RecalculateTaskQuota(ctx, task, preConsumed, "exact match")
+	RecalculateTaskQuota(ctx, task, preConsumed, 0, "exact match")
 
 	// No change to user quota
 	assert.Equal(t, initQuota, getUserQuota(t, userID))
 
-	// No log created (delta is zero)
+	// No log created (delta is zero, no usage reported)
 	assert.Equal(t, int64(0), countLogs(t))
+}
+
+func TestRecalculate_ZeroDeltaWithTokensWritesUsageLog(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID = 15
+	const initQuota, preConsumed = 10000, 3000
+
+	seedUser(t, userID, initQuota)
+
+	task := makeTask(userID, 0, preConsumed, 0, BillingSourceWallet, 0)
+
+	RecalculateTaskQuota(ctx, task, preConsumed, 4321, "exact match with usage")
+
+	// No money moved
+	assert.Equal(t, initQuota, getUserQuota(t, userID))
+	assert.Equal(t, preConsumed, task.Quota)
+
+	// A zero-quota consume log carries the upstream usage
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	assert.Equal(t, model.LogTypeConsume, log.Type)
+	assert.Zero(t, log.Quota)
+	assert.Equal(t, 4321, log.CompletionTokens)
+
+	var other map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
+	assert.Equal(t, "settle", other["task_billing_stage"])
+	assert.Equal(t, float64(preConsumed), other["pre_consumed_quota"])
+	assert.Equal(t, float64(preConsumed), other["actual_quota"])
+	assert.NotContains(t, other, "wallet_funding")
 }
 
 func TestRecalculate_ActualQuotaZero(t *testing.T) {
@@ -789,7 +875,7 @@ func TestRecalculate_ActualQuotaZero(t *testing.T) {
 
 	task := makeTask(userID, 0, 5000, 0, BillingSourceWallet, 0)
 
-	RecalculateTaskQuota(ctx, task, 0, "zero actual")
+	RecalculateTaskQuota(ctx, task, 0, 0, "zero actual")
 
 	// No change (early return)
 	assert.Equal(t, initQuota, getUserQuota(t, userID))
@@ -813,7 +899,7 @@ func TestRecalculate_Subscription_NegativeDelta(t *testing.T) {
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceSubscription, subID)
 
-	RecalculateTaskQuota(ctx, task, actualQuota, "subscription over-charge")
+	RecalculateTaskQuota(ctx, task, actualQuota, 0, "subscription over-charge")
 
 	// Subscription used should decrease by delta (refund 3000)
 	assert.Equal(t, subUsed-int64(preConsumed-actualQuota), getSubscriptionUsed(t, subID))
@@ -875,7 +961,7 @@ func simulatePollBilling(ctx context.Context, task *model.Task, newStatus model.
 	}
 
 	if shouldSettle && actualQuota > 0 {
-		RecalculateTaskQuota(ctx, task, actualQuota, "test settle")
+		RecalculateTaskQuota(ctx, task, actualQuota, 0, "test settle")
 	}
 	if shouldRefund {
 		RefundTaskQuota(ctx, task, task.FailReason)

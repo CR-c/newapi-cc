@@ -269,6 +269,83 @@ func TestRecordTaskBillingLogRefundDeductsDashboardQuota(t *testing.T) {
 	require.Equal(t, "node-a", rows[0].NodeName)
 }
 
+func TestRecordTaskBillingLogZeroQuotaSkipsDashboardExport(t *testing.T) {
+	truncateTables(t)
+	CacheQuotaDataLock.Lock()
+	CacheQuotaData = make(map[string]*QuotaData)
+	CacheQuotaDataLock.Unlock()
+
+	prevExport := common.DataExportEnabled
+	common.DataExportEnabled = true
+	t.Cleanup(func() {
+		common.DataExportEnabled = prevExport
+		CacheQuotaDataLock.Lock()
+		CacheQuotaData = make(map[string]*QuotaData)
+		CacheQuotaDataLock.Unlock()
+	})
+
+	require.NoError(t, DB.Create(&User{Id: 43, Username: "zero-settle-user", Role: common.RoleCommonUser}).Error)
+
+	// Zero-delta settlement log: carries usage only, must not touch the dashboard.
+	RecordTaskBillingLog(RecordTaskBillingLogParams{
+		UserId:           43,
+		LogType:          LogTypeConsume,
+		ChannelId:        7,
+		ModelName:        "sora-2",
+		Quota:            0,
+		CompletionTokens: 4321,
+		Group:            "default",
+		NodeName:         "node-a",
+	})
+
+	CacheQuotaDataLock.Lock()
+	cached := len(CacheQuotaData)
+	CacheQuotaDataLock.Unlock()
+	require.Zero(t, cached)
+
+	// The log itself is still written with its usage.
+	var log Log
+	require.NoError(t, LOG_DB.Where("user_id = ?", 43).First(&log).Error)
+	require.Equal(t, 4321, log.CompletionTokens)
+}
+
+func TestRecordTaskBillingLogExportsSettlementTokens(t *testing.T) {
+	truncateTables(t)
+	CacheQuotaDataLock.Lock()
+	CacheQuotaData = make(map[string]*QuotaData)
+	CacheQuotaDataLock.Unlock()
+
+	prevExport := common.DataExportEnabled
+	common.DataExportEnabled = true
+	t.Cleanup(func() {
+		common.DataExportEnabled = prevExport
+		CacheQuotaDataLock.Lock()
+		CacheQuotaData = make(map[string]*QuotaData)
+		CacheQuotaDataLock.Unlock()
+	})
+
+	require.NoError(t, DB.Create(&User{Id: 44, Username: "settle-token-user", Role: common.RoleCommonUser}).Error)
+
+	RecordTaskBillingLog(RecordTaskBillingLogParams{
+		UserId:           44,
+		LogType:          LogTypeConsume,
+		ChannelId:        7,
+		ModelName:        "sora-2",
+		Quota:            500,
+		CompletionTokens: 999,
+		Group:            "default",
+		NodeName:         "node-a",
+	})
+
+	SaveQuotaDataCache()
+
+	var rows []QuotaData
+	require.NoError(t, DB.Where("username = ?", "settle-token-user").Find(&rows).Error)
+	require.Len(t, rows, 1)
+	require.Equal(t, 999, rows[0].TokenUsed)
+	require.Equal(t, 500, rows[0].Quota)
+}
+
 func TestRebuildQuotaDataFromLogsNetsRefunds(t *testing.T) {
 	truncateTables(t)
 	CacheQuotaDataLock.Lock()

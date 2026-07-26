@@ -211,6 +211,11 @@ export interface LogOtherData {
   is_task?: boolean
   task_id?: string
   reason?: string
+  // Async task billing chain (video tasks): submit pre-consume →
+  // polling settlement (delta charge/refund) or failure refund.
+  task_billing_stage?: 'pre_consume' | 'final' | 'settle' | 'refund'
+  pre_consumed_quota?: number
+  actual_quota?: number
   // Subscription billing fields
   subscription_plan_id?: string
   subscription_plan_title?: string
@@ -279,6 +284,7 @@ export interface TaskLog {
   fail_reason?: string
   result_url?: string
   status: string // NOT_START, SUBMITTED, IN_PROGRESS, SUCCESS, FAILURE, QUEUED, UNKNOWN
+  quota?: number
   other?: string
   created_at?: number
   updated_at?: number

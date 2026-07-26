@@ -106,6 +106,26 @@ export function parseLogOther(other: string): LogOtherData | null {
   }
 }
 
+export type TaskBillingStage = 'pre_consume' | 'final' | 'settle' | 'refund'
+
+/**
+ * Resolve the billing stage of an async task log (video tasks).
+ * Newer logs carry an explicit `task_billing_stage`; older logs are inferred:
+ * settlement logs have `pre_consumed_quota`, refund logs are type 6, and the
+ * remaining consume logs are submit-time pre-consume records.
+ */
+export function getTaskBillingStage(
+  logType: number,
+  other: LogOtherData | null
+): TaskBillingStage | null {
+  if (!other?.is_task) return null
+  if (other.task_billing_stage) return other.task_billing_stage
+  const hasSettlement = other.pre_consumed_quota != null
+  if (logType === 6) return hasSettlement ? 'settle' : 'refund'
+  if (logType === 2) return hasSettlement ? 'settle' : 'pre_consume'
+  return null
+}
+
 /**
  * Get time color based on duration (in seconds)
  */

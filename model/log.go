@@ -453,16 +453,17 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 }
 
 type RecordTaskBillingLogParams struct {
-	UserId    int
-	LogType   int
-	Content   string
-	ChannelId int
-	ModelName string
-	Quota     int
-	TokenId   int
-	Group     string
-	Other     map[string]interface{}
-	NodeName  string // 任务发起节点；为空时回退当前节点
+	UserId           int
+	LogType          int
+	Content          string
+	ChannelId        int
+	ModelName        string
+	Quota            int
+	CompletionTokens int // 上游返回的计费用量（token 或扣量单位），仅任务结算日志使用
+	TokenId          int
+	Group            string
+	Other            map[string]interface{}
+	NodeName         string // 任务发起节点；为空时回退当前节点
 }
 
 func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
@@ -475,18 +476,19 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 	createdAt := common.GetTimestamp()
 	log := &Log{
-		UserId:    params.UserId,
-		Username:  username,
-		CreatedAt: createdAt,
-		Type:      params.LogType,
-		Content:   params.Content,
-		TokenName: tokenName,
-		ModelName: params.ModelName,
-		Quota:     params.Quota,
-		ChannelId: params.ChannelId,
-		TokenId:   params.TokenId,
-		Group:     params.Group,
-		Other:     common.MapToJsonStr(params.Other),
+		UserId:           params.UserId,
+		Username:         username,
+		CreatedAt:        createdAt,
+		Type:             params.LogType,
+		Content:          params.Content,
+		TokenName:        tokenName,
+		ModelName:        params.ModelName,
+		Quota:            params.Quota,
+		CompletionTokens: params.CompletionTokens,
+		ChannelId:        params.ChannelId,
+		TokenId:          params.TokenId,
+		Group:            params.Group,
+		Other:            common.MapToJsonStr(params.Other),
 	}
 	err := createBillingLog(log)
 	if err != nil {
@@ -495,16 +497,19 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	// Consume and refund both feed the data dashboard. Refunds write a negative
 	// quota delta so failure refunds (video tasks, Midjourney, delta settlement)
 	// reduce the displayed amount instead of leaving the pre-consume charge.
-	if common.DataExportEnabled && (params.LogType == LogTypeConsume || params.LogType == LogTypeRefund) {
+	// 零差额结算日志（Quota == 0，仅承载用量信息）不导出，避免污染看板计数。
+	if common.DataExportEnabled && params.Quota != 0 && (params.LogType == LogTypeConsume || params.LogType == LogTypeRefund) {
 		nodeName := params.NodeName
 		if nodeName == "" {
 			nodeName = common.NodeName
 		}
 		quota := params.Quota
 		count := 1
+		tokenUsed := params.CompletionTokens
 		if params.LogType == LogTypeRefund {
 			quota = -params.Quota
 			count = 0
+			tokenUsed = 0
 		}
 		LogQuotaData(QuotaDataLogParams{
 			UserID:    params.UserId,
@@ -512,6 +517,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 			ModelName: params.ModelName,
 			Quota:     quota,
 			CreatedAt: createdAt,
+			TokenUsed: tokenUsed,
 			Count:     count,
 			UseGroup:  params.Group,
 			TokenID:   params.TokenId,

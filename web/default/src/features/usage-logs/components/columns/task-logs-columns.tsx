@@ -25,7 +25,7 @@ import { useTranslation } from 'react-i18next'
 import { StatusBadge } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
-import { formatTimestampToDate } from '@/lib/format'
+import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { TASK_ACTIONS, TASK_STATUS } from '../../constants'
@@ -213,6 +213,21 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
       },
     },
     createProgressColumn<TaskLog>({ headerLabel: t('Progress') }),
+    {
+      accessorKey: 'quota',
+      header: t('Cost'),
+      cell: ({ row }) => {
+        const quota = (row.getValue('quota') as number | undefined) ?? 0
+        if (quota === 0) {
+          return <span className='text-muted-foreground/60 text-xs'>-</span>
+        }
+        return (
+          <span className='font-mono text-xs tabular-nums'>
+            {formatLogQuota(quota)}
+          </span>
+        )
+      },
+    },
     {
       accessorKey: 'fail_reason',
       header: t('Details'),

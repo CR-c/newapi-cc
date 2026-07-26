@@ -39,6 +39,12 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	other := make(map[string]interface{})
 	other["is_task"] = true
 	other["media_type"] = "video"
+	// 计费阶段标记：按次计费提交即终结，否则为预扣费、等待轮询结算
+	if common.StringsContains(constant.TaskPricePatches, info.OriginModelName) || info.PriceData.UsePrice {
+		other["task_billing_stage"] = "final"
+	} else {
+		other["task_billing_stage"] = "pre_consume"
+	}
 	if info.TaskRelayInfo != nil && info.PublicTaskID != "" {
 		other["task_id"] = info.PublicTaskID
 	}
@@ -298,6 +304,9 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 	// 3. 记录日志
 	other := taskBillingOther(task, allocation)
 	other["reason"] = reason
+	other["task_billing_stage"] = "refund"
+	other["pre_consumed_quota"] = quota
+	other["actual_quota"] = 0
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 		UserId:    task.UserId,
 		LogType:   model.LogTypeRefund,
@@ -313,9 +322,10 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 
 // RecalculateTaskQuota 通用的异步差额结算。
 // actualQuota 是任务完成后的实际应扣额度，与预扣额度 (task.Quota) 做差额结算。
+// completionTokens 是上游返回的计费用量（token 或扣量单位），> 0 时随结算日志持久化。
 // reason 用于日志记录（例如 "token重算" 或 "adaptor调整"）。
 // clamps 可选：若计算 actualQuota 时发生额度饱和，将其记入日志 admin_info（仅管理员可见）。
-func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason string, clamps ...*common.QuotaClamp) {
+func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int, completionTokens int, reason string, clamps ...*common.QuotaClamp) {
 	if actualQuota <= 0 {
 		return
 	}
@@ -325,6 +335,27 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	if quotaDelta == 0 {
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 预扣费准确（%s，%s）",
 			task.TaskID, logger.LogQuota(actualQuota), reason))
+		if completionTokens <= 0 {
+			return
+		}
+		// 预扣费准确时也写一条零额结算日志，让上游用量对用户可见
+		other := taskBillingOther(task, model.WalletAllocation{})
+		other["task_billing_stage"] = "settle"
+		other["pre_consumed_quota"] = preConsumedQuota
+		other["actual_quota"] = actualQuota
+		model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
+			UserId:           task.UserId,
+			LogType:          model.LogTypeConsume,
+			Content:          "预扣费准确",
+			ChannelId:        task.ChannelId,
+			ModelName:        taskModelName(task),
+			Quota:            0,
+			CompletionTokens: completionTokens,
+			TokenId:          task.PrivateData.TokenId,
+			Group:            task.Group,
+			Other:            other,
+			NodeName:         task.PrivateData.NodeName,
+		})
 		return
 	}
 
@@ -363,22 +394,24 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	model.UpdateUserUsedQuota(task.UserId, quotaDelta)
 	model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
 	other := taskBillingOther(task, allocation)
+	other["task_billing_stage"] = "settle"
 	other["pre_consumed_quota"] = preConsumedQuota
 	other["actual_quota"] = actualQuota
 	for _, clamp := range clamps {
 		attachQuotaSaturationToOther(other, clamp)
 	}
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
-		UserId:    task.UserId,
-		LogType:   logType,
-		Content:   reason,
-		ChannelId: task.ChannelId,
-		ModelName: taskModelName(task),
-		Quota:     logQuota,
-		TokenId:   task.PrivateData.TokenId,
-		Group:     task.Group,
-		Other:     other,
-		NodeName:  task.PrivateData.NodeName,
+		UserId:           task.UserId,
+		LogType:          logType,
+		Content:          reason,
+		ChannelId:        task.ChannelId,
+		ModelName:        taskModelName(task),
+		Quota:            logQuota,
+		CompletionTokens: max(completionTokens, 0),
+		TokenId:          task.PrivateData.TokenId,
+		Group:            task.Group,
+		Other:            other,
+		NodeName:         task.PrivateData.NodeName,
 	})
 }
 
@@ -431,5 +464,5 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 	actualQuota, clamp := common.QuotaFromFloatChecked(float64(totalTokens) * modelRatio * finalGroupRatio * otherMultiplier)
 
 	reason := fmt.Sprintf("token重算：tokens=%d, modelRatio=%.2f, groupRatio=%.2f, otherMultiplier=%.4f", totalTokens, modelRatio, finalGroupRatio, otherMultiplier)
-	RecalculateTaskQuota(ctx, task, actualQuota, reason, clamp)
+	RecalculateTaskQuota(ctx, task, actualQuota, totalTokens, reason, clamp)
 }

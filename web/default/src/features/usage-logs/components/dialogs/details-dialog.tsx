@@ -49,12 +49,14 @@ import {
   getParamOverrideActionLabel,
   parseAuditLine,
   decodeBillingExprB64,
+  getTaskBillingStage,
   getTieredBillingSummary,
   hasAnyCacheTokens,
   isViolationFeeLog,
   getFirstResponseTimeColor,
   getResponseTimeColor,
   renderAuditContent,
+  type TaskBillingStage,
 } from '../../lib/format'
 import {
   getLogTypeConfig,
@@ -404,6 +406,94 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
       {rows.map((row, idx) => (
         <DetailRow key={idx} label={row.label} value={row.value} mono />
       ))}
+    </DetailSection>
+  )
+}
+
+// Async task (video) billing chain: submit pre-consume → settlement delta or
+// failure refund. Renders the full money trail so users can audit each stage.
+function TaskBillingBreakdown(props: { log: UsageLog; other: LogOtherData }) {
+  const { t } = useTranslation()
+  const { log, other } = props
+  const stage = getTaskBillingStage(log.type, other)
+  if (!stage) return null
+
+  const stageConfig: Record<
+    TaskBillingStage,
+    { label: string; variant: StatusBadgeProps['variant'] }
+  > = {
+    pre_consume: {
+      label: t('Pre-consumed (pending settlement)'),
+      variant: 'yellow',
+    },
+    final: { label: t('Per-call (final)'), variant: 'green' },
+    settle: { label: t('Settlement'), variant: 'blue' },
+    refund: { label: t('Refund'), variant: 'blue' },
+  }
+
+  const preConsumed =
+    stage === 'pre_consume' || stage === 'final'
+      ? log.quota
+      : other.pre_consumed_quota
+  let actualCharge: number | undefined
+  if (stage === 'final') {
+    actualCharge = log.quota
+  } else if (stage === 'settle') {
+    actualCharge = other.actual_quota
+  } else if (stage === 'refund') {
+    actualCharge = 0
+  }
+  const billedUsage = log.completion_tokens || 0
+
+  return (
+    <DetailSection label={t('Task Billing')}>
+      {other.task_id && (
+        <DetailRow label={t('Task ID')} value={other.task_id} mono />
+      )}
+      <DetailRow
+        label={t('Billing Stage')}
+        value={
+          <StatusBadge
+            label={stageConfig[stage].label}
+            variant={stageConfig[stage].variant}
+            size='sm'
+            copyable={false}
+          />
+        }
+      />
+      {preConsumed != null && (
+        <DetailRow
+          label={t('Pre-consumed')}
+          value={formatLogQuota(preConsumed)}
+          mono
+        />
+      )}
+      {actualCharge != null && (
+        <DetailRow
+          label={t('Actual Charge')}
+          value={formatLogQuota(actualCharge)}
+          mono
+        />
+      )}
+      {stage === 'settle' && (
+        <DetailRow
+          label={t('Settlement Delta')}
+          value={
+            log.type === 2
+              ? `+${formatLogQuota(log.quota)} (${t('Additional charge')})`
+              : `-${formatLogQuota(log.quota)} (${t('Refunded')})`
+          }
+          mono
+        />
+      )}
+      {billedUsage > 0 && (
+        <DetailRow
+          label={t('Billed Usage')}
+          value={billedUsage.toLocaleString()}
+          mono
+        />
+      )}
+      {other.reason && <DetailRow label={t('Reason')} value={other.reason} />}
     </DetailSection>
   )
 }
@@ -787,17 +877,20 @@ export function DetailsDialog(props: DetailsDialogProps) {
           </DetailSection>
         )}
 
-        {/* Refund details (type=6) */}
-        {isRefund && other && (other.task_id || other.reason) && (
-          <DetailSection label={t('Refund Details')}>
-            {other.task_id && (
-              <DetailRow label={t('Task ID')} value={other.task_id} mono />
-            )}
-            {other.reason && (
-              <DetailRow label={t('Reason')} value={other.reason} />
-            )}
-          </DetailSection>
-        )}
+        {/* Refund details (type=6, non-task; task refunds use Task Billing below) */}
+        {isRefund &&
+          other &&
+          !other.is_task &&
+          (other.task_id || other.reason) && (
+            <DetailSection label={t('Refund Details')}>
+              {other.task_id && (
+                <DetailRow label={t('Task ID')} value={other.task_id} mono />
+              )}
+              {other.reason && (
+                <DetailRow label={t('Reason')} value={other.reason} />
+              )}
+            </DetailSection>
+          )}
 
         {/* Top-up audit info (type=1, admin only) */}
         {showTopupAuditSection && (
@@ -997,6 +1090,11 @@ export function DetailsDialog(props: DetailsDialogProps) {
         {/* Token breakdown (for consume/error types with token data) */}
         {isDisplayableType(props.log.type) && other && (
           <TokenBreakdown log={props.log} other={other} />
+        )}
+
+        {/* Async task billing chain (video tasks; consume + refund types) */}
+        {other?.is_task && (isConsume || isRefund) && (
+          <TaskBillingBreakdown log={props.log} other={other} />
         )}
 
         {/* Billing breakdown (consume type) */}
