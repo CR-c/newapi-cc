@@ -341,6 +341,19 @@ func InitResources() error {
 	}
 	if common.IsMasterNode {
 		go func() {
+			result, backfillErr := model.BackfillTaskLogSummaries()
+			if backfillErr != nil {
+				common.SysError("task log summary backfill failed: " + backfillErr.Error())
+			} else if result.TaskLinksUpdated > 0 {
+				common.SysLog(fmt.Sprintf(
+					"task log summary backfill completed: matched=%d summaries=%d adjustments=%d tokens=%d links=%d",
+					result.MatchedTasks,
+					result.SummaryLogsUpdated,
+					result.AdjustmentLogsUpdated,
+					result.TokenLogsUpdated,
+					result.TaskLinksUpdated,
+				))
+			}
 			if backfillErr := model.BackfillProfitRecords(); backfillErr != nil {
 				common.SysError("profit backfill failed: " + backfillErr.Error())
 			}

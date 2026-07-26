@@ -180,6 +180,7 @@ func (p TaskPrivateData) isEmpty() bool {
 		p.SubscriptionId == 0 &&
 		p.TokenId == 0 &&
 		p.NodeName == "" &&
+		p.ConsumeLogId == 0 &&
 		p.BillingContext == nil &&
 		len(p.PlaygroundAssetIDs) == 0
 }
