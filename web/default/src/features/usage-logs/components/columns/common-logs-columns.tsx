@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { type ColumnDef } from '@tanstack/react-table'
+import type { ColumnDef } from '@tanstack/react-table'
 import { CircleAlert, GitBranch, Sparkles, KeyRound } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -43,11 +43,12 @@ import {
 } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import { LOG_TYPE_ALL_VALUE } from '../../constants'
+import { LOG_TYPE_ALL_VALUE, LOG_TYPE_ENUM } from '../../constants'
 import type { UsageLog } from '../../data/schema'
 import {
   formatModelName,
   getFirstResponseTimeColor,
+  getTaskBillingDisplay,
   getResponseTimeColor,
   getTaskBillingStage,
   getTieredBillingSummary,
@@ -134,6 +135,23 @@ function buildTypeDetailSegments(
   }
 
   const taskStage = getTaskBillingStage(log.type, other)
+
+  if (other?.task_summary) {
+    const segments: DetailSegment[] = []
+    if (taskStage === 'refund') {
+      segments.push({ text: t('Async task refund') })
+    } else if (other.no_refund) {
+      segments.push({ text: t('No refund'), danger: true })
+    } else if (other.actual_quota != null) {
+      segments.push({
+        text: `${t('Actual Charge')}: ${formatLogQuota(other.actual_quota)}`,
+      })
+    }
+    if (other.reason) {
+      segments.push({ text: other.reason, muted: true })
+    }
+    return segments
+  }
 
   if (log.type === 6) {
     if (taskStage === 'settle') {
@@ -265,9 +283,9 @@ function buildTypeDetailSegments(
     }
   } else {
     const isPerCall = isPerCallBilling(other.model_price)
-    if (isPerCall) {
+    if (isPerCall && other.model_price != null) {
       segments.push({
-        text: `${t('Per-call')} · ${formatBillingCurrencyFromUSD(other.model_price!, priceOpts)}`,
+        text: `${t('Per-call')} · ${formatBillingCurrencyFromUSD(other.model_price, priceOpts)}`,
       })
     } else if (other.model_ratio != null) {
       const inputPriceUSD = other.model_ratio * 2.0
@@ -341,7 +359,12 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
       cell: ({ row }) => {
         const log = row.original
         const timestamp = row.getValue('created_at') as number
-        const config = getLogTypeConfig(log.type)
+        const other = parseLogOther(log.other)
+        const displayType =
+          getTaskBillingStage(log.type, other) === 'refund'
+            ? LOG_TYPE_ENUM.REFUND
+            : log.type
+        const config = getLogTypeConfig(displayType)
 
         return (
           <div className='flex min-w-0 flex-col gap-0.5'>
@@ -647,6 +670,8 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         if (!isDisplayableLogType(log.type)) return null
 
         const modelInfo = formatModelName(log)
+        const other = parseLogOther(log.other)
+        const taskId = other?.task_id
 
         return (
           <div className='flex w-fit flex-col gap-0.5'>
@@ -654,6 +679,15 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
               modelName={modelInfo.name}
               actualModel={modelInfo.actualModel}
             />
+            {taskId && (
+              <StatusBadge
+                label={taskId}
+                copyText={taskId}
+                size='sm'
+                showDot={false}
+                className='border-border/50 bg-muted/20 text-muted-foreground h-5 max-w-[170px] justify-start overflow-hidden rounded px-1.5 font-mono text-[11px]'
+              />
+            )}
           </div>
         )
       },
@@ -743,7 +777,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                     <Tooltip>
                       <TooltipTrigger
                         render={<CircleAlert className='size-3 text-red-500' />}
-                      ></TooltipTrigger>
+                      />
                       <TooltipContent>
                         <div className='space-y-0.5 text-xs'>
                           <p>
@@ -775,6 +809,16 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         if (!isDisplayableLogType(log.type)) return null
 
         const other = parseLogOther(log.other)
+        const taskBilling = getTaskBillingDisplay(log, other)
+        if (taskBilling) {
+          return taskBilling.tokens == null ? (
+            <span className='text-muted-foreground text-xs'>-</span>
+          ) : (
+            <span className='font-mono text-xs font-medium tabular-nums'>
+              {taskBilling.tokens.toLocaleString()}
+            </span>
+          )
+        }
 
         const promptTokens = log.prompt_tokens || 0
         const completionTokens = log.completion_tokens || 0
@@ -816,17 +860,92 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
     },
 
     {
+      id: 'pre_consumed_quota',
+      header: t('Pre-consumed Charge'),
+      accessorFn: (row) =>
+        getTaskBillingDisplay(row, parseLogOther(row.other))
+          ?.preConsumedQuota ?? null,
+      cell: ({ row }) => {
+        const billing = getTaskBillingDisplay(
+          row.original,
+          parseLogOther(row.original.other)
+        )
+        if (!billing) return <span className='text-muted-foreground/40'>-</span>
+        return (
+          <span className='font-mono text-xs font-medium tabular-nums'>
+            {formatLogQuota(billing.preConsumedQuota)}
+          </span>
+        )
+      },
+      size: 130,
+    },
+    {
+      id: 'task_adjustment',
+      header: t('Refund / Extra Charge'),
+      accessorFn: (row) =>
+        getTaskBillingDisplay(row, parseLogOther(row.other))?.adjustmentQuota ??
+        null,
+      cell: ({ row }) => {
+        const billing = getTaskBillingDisplay(
+          row.original,
+          parseLogOther(row.original.other)
+        )
+        if (!billing || billing.adjustmentQuota == null) {
+          return <span className='text-muted-foreground/40'>-</span>
+        }
+        if (billing.noRefund) {
+          return (
+            <span className='text-xs font-medium text-amber-600 dark:text-amber-400'>
+              {t('No refund')}
+            </span>
+          )
+        }
+        if (billing.adjustmentQuota === 0) {
+          return (
+            <span className='text-muted-foreground text-xs'>
+              {t('No Change')}
+            </span>
+          )
+        }
+        const isRefund = billing.adjustmentQuota < 0
+        return (
+          <div className='flex flex-col gap-0.5'>
+            <span
+              className={cn(
+                'font-mono text-xs font-semibold tabular-nums',
+                isRefund
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-amber-600 dark:text-amber-400'
+              )}
+            >
+              {isRefund ? '-' : '+'}
+              {formatLogQuota(Math.abs(billing.adjustmentQuota))}
+            </span>
+            <span className='text-muted-foreground/60 text-[11px]'>
+              {isRefund ? t('Refund') : t('Extra Charge')}
+            </span>
+          </div>
+        )
+      },
+      size: 140,
+    },
+    {
       accessorKey: 'quota',
-      header: t('Cost'),
+      header: t('Actual Charge'),
       cell: ({ row }) => {
         const log = row.original
         if (!isDisplayableLogType(log.type)) return null
 
-        const quota = row.getValue('quota') as number
         const other = parseLogOther(log.other)
+        const taskBilling = getTaskBillingDisplay(log, other)
+        if (taskBilling && taskBilling.actualQuota == null) {
+          return <span className='text-muted-foreground/40'>-</span>
+        }
+        const quota =
+          taskBilling?.actualQuota ?? (row.getValue('quota') as number)
         const isSubscription = other?.billing_source === 'subscription'
 
-        if (isSubscription) {
+        if (isSubscription && !taskBilling) {
           return (
             <TooltipProvider>
               <Tooltip>
@@ -878,6 +997,37 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         const segments = buildDetailSegments(log, other, t, isAdmin)
         const primary = segments[0]
         const hasMore = segments.length > 1
+        let primaryClassName = 'text-foreground'
+        if (primary?.muted) {
+          primaryClassName = 'text-muted-foreground/60'
+        } else if (primary?.danger) {
+          primaryClassName = 'text-red-600 dark:text-red-400'
+        }
+        let detailContent = <span className='text-muted-foreground/40'>—</span>
+        if (log.content) {
+          detailContent = (
+            <span className='text-muted-foreground truncate group-hover:underline'>
+              {log.content}
+            </span>
+          )
+        }
+        if (primary) {
+          detailContent = (
+            <span
+              className={cn(
+                'truncate leading-snug group-hover:underline',
+                primaryClassName
+              )}
+            >
+              {primary.text}
+              {hasMore && (
+                <span className='text-muted-foreground/40 ml-0.5'>
+                  +{segments.length - 1}
+                </span>
+              )}
+            </span>
+          )
+        }
 
         return (
           <>
@@ -887,31 +1037,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
               onClick={() => setDialogOpen(true)}
               title={t('Click to view full details')}
             >
-              {primary ? (
-                <span
-                  className={cn(
-                    'truncate leading-snug group-hover:underline',
-                    primary.muted
-                      ? 'text-muted-foreground/60'
-                      : primary.danger
-                        ? 'text-red-600 dark:text-red-400'
-                        : 'text-foreground'
-                  )}
-                >
-                  {primary.text}
-                  {hasMore && (
-                    <span className='text-muted-foreground/40 ml-0.5'>
-                      +{segments.length - 1}
-                    </span>
-                  )}
-                </span>
-              ) : log.content ? (
-                <span className='text-muted-foreground truncate group-hover:underline'>
-                  {log.content}
-                </span>
-              ) : (
-                <span className='text-muted-foreground/40'>—</span>
-              )}
+              {detailContent}
             </button>
             <DetailsDialog
               log={log}

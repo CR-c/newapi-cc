@@ -108,6 +108,14 @@ export function parseLogOther(other: string): LogOtherData | null {
 
 export type TaskBillingStage = 'pre_consume' | 'final' | 'settle' | 'refund'
 
+export interface TaskBillingDisplay {
+  tokens: number | null
+  preConsumedQuota: number
+  adjustmentQuota: number | null
+  actualQuota: number | null
+  noRefund: boolean
+}
+
 /**
  * Resolve the billing stage of an async task log (video tasks).
  * Newer logs carry an explicit `task_billing_stage`; older logs are inferred:
@@ -124,6 +132,50 @@ export function getTaskBillingStage(
   if (logType === 6) return hasSettlement ? 'settle' : 'refund'
   if (logType === 2) return hasSettlement ? 'settle' : 'pre_consume'
   return null
+}
+
+/**
+ * Build the four values shown directly in the usage-log table for one async
+ * task. Submit-time rows evolve in place, so settled rows use the summary
+ * metadata while an unfinished pre-consume row deliberately leaves its final
+ * values empty.
+ */
+export function getTaskBillingDisplay(
+  log: Pick<UsageLog, 'type' | 'quota' | 'prompt_tokens' | 'completion_tokens'>,
+  other: LogOtherData | null
+): TaskBillingDisplay | null {
+  const stage = getTaskBillingStage(log.type, other)
+  if (!stage || !other) return null
+
+  const preConsumedQuota = other.pre_consumed_quota ?? log.quota
+  let tokens: number | null = null
+  if (other.billed_usage != null && other.billed_usage > 0) {
+    tokens = other.billed_usage
+  } else if (log.completion_tokens > 0) {
+    tokens = log.completion_tokens
+  } else if (log.prompt_tokens > 0) {
+    tokens = log.prompt_tokens + log.completion_tokens
+  }
+
+  if (stage === 'pre_consume') {
+    return {
+      tokens,
+      preConsumedQuota,
+      adjustmentQuota: null,
+      actualQuota: null,
+      noRefund: false,
+    }
+  }
+
+  const actualQuota = other.actual_quota ?? (stage === 'refund' ? 0 : log.quota)
+
+  return {
+    tokens,
+    preConsumedQuota,
+    adjustmentQuota: actualQuota - preConsumedQuota,
+    actualQuota,
+    noRefund: other.no_refund === true,
+  }
 }
 
 /**
@@ -215,7 +267,7 @@ export function decodeBillingExprB64(exprB64: string | undefined): string {
 
     return decodeURIComponent(
       Array.prototype.map
-        .call(bytes, (byte: number) => '%' + byte.toString(16).padStart(2, '0'))
+        .call(bytes, (byte: number) => `%${byte.toString(16).padStart(2, '0')}`)
         .join('')
     )
   } catch {

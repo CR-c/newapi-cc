@@ -52,6 +52,10 @@ func (a *taskPollingWrappedResultAdaptor) AdjustBillingOnComplete(*model.Task, *
 	return 0
 }
 
+func (a *taskPollingWrappedResultAdaptor) KeepChargeOnFailure(*model.Task, *relaycommon.TaskInfo) bool {
+	return false
+}
+
 func (a *taskPollingFetchAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -103,6 +107,10 @@ func (a *taskPollingFetchAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo
 
 func (a *taskPollingFetchAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) int {
 	return 0
+}
+
+func (a *taskPollingFetchAdaptor) KeepChargeOnFailure(_ *model.Task, _ *relaycommon.TaskInfo) bool {
+	return false
 }
 
 func (a *taskPollingFetchAdaptor) fetchCount() int {

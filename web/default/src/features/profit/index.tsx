@@ -188,6 +188,11 @@ export function Profit() {
                 </TabsTrigger>
               </TabsList>
               <TabsContent value='overview' className='space-y-4'>
+                {overviewQuery.isError ? (
+                  <div className='border-border text-rose-600 border px-3 py-2 text-sm dark:text-rose-400'>
+                    {t('Failed to load profit overview')}
+                  </div>
+                ) : null}
                 <ProfitSummary summary={overviewQuery.data?.summary} />
                 <ProfitBreakdown overview={overviewQuery.data} />
               </TabsContent>

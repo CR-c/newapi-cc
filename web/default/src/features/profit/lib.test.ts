@@ -19,7 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { formatProfitMoney, normalizeProfitAggregate } from './lib'
+import {
+  explainProfitLoss,
+  formatProfitMoney,
+  normalizeProfitAggregate,
+} from './lib'
 
 test('formatProfitMoney displays positive and negative amounts as CNY', () => {
   assert.match(formatProfitMoney(1_000_000), /^¥\s*1/)
@@ -71,4 +75,110 @@ test('normalizeProfitAggregate falls back to legacy revenue fields', () => {
   assert.equal(normalized.promoConsumptionMicros, 0)
   assert.equal(normalized.adminConsumptionMicros, 0)
   assert.equal(normalized.legacyUnknownConsumptionMicros, 0)
+})
+
+test('explainProfitLoss flags pure gift losses', () => {
+  const explanation = explainProfitLoss({
+    revenue_micros: 0,
+    known_revenue_micros: 0,
+    cost_micros: 3_000_000,
+    profit_micros: -3_000_000,
+    record_count: 1,
+    unpriced_record_count: 0,
+    profit_margin: null,
+    cost_coverage: 1,
+    recognized_revenue_micros: 0,
+    promo_consumption_micros: 5_000_000,
+    promo_cost_micros: 3_000_000,
+    admin_consumption_micros: 0,
+    admin_cost_micros: 0,
+  })
+  assert.equal(explanation.isLoss, true)
+  assert.equal(explanation.primary, 'gift')
+})
+
+test('explainProfitLoss flags pure admin losses', () => {
+  const explanation = explainProfitLoss({
+    revenue_micros: 0,
+    known_revenue_micros: 0,
+    cost_micros: 900_000,
+    profit_micros: -900_000,
+    record_count: 15,
+    unpriced_record_count: 0,
+    profit_margin: null,
+    cost_coverage: 1,
+    recognized_revenue_micros: 0,
+    promo_consumption_micros: 0,
+    promo_cost_micros: 0,
+    admin_consumption_micros: 1_500_000,
+    admin_cost_micros: 900_000,
+  })
+  assert.equal(explanation.isLoss, true)
+  assert.equal(explanation.primary, 'admin')
+})
+
+test('explainProfitLoss flags paid underpricing', () => {
+  const explanation = explainProfitLoss({
+    revenue_micros: 2_000_000,
+    known_revenue_micros: 2_000_000,
+    cost_micros: 6_000_000,
+    profit_micros: -4_000_000,
+    record_count: 100,
+    unpriced_record_count: 0,
+    profit_margin: -2,
+    cost_coverage: 1,
+    recognized_revenue_micros: 2_000_000,
+    promo_consumption_micros: 0,
+    promo_cost_micros: 0,
+    admin_consumption_micros: 0,
+    admin_cost_micros: 0,
+  })
+  assert.equal(explanation.isLoss, true)
+  assert.equal(explanation.primary, 'pricing')
+  assert.equal(explanation.paidCoversOwnCost, false)
+})
+
+test('explainProfitLoss flags gift drag when paid would still cover cost', () => {
+  const explanation = explainProfitLoss({
+    revenue_micros: 5_000_000,
+    known_revenue_micros: 5_000_000,
+    // total cost 6: paid-like 4 + gift cost 2 → paid covers own 4, gift drags to -1
+    cost_micros: 6_000_000,
+    profit_micros: -1_000_000,
+    record_count: 10,
+    unpriced_record_count: 0,
+    profit_margin: -0.2,
+    cost_coverage: 1,
+    recognized_revenue_micros: 5_000_000,
+    promo_consumption_micros: 2_000_000,
+    promo_cost_micros: 2_000_000,
+    admin_consumption_micros: 0,
+    admin_cost_micros: 0,
+  })
+  assert.equal(explanation.isLoss, true)
+  assert.equal(explanation.primary, 'gift')
+  assert.equal(explanation.paidCoversOwnCost, true)
+  assert.ok(explanation.codes.includes('non_paid_drag'))
+})
+
+test('explainProfitLoss flags mixed paid underpricing with gift', () => {
+  const explanation = explainProfitLoss({
+    revenue_micros: 3_000_000,
+    known_revenue_micros: 3_000_000,
+    // paid-like cost 5 > paid 3, plus gift cost 1
+    cost_micros: 6_000_000,
+    profit_micros: -3_000_000,
+    record_count: 10,
+    unpriced_record_count: 0,
+    profit_margin: -1,
+    cost_coverage: 1,
+    recognized_revenue_micros: 3_000_000,
+    promo_consumption_micros: 1_000_000,
+    promo_cost_micros: 1_000_000,
+    admin_consumption_micros: 0,
+    admin_cost_micros: 0,
+  })
+  assert.equal(explanation.isLoss, true)
+  assert.equal(explanation.primary, 'mixed')
+  assert.equal(explanation.paidCoversOwnCost, false)
 })

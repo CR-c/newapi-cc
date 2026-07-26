@@ -674,6 +674,36 @@ func TestParseTaskResultMapsCompletedUsage(t *testing.T) {
 	assert.Equal(t, 40594, result.TotalTokens)
 }
 
+func TestParseTaskResultPreservesBilledUsageOnFailure(t *testing.T) {
+	result, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{
+		"task": {
+			"id": "mvt-failed",
+			"status": "failed",
+			"error": "OutputVideoSensitiveContentDetected: blocked",
+			"usage": {"completion_tokens": 40594, "total_tokens": 40594}
+		}
+	}`))
+
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusFailure, result.Status)
+	assert.Equal(t, 40594, result.TotalTokens)
+	assert.Contains(t, result.Reason, "SensitiveContentDetected")
+}
+
+func TestKeepChargeOnFailureMatchesOnlyBilledModerationFailures(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+
+	assert.True(t, adaptor.KeepChargeOnFailure(nil, &relaycommon.TaskInfo{
+		Reason: "OutputVideoSensitiveContentDetected: blocked",
+	}))
+	assert.True(t, adaptor.KeepChargeOnFailure(&model.Task{
+		FailReason: "OutputAudioSensitiveContentDetected: blocked",
+	}, nil))
+	assert.False(t, adaptor.KeepChargeOnFailure(nil, &relaycommon.TaskInfo{
+		Reason: "upstream internal error",
+	}))
+}
+
 func TestValidateRequestEnforcesServiceInferenceDuration(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	tests := []struct {

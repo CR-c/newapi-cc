@@ -17,7 +17,8 @@ import (
 
 // LogTaskConsumption 记录任务消费日志和统计信息（仅记录，不涉及实际扣费）。
 // 实际扣费已由 BillingSession（PreConsumeBilling + SettleBilling）完成。
-func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
+// 返回消费日志行 id（未持久化时为 0），供任务结算阶段原地补写汇总信息。
+func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) int {
 	tokenName := c.GetString("token_name")
 	logContent := fmt.Sprintf("操作 %s", info.Action)
 	// 支持任务仅按次计费
@@ -70,7 +71,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	}
 	appendBillingInfo(info, other)
 	attachQuotaSaturation(c, info, other)
-	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
+	logId := model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
 		ModelName: info.OriginModelName,
 		TokenName: tokenName,
@@ -82,6 +83,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
+	return logId
 }
 
 // ---------------------------------------------------------------------------
@@ -281,6 +283,99 @@ func taskModelName(task *model.Task) string {
 	return task.Properties.OriginModelName
 }
 
+// ---------------------------------------------------------------------------
+// 任务汇总日志行（单行演进）
+//
+// 提交时的消费日志行是任务在日志列表中的唯一展示行。结算/退款阶段通过
+// finalizeTaskSummaryLog 把最终金额、上游用量、阶段标记补写进该行的 other
+// JSON；差额调整行仍照常写入（供看板、利润分析、对账使用），但带上
+// "task_adjust":true 标记后从日志列表中隐藏（见 model.hideTaskAdjustLogs）。
+// ---------------------------------------------------------------------------
+
+// taskSummaryPatch 构建任务汇总日志行的终态 other 补丁。
+// stage 取值沿用日志前端已识别的枚举："settle"（已结算）或 "refund"（全额退款）。
+func taskSummaryPatch(preConsumed, actualQuota, billedUsage int, reason string) map[string]interface{} {
+	patch := map[string]interface{}{
+		"task_summary":       true,
+		"task_billing_stage": "settle",
+		"pre_consumed_quota": preConsumed,
+		"actual_quota":       actualQuota,
+	}
+	if billedUsage > 0 {
+		patch["billed_usage"] = billedUsage
+	}
+	if reason != "" {
+		patch["reason"] = reason
+	}
+	return patch
+}
+
+// finalizeTaskSummaryLog 将补丁和最终用量写到任务提交时的消费日志行上。
+// 旧任务（无 ConsumeLogId）、日志未持久化或 ClickHouse 日志库时返回 false，
+// 调用方应保持旧的多行展示（不给差额行打隐藏标记）。
+func finalizeTaskSummaryLog(task *model.Task, patch map[string]interface{}, completionTokens int) bool {
+	if task == nil || task.PrivateData.ConsumeLogId <= 0 {
+		return false
+	}
+	return model.UpdateTaskLogSummary(task.PrivateData.ConsumeLogId, patch, completionTokens)
+}
+
+// KeepTaskChargeOnFailure 处理"上游已计费"的失败任务：有上游用量时先按
+// 实际 token 结算；无法按 token 重算时保留预扣额度。两种情况都不执行失败
+// 全额退款，并在汇总行记录原因。
+func KeepTaskChargeOnFailure(ctx context.Context, task *model.Task, billedUsage int, reason string) {
+	if task == nil || task.Quota == 0 {
+		return
+	}
+	preConsumedQuota := task.Quota
+	settledByUsage := billedUsage > 0 && RecalculateTaskQuotaByTokens(ctx, task, billedUsage)
+	logger.LogInfo(ctx, fmt.Sprintf("任务 %s 失败但上游已计费，不退款（%s，%s）",
+		task.TaskID, logger.LogQuota(task.Quota), reason))
+	patch := map[string]interface{}{
+		"no_refund": true,
+		"reason":    reason,
+	}
+	if billedUsage > 0 {
+		patch["billed_usage"] = billedUsage
+	}
+	if !settledByUsage {
+		for key, value := range taskSummaryPatch(preConsumedQuota, task.Quota, billedUsage, reason) {
+			patch[key] = value
+		}
+	}
+	if finalizeTaskSummaryLog(task, patch, billedUsage) {
+		return
+	}
+	// 旧任务没有汇总行可写，补一条零额消费日志留痕（Quota=0 不影响看板）。
+	other := taskBillingOther(task)
+	other["task_billing_stage"] = "settle"
+	other["pre_consumed_quota"] = preConsumedQuota
+	other["actual_quota"] = task.Quota
+	other["no_refund"] = true
+	other["reason"] = reason
+	if billedUsage > 0 {
+		other["billed_usage"] = billedUsage
+	}
+	auditTokens := max(billedUsage, 0)
+	if settledByUsage {
+		// token 重算的调整日志已经承载用量，旧任务的额外审计行只做不退款留痕。
+		auditTokens = 0
+	}
+	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
+		UserId:           task.UserId,
+		LogType:          model.LogTypeConsume,
+		Content:          "失败不退款（上游已计费）",
+		ChannelId:        task.ChannelId,
+		ModelName:        taskModelName(task),
+		Quota:            0,
+		CompletionTokens: auditTokens,
+		TokenId:          task.PrivateData.TokenId,
+		Group:            task.Group,
+		Other:            other,
+		NodeName:         task.PrivateData.NodeName,
+	})
+}
+
 // RefundTaskQuota 统一的任务失败退款逻辑。
 // 当异步任务失败时，将预扣的 quota 退还给用户（支持钱包和订阅），并退还令牌额度。
 func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
@@ -301,12 +396,20 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 	model.UpdateUserUsedQuota(task.UserId, -quota)
 	model.UpdateChannelUsedQuota(task.ChannelId, -quota)
 
-	// 3. 记录日志
+	// 3. 汇总行终结为全额退款状态；成功后退款明细行从列表隐藏（仍写入供统计）
+	summaryPatch := taskSummaryPatch(quota, 0, 0, reason)
+	summaryPatch["task_billing_stage"] = "refund"
+	summaryFinalized := finalizeTaskSummaryLog(task, summaryPatch, 0)
+
+	// 4. 记录退款日志
 	other := taskBillingOther(task, allocation)
 	other["reason"] = reason
 	other["task_billing_stage"] = "refund"
 	other["pre_consumed_quota"] = quota
 	other["actual_quota"] = 0
+	if summaryFinalized {
+		other["task_adjust"] = true
+	}
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 		UserId:    task.UserId,
 		LogType:   model.LogTypeRefund,
@@ -325,9 +428,9 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 // completionTokens 是上游返回的计费用量（token 或扣量单位），> 0 时随结算日志持久化。
 // reason 用于日志记录（例如 "token重算" 或 "adaptor调整"）。
 // clamps 可选：若计算 actualQuota 时发生额度饱和，将其记入日志 admin_info（仅管理员可见）。
-func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int, completionTokens int, reason string, clamps ...*common.QuotaClamp) {
+func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int, completionTokens int, reason string, clamps ...*common.QuotaClamp) bool {
 	if actualQuota <= 0 {
-		return
+		return false
 	}
 	preConsumedQuota := task.Quota
 	quotaDelta := actualQuota - preConsumedQuota
@@ -335,10 +438,14 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	if quotaDelta == 0 {
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 预扣费准确（%s，%s）",
 			task.TaskID, logger.LogQuota(actualQuota), reason))
-		if completionTokens <= 0 {
-			return
+		// 预扣费准确：把最终金额与上游用量补写到汇总日志行
+		if finalizeTaskSummaryLog(task, taskSummaryPatch(preConsumedQuota, actualQuota, completionTokens, reason), completionTokens) {
+			return true
 		}
-		// 预扣费准确时也写一条零额结算日志，让上游用量对用户可见
+		if completionTokens <= 0 {
+			return true
+		}
+		// 旧任务无汇总行时，写一条零额结算日志让上游用量对用户可见
 		other := taskBillingOther(task, model.WalletAllocation{})
 		other["task_billing_stage"] = "settle"
 		other["pre_consumed_quota"] = preConsumedQuota
@@ -356,7 +463,7 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 			Other:            other,
 			NodeName:         task.PrivateData.NodeName,
 		})
-		return
+		return true
 	}
 
 	logger.LogInfo(ctx, fmt.Sprintf("任务 %s 差额结算：delta=%s（实际：%s，预扣：%s，%s）",
@@ -371,7 +478,7 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	allocation, err := taskAdjustFunding(task, quotaDelta)
 	if err != nil {
 		logger.LogError(ctx, fmt.Sprintf("差额结算资金调整失败 task %s: %s", task.TaskID, err.Error()))
-		return
+		return false
 	}
 
 	// 调整令牌额度
@@ -393,12 +500,23 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	}
 	model.UpdateUserUsedQuota(task.UserId, quotaDelta)
 	model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
+	// 汇总行终结为已结算状态；成功后差额明细行从列表隐藏（仍写入供统计）
+	summaryFinalized := finalizeTaskSummaryLog(task,
+		taskSummaryPatch(preConsumedQuota, actualQuota, completionTokens, reason), completionTokens)
+
 	other := taskBillingOther(task, allocation)
 	other["task_billing_stage"] = "settle"
 	other["pre_consumed_quota"] = preConsumedQuota
 	other["actual_quota"] = actualQuota
+	if summaryFinalized {
+		other["task_adjust"] = true
+	}
 	for _, clamp := range clamps {
 		attachQuotaSaturationToOther(other, clamp)
+	}
+	adjustmentTokens := max(completionTokens, 0)
+	if summaryFinalized {
+		adjustmentTokens = 0
 	}
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 		UserId:           task.UserId,
@@ -407,20 +525,21 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		ChannelId:        task.ChannelId,
 		ModelName:        taskModelName(task),
 		Quota:            logQuota,
-		CompletionTokens: max(completionTokens, 0),
+		CompletionTokens: adjustmentTokens,
 		TokenId:          task.PrivateData.TokenId,
 		Group:            task.Group,
 		Other:            other,
 		NodeName:         task.PrivateData.NodeName,
 	})
+	return true
 }
 
 // RecalculateTaskQuotaByTokens 根据实际 token 消耗重新计费（异步差额结算）。
-// 当任务成功且返回了 totalTokens 时，根据模型倍率和分组倍率重新计算实际扣费额度，
+// 当任务到达终态且返回了 totalTokens 时，根据模型倍率和分组倍率重新计算实际扣费额度，
 // 与预扣费的差额进行补扣或退还。支持钱包和订阅计费来源。
-func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTokens int) {
+func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTokens int) bool {
 	if totalTokens <= 0 {
-		return
+		return false
 	}
 
 	modelName := taskModelName(task)
@@ -429,7 +548,7 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 	modelRatio, hasRatioSetting, _ := ratio_setting.GetModelRatio(modelName)
 	// 只有配置了倍率(非固定价格)时才按 token 重新计费
 	if !hasRatioSetting || modelRatio <= 0 {
-		return
+		return false
 	}
 
 	// 获取用户和组的倍率信息
@@ -441,7 +560,7 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 		}
 	}
 	if group == "" {
-		return
+		return false
 	}
 
 	groupRatio := ratio_setting.GetGroupRatio(group)
@@ -464,5 +583,5 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 	actualQuota, clamp := common.QuotaFromFloatChecked(float64(totalTokens) * modelRatio * finalGroupRatio * otherMultiplier)
 
 	reason := fmt.Sprintf("token重算：tokens=%d, modelRatio=%.2f, groupRatio=%.2f, otherMultiplier=%.4f", totalTokens, modelRatio, finalGroupRatio, otherMultiplier)
-	RecalculateTaskQuota(ctx, task, actualQuota, totalTokens, reason, clamp)
+	return RecalculateTaskQuota(ctx, task, actualQuota, totalTokens, reason, clamp)
 }

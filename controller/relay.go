@@ -679,10 +679,12 @@ func RelayTask(c *gin.Context) {
 				PromoQuota:  relayInfo.WalletPromoQuota,
 				LegacyQuota: relayInfo.WalletLegacyQuota,
 			}
+			// 先写消费日志拿到日志行 id，随任务一并持久化；
+			// 轮询结算/退款阶段据此把最终账单补写到同一行（单行演进展示）。
+			task.PrivateData.ConsumeLogId = service.LogTaskConsumption(c, relayInfo)
 			if updateErr := task.Update(); updateErr != nil {
 				common.SysError("update task billing attribution error: " + updateErr.Error())
 			}
-			service.LogTaskConsumption(c, relayInfo)
 		}
 	}
 

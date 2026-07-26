@@ -332,12 +332,34 @@ print(resp.data[0].url)</code></pre>
               </tr>
               <tr>
                 <td><code>64生图</code></td>
-                <td>Gemini 图像、<code>gpt-image-2</code> 等</td>
+                <td>Gemini 图像、<code>gpt-image-2</code>（支持 4K）等</td>
+                <td>HTTPS / Base64</td>
+              </tr>
+              <tr>
+                <td><code>ic生图</code></td>
+                <td>
+                  <code>gpt-image-2-ic</code>（1k，超分 4k，¥0.03/次）
+                </td>
                 <td>HTTPS / Base64</td>
               </tr>
             </tbody>
           </table>
         </div>
+        <div class="note">
+          <strong>ic生图</strong> 对外模型名为
+          <code>gpt-image-2-ic</code>，与 <code>64生图</code> 的
+          <code>gpt-image-2</code> 区分；token 绑定
+          <code>ic生图</code> 后调用：
+        </div>
+        <pre><code>curl "$NEWAPI_BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $NEWAPI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-image-2-ic",
+    "prompt": "画一张极简风格的绿色机器人头像",
+    "size": "1024x1024",
+    "response_format": "url"
+  }'</code></pre>
       </section>
 
       <section id="videos">

@@ -64,6 +64,12 @@ type TaskAdaptor interface {
 	// Return 0 to keep the pre-charged amount unchanged.
 	AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int
 
+	// KeepChargeOnFailure reports whether the upstream billed a FAILED task,
+	// in which case the polling loop keeps the pre-consumed quota as the final
+	// charge instead of refunding it (e.g. generation completed but output
+	// moderation blocked the result). Return false to refund as usual.
+	KeepChargeOnFailure(task *model.Task, taskResult *relaycommon.TaskInfo) bool
+
 	// ── Request / Response ───────────────────────────────────────────
 
 	BuildRequestURL(info *relaycommon.RelayInfo) (string, error)

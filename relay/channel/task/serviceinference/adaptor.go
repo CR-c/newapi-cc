@@ -198,6 +198,20 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 	return nil
 }
 
+// KeepChargeOnFailure: 上游对"生成完成但输出触发内容审核"的失败任务照常按 token 计费
+// （实测 request-logs 中 SensitiveContentDetected 失败均有扣费记录），因此这类
+// 失败不退款，保留预扣额度作为最终扣费，与上游保持一致。
+func (a *TaskAdaptor) KeepChargeOnFailure(task *model.Task, taskResult *relaycommon.TaskInfo) bool {
+	reason := ""
+	if taskResult != nil {
+		reason = taskResult.Reason
+	}
+	if reason == "" && task != nil {
+		reason = task.FailReason
+	}
+	return strings.Contains(reason, "SensitiveContentDetected")
+}
+
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {

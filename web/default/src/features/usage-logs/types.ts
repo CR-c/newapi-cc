@@ -216,6 +216,10 @@ export interface LogOtherData {
   task_billing_stage?: 'pre_consume' | 'final' | 'settle' | 'refund'
   pre_consumed_quota?: number
   actual_quota?: number
+  billed_usage?: number
+  task_summary?: boolean
+  task_adjust?: boolean
+  no_refund?: boolean
   // Subscription billing fields
   subscription_plan_id?: string
   subscription_plan_title?: string

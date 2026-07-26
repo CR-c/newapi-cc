@@ -64,7 +64,7 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
           <code>GET /v1/models</code> 响应。
         </div>
         <p>
-          当前控制台公开分组为：<code>64生图</code>、<code>生图</code>、<code>dddd-sd-图</code>、<code>grok按次</code>、<code>grok按次-x</code>、<code>video-dddd</code>、<code>sd-token</code>和<code>sd-video</code>。模型与价格可能由管理员调整，以控制台定价页和当前
+          当前控制台公开分组为：<code>64生图</code>、<code>ic生图</code>、<code>生图</code>、<code>dddd-sd-图</code>、<code>grok按次</code>、<code>grok按次-x</code>、<code>video-dddd</code>、<code>sd-token</code>和<code>sd-video</code>。模型与价格可能由管理员调整，以控制台定价页和当前
           API Key 的实际返回为准。
         </p>
       </section>
@@ -164,7 +164,10 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
               <tr>
                 <td><code>gpt-image-2</code></td>
                 <td>$0.10/次</td>
-                <td>1K/2K/4K、自动、精确尺寸；标准 10 比例</td>
+                <td>
+                  <strong>支持 4K</strong>（亦支持 1K/2K、自动、精确尺寸）；标准
+                  10 比例
+                </td>
                 <td>
                   <code>quality</code
                   >、<code>background</code>、<code>n</code>、参考图、<code
@@ -247,6 +250,72 @@ read -rsp "API Key: " API_KEY &amp;&amp; echo</code></pre>
     "background": "opaque",
     "response_format": "url"
   }'</code></pre>
+
+        <h3>ic生图分组</h3>
+        <div class="note">
+          <strong>模型名区分：</strong>本分组对外模型名为
+          <code>gpt-image-2-ic</code>，与 <code>64生图</code> /
+          <code>生图</code> 的 <code>gpt-image-2</code>
+          区分，避免定价页与模型介绍冲突。上游实际模型仍为
+          <code>gpt-image-2</code>（渠道侧自动映射）。token 必须绑定
+          <code>ic生图</code>，请求体不要传 <code>group</code>。
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>模型</th>
+                <th>价格</th>
+                <th>能力概要</th>
+                <th>支持参数</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>gpt-image-2-ic</code></td>
+                <td>¥0.03/次</td>
+                <td><strong>1k，超分 4k</strong>；文生图 / 参考图</td>
+                <td>
+                  <code>size</code>、<code>n</code>、<code>image</code> /
+                  <code>images</code> /
+                  <code>image_url</code>、<code>response_format</code>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          参考图支持公网 HTTPS URL、Base64 或 data URL。<code>n</code>
+          为兼容字段，接口每次返回 1 张。
+        </p>
+        <h3>ic生图请求示例</h3>
+        <pre><code>curl "$BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-image-2-ic",
+    "prompt": "画一张极简风格的绿色机器人头像",
+    "size": "1024x1024",
+    "response_format": "url"
+  }'</code></pre>
+        <pre><code>curl "$BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-image-2-ic",
+    "prompt": "把参考图改成黄色贴纸风格",
+    "response_format": "b64_json",
+    "image": [
+      "https://example.com/a.png",
+      "https://example.com/b.png"
+    ]
+  }'</code></pre>
+        <pre><code>curl "$BASE_URL/v1/images/edits" \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "model=gpt-image-2-ic" \
+  -F "prompt=把这张图改成红色海报风格" \
+  -F "response_format=b64_json" \
+  -F "image=@./input.png"</code></pre>
 
         <h3>生图分组</h3>
         <div class="table-wrap">

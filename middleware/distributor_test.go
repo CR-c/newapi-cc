@@ -342,13 +342,16 @@ func TestResolveVideoAssetReferencesSupportsSDAndCornGroups(t *testing.T) {
 		Id: 59, Type: constant.ChannelTypeServiceInference, Status: common.ChannelStatusEnabled, Key: "upstream-key",
 	}).Error)
 
-	for _, group := range []string{constant.VideoAssetGroupSD, constant.VideoAssetGroupCorn} {
+	for _, group := range []string{constant.VideoAssetGroupSD, constant.VideoAssetGroupCorn, constant.VideoAssetGroupCornVP00001} {
 		require.NoError(t, db.Create(&model.Ability{
 			Group: group, Model: "dreamina-seedance-2-0-mini-hc", ChannelId: 59, Enabled: true,
 		}).Error)
 		assetID := "asset-sd-dddd"
-		if group == constant.VideoAssetGroupCorn {
+		switch group {
+		case constant.VideoAssetGroupCorn:
 			assetID = "asset-corn"
+		case constant.VideoAssetGroupCornVP00001:
+			assetID = "asset-corn-vp00001"
 		}
 		require.NoError(t, db.Create(&model.VideoAsset{
 			ID: assetID, UserID: 7, Group: group, ChannelID: 59, UpstreamID: assetID + "-upstream", AssetType: "Image",

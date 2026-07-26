@@ -95,3 +95,8 @@ func (BaseBilling) AdjustBillingOnSubmit(_ *relaycommon.RelayInfo, _ []byte) map
 func (BaseBilling) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) int {
 	return 0
 }
+
+// KeepChargeOnFailure returns false (failed tasks are refunded in full).
+func (BaseBilling) KeepChargeOnFailure(_ *model.Task, _ *relaycommon.TaskInfo) bool {
+	return false
+}

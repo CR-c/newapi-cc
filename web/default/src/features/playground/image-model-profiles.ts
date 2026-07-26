@@ -200,8 +200,20 @@ function isNanoBananaStandard(model: string): boolean {
   )
 }
 
+function isGptImage2Ic(model: string, group?: string): boolean {
+  const m = normalizeModel(model)
+  if (m === 'gpt-image-2-ic') {
+    return true
+  }
+  // ic生图 分组仅此生图产品线；按分组兜底，避免别名漏匹配
+  return group === 'ic生图'
+}
+
 function isGptImage2(model: string): boolean {
   const m = normalizeModel(model)
+  if (m === 'gpt-image-2-ic') {
+    return false
+  }
   return m === 'gpt-image-2' || m.startsWith('gpt-image-2-')
 }
 
@@ -261,6 +273,27 @@ function createGptImage2Profile(): ImageModelProfile {
     maxImages: 4,
     maxReferences: 14,
     supportsAutoSize: true,
+    supportsExactSize: true,
+  }
+}
+
+/** ic生图 · gpt-image-2-ic：1k 出图，支持超分 4k；按次 1 张 */
+function createGptImage2IcProfile(): ImageModelProfile {
+  return {
+    provider: 'gpt-image',
+    aspectRatios: [...STANDARD_ASPECT_RATIOS],
+    resolutions: ['1K', '4K'],
+    presetSizes: {
+      '1K': GPT_IMAGE_SIZES['1K'],
+      '4K': GPT_IMAGE_SIZES['4K'],
+    },
+    // 上游 quality/background 兼容字段暂不影响结果，演练场不展示
+    qualities: [],
+    backgrounds: [],
+    responseFormats: ['url', 'b64_json'],
+    maxImages: 1,
+    maxReferences: 14,
+    supportsAutoSize: false,
     supportsExactSize: true,
   }
 }
@@ -348,6 +381,9 @@ export function getImageModelProfile(
   }
   if (isNanoBananaStandard(model)) {
     return createNanoProfile(false)
+  }
+  if (isGptImage2Ic(model, group)) {
+    return createGptImage2IcProfile()
   }
   if (isGptImage2(model)) {
     return createGptImage2Profile()

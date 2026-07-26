@@ -391,7 +391,9 @@ type RecordConsumeLogParams struct {
 	Other            map[string]interface{} `json:"other"`
 }
 
-func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
+// RecordConsumeLog 写入消费日志并返回日志行 id。
+// 未持久化时（LogConsumeEnabled 关闭、写入失败或 ClickHouse 日志库无自增 id）返回 0。
+func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) int {
 	logger.LogInfo(c, fmt.Sprintf("record consume log: userId=%d, params=%s", userId, common.GetJsonString(params)))
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
@@ -450,6 +452,51 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 			NodeName:  common.NodeName,
 		})
 	}
+	if err != nil {
+		return 0
+	}
+	return log.Id
+}
+
+// UpdateTaskLogSummary 将补丁合并进指定日志行的 other JSON，并把最终用量
+// 写入 completion_tokens。
+// 用于异步任务的"单行演进"汇总展示：结算/退款阶段把最终金额、用量、阶段标记
+// 补写到提交时的消费日志行上。quota 等资金统计列保持不变；最终用量迁移到
+// completion_tokens，保证 TPM 汇总不因隐藏差额行而丢失。
+// 返回是否成功更新（行不存在、日志库为 ClickHouse 等情况返回 false）。
+func UpdateTaskLogSummary(logId int, patch map[string]interface{}, completionTokens int) bool {
+	if logId <= 0 || len(patch) == 0 {
+		return false
+	}
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		// ClickHouse 日志行没有可用主键（id 恒为 0），且 UPDATE 是异步重量级
+		// mutation；保持旧的多行展示，不做原地更新。
+		return false
+	}
+	var log Log
+	if err := LOG_DB.Select("id", "other").Where("id = ?", logId).First(&log).Error; err != nil {
+		common.SysError(fmt.Sprintf("task summary log %d not found: %s", logId, err.Error()))
+		return false
+	}
+	other := make(map[string]interface{})
+	if log.Other != "" {
+		if err := common.UnmarshalJsonStr(log.Other, &other); err != nil {
+			common.SysError(fmt.Sprintf("task summary log %d has invalid other json: %s", logId, err.Error()))
+			return false
+		}
+	}
+	for k, v := range patch {
+		other[k] = v
+	}
+	updates := map[string]interface{}{"other": common.MapToJsonStr(other)}
+	if completionTokens > 0 {
+		updates["completion_tokens"] = completionTokens
+	}
+	if err := LOG_DB.Model(&Log{}).Where("id = ?", logId).Updates(updates).Error; err != nil {
+		common.SysError(fmt.Sprintf("failed to update task summary log %d: %s", logId, err.Error()))
+		return false
+	}
+	return true
 }
 
 type RecordTaskBillingLogParams struct {
@@ -563,6 +610,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 		tx = tx.Where("logs."+logGroupCol+" = ?", group)
 	}
 	tx = ApplyMediaTypeLogFilter(tx, mediaType)
+	tx = hideTaskAdjustLogs(tx)
 	err = tx.Model(&Log{}).Count(&total).Error
 	if err != nil {
 		return nil, 0, err
@@ -622,6 +670,15 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	return logs, total, err
 }
 
+// hideTaskAdjustLogs 从日志列表中排除异步任务的差额调整行（结算补扣/退款行）。
+// 这些行仍会写入（供看板、利润分析、对账使用），但任务的完整账单已合并到
+// 提交时的汇总日志行上（见 UpdateTaskLogSummary），列表里按"一个任务
+// 一行"展示。带标记的行通过 other 中的 "task_adjust":true 识别；旧数据没有
+// 该标记，保持原有多行展示。
+func hideTaskAdjustLogs(tx *gorm.DB) *gorm.DB {
+	return tx.Where("(logs.other IS NULL OR logs.other NOT LIKE ?)", `%"task_adjust":true%`)
+}
+
 const logSearchCountLimit = 10000
 
 func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string, mediaType MediaType) (logs []*Log, total int64, err error) {
@@ -654,6 +711,7 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 		tx = tx.Where("logs."+logGroupCol+" = ?", group)
 	}
 	tx = ApplyMediaTypeLogFilter(tx, mediaType)
+	tx = hideTaskAdjustLogs(tx)
 	err = tx.Model(&Log{}).Limit(logSearchCountLimit).Count(&total).Error
 	if err != nil {
 		common.SysError("failed to count user logs: " + err.Error())

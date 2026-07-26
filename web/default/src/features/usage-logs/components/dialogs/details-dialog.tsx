@@ -49,6 +49,7 @@ import {
   getParamOverrideActionLabel,
   parseAuditLine,
   decodeBillingExprB64,
+  getTaskBillingDisplay,
   getTaskBillingStage,
   getTieredBillingSummary,
   hasAnyCacheTokens,
@@ -165,6 +166,7 @@ function BillingBreakdown(props: {
   const isClaude = other.claude === true
   const isTieredExpr = other.billing_mode === 'tiered_expr'
   const tieredSummary = getTieredBillingSummary(other)
+  const taskBilling = getTaskBillingDisplay(log, other)
 
   const rows: Array<{ label: string; value: string }> = []
   const priceOpts = { digitsLarge: 4, digitsSmall: 6, abbreviate: false }
@@ -330,7 +332,7 @@ function BillingBreakdown(props: {
 
   rows.push({
     label: t('Total Cost'),
-    value: formatLogQuota(log.quota),
+    value: formatLogQuota(taskBilling?.actualQuota ?? log.quota),
   })
 
   if (rows.length === 0) return null
@@ -416,7 +418,8 @@ function TaskBillingBreakdown(props: { log: UsageLog; other: LogOtherData }) {
   const { t } = useTranslation()
   const { log, other } = props
   const stage = getTaskBillingStage(log.type, other)
-  if (!stage) return null
+  const billing = getTaskBillingDisplay(log, other)
+  if (!stage || !billing) return null
 
   const stageConfig: Record<
     TaskBillingStage,
@@ -431,19 +434,17 @@ function TaskBillingBreakdown(props: { log: UsageLog; other: LogOtherData }) {
     refund: { label: t('Refund'), variant: 'blue' },
   }
 
-  const preConsumed =
-    stage === 'pre_consume' || stage === 'final'
-      ? log.quota
-      : other.pre_consumed_quota
-  let actualCharge: number | undefined
-  if (stage === 'final') {
-    actualCharge = log.quota
-  } else if (stage === 'settle') {
-    actualCharge = other.actual_quota
-  } else if (stage === 'refund') {
-    actualCharge = 0
+  const adjustment = billing.adjustmentQuota
+  let adjustmentValue = ''
+  if (billing.noRefund) {
+    adjustmentValue = t('No refund')
+  } else if (adjustment === 0) {
+    adjustmentValue = t('No Change')
+  } else if (adjustment != null && adjustment > 0) {
+    adjustmentValue = `+${formatLogQuota(adjustment)} (${t('Additional charge')})`
+  } else if (adjustment != null) {
+    adjustmentValue = `-${formatLogQuota(Math.abs(adjustment))} (${t('Refunded')})`
   }
-  const billedUsage = log.completion_tokens || 0
 
   return (
     <DetailSection label={t('Task Billing')}>
@@ -461,35 +462,25 @@ function TaskBillingBreakdown(props: { log: UsageLog; other: LogOtherData }) {
           />
         }
       />
-      {preConsumed != null && (
-        <DetailRow
-          label={t('Pre-consumed')}
-          value={formatLogQuota(preConsumed)}
-          mono
-        />
-      )}
-      {actualCharge != null && (
+      <DetailRow
+        label={t('Pre-consumed')}
+        value={formatLogQuota(billing.preConsumedQuota)}
+        mono
+      />
+      {billing.actualQuota != null && (
         <DetailRow
           label={t('Actual Charge')}
-          value={formatLogQuota(actualCharge)}
+          value={formatLogQuota(billing.actualQuota)}
           mono
         />
       )}
-      {stage === 'settle' && (
-        <DetailRow
-          label={t('Settlement Delta')}
-          value={
-            log.type === 2
-              ? `+${formatLogQuota(log.quota)} (${t('Additional charge')})`
-              : `-${formatLogQuota(log.quota)} (${t('Refunded')})`
-          }
-          mono
-        />
+      {adjustment != null && (
+        <DetailRow label={t('Settlement Delta')} value={adjustmentValue} mono />
       )}
-      {billedUsage > 0 && (
+      {billing.tokens != null && billing.tokens > 0 && (
         <DetailRow
           label={t('Billed Usage')}
-          value={billedUsage.toLocaleString()}
+          value={billing.tokens.toLocaleString()}
           mono
         />
       )}
@@ -510,11 +501,13 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
   const details = props.log.content ?? ''
   const other = parseLogOther(props.log.other)
-  const typeConfig = getLogTypeConfig(props.log.type)
+  const taskBillingStage = getTaskBillingStage(props.log.type, other)
+  const effectiveLogType = taskBillingStage === 'refund' ? 6 : props.log.type
+  const typeConfig = getLogTypeConfig(effectiveLogType)
 
   const isViolation = isViolationFeeLog(other)
-  const isRefund = props.log.type === 6
-  const isConsume = props.log.type === 2
+  const isRefund = effectiveLogType === 6
+  const isConsume = effectiveLogType === 2
   const isTopup = props.log.type === 1
   const isManage = props.log.type === 3
   const isSubscription = other?.billing_source === 'subscription'
@@ -627,7 +620,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
       : conversionChain.join(' -> ')
   const showConversion =
     props.isAdmin &&
-    props.log.type !== 6 &&
+    !isRefund &&
     (other?.request_path || conversionChain.length > 0)
 
   const useChannel = other?.admin_info?.use_channel
@@ -1093,7 +1086,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
         )}
 
         {/* Async task billing chain (video tasks; consume + refund types) */}
-        {other?.is_task && (isConsume || isRefund) && (
+        {taskBillingStage && other && (
           <TaskBillingBreakdown log={props.log} other={other} />
         )}
 
@@ -1119,28 +1112,25 @@ export function DetailsDialog(props: DetailsDialogProps) {
         )}
 
         {/* Admin billing mode indicator for non-consume */}
-        {props.isAdmin &&
-          !isConsume &&
-          props.log.type !== 6 &&
-          other?.admin_info && (
-            <DetailRow
-              label={t('Billing Source')}
-              value={
-                <span className='flex items-center gap-1'>
-                  {other.admin_info.local_count_tokens ? (
-                    <Monitor className='size-3 text-blue-500' />
-                  ) : (
-                    <Cloud className='size-3 text-emerald-500' />
-                  )}
-                  <span className='text-xs'>
-                    {other.admin_info.local_count_tokens
-                      ? t('Local Billing')
-                      : t('Upstream Response')}
-                  </span>
+        {props.isAdmin && !isConsume && !isRefund && other?.admin_info && (
+          <DetailRow
+            label={t('Billing Source')}
+            value={
+              <span className='flex items-center gap-1'>
+                {other.admin_info.local_count_tokens ? (
+                  <Monitor className='size-3 text-blue-500' />
+                ) : (
+                  <Cloud className='size-3 text-emerald-500' />
+                )}
+                <span className='text-xs'>
+                  {other.admin_info.local_count_tokens
+                    ? t('Local Billing')
+                    : t('Upstream Response')}
                 </span>
-              }
-            />
-          )}
+              </span>
+            }
+          />
+        )}
 
         {/* Stream status details (admin only) */}
         {props.isAdmin &&

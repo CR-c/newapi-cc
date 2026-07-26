@@ -37,6 +37,7 @@ import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { LOG_TYPE_ENUM } from '../constants'
+import { getTaskBillingStage, parseLogOther } from '../lib/format'
 import { getLogTypeConfig } from '../lib/utils'
 import type { LogCategory } from '../types'
 
@@ -144,13 +145,22 @@ function SummaryField<TData>({
 function MobileLogTimeStatus({
   createdAt,
   type,
+  other,
 }: {
   createdAt: unknown
   type: unknown
+  other?: unknown
 }) {
   const { t } = useTranslation()
   const timestamp = typeof createdAt === 'number' ? createdAt : undefined
-  const logType = typeof type === 'number' ? type : undefined
+  let logType = typeof type === 'number' ? type : undefined
+  const parsedOther = typeof other === 'string' ? parseLogOther(other) : null
+  if (
+    getTaskBillingStage(logType ?? LOG_TYPE_ENUM.UNKNOWN, parsedOther) ===
+    'refund'
+  ) {
+    logType = LOG_TYPE_ENUM.REFUND
+  }
   const config = getLogTypeConfig(logType ?? LOG_TYPE_ENUM.UNKNOWN)
   const variant = config.color as StatusVariant
 
@@ -183,19 +193,14 @@ function CommonLogsCard<TData>({
   const { t } = useTranslation()
 
   const modelCell = cells.get('model_name')
-  const quotaCell = cells.get('quota')
   const rowData = cells.get('created_at')?.row.original as
     | Record<string, unknown>
     | undefined
 
   return (
     <div className='space-y-2.5'>
-      <div className='flex min-w-0 items-center justify-between gap-3'>
+      <div className='flex min-w-0 items-center gap-3'>
         <CompactCell cell={modelCell} className='flex-1' />
-        <CompactCell
-          cell={quotaCell}
-          className='shrink-0 text-right [&_.flex-col]:items-end'
-        />
       </div>
 
       <div className='grid grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] gap-1.5'>
@@ -206,6 +211,7 @@ function CommonLogsCard<TData>({
           <MobileLogTimeStatus
             createdAt={rowData?.created_at}
             type={rowData?.type}
+            other={rowData?.other}
           />
         </div>
         <SummaryField
@@ -229,6 +235,19 @@ function CommonLogsCard<TData>({
           cell={cells.get('prompt_tokens')}
           primaryOnly
         />
+        {cells.get('pre_consumed_quota')?.getValue() != null && (
+          <>
+            <SummaryField
+              label={t('Pre-consumed Charge')}
+              cell={cells.get('pre_consumed_quota')}
+            />
+            <SummaryField
+              label={t('Refund / Extra Charge')}
+              cell={cells.get('task_adjustment')}
+            />
+          </>
+        )}
+        <SummaryField label={t('Actual Charge')} cell={cells.get('quota')} />
         <SummaryField
           label={t('Details')}
           cell={cells.get('content')}

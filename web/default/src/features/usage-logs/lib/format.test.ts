@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
-import { getTaskBillingStage } from './format'
+import { getTaskBillingDisplay, getTaskBillingStage } from './format'
 
 describe('getTaskBillingStage', () => {
   test('returns null for non-task logs', () => {
@@ -83,5 +83,75 @@ describe('getTaskBillingStage', () => {
   test('other log types never resolve a stage', () => {
     assert.equal(getTaskBillingStage(1, { is_task: true }), null)
     assert.equal(getTaskBillingStage(3, { is_task: true }), null)
+  })
+})
+
+describe('getTaskBillingDisplay', () => {
+  const log = {
+    type: 2,
+    quota: 3000,
+    prompt_tokens: 0,
+    completion_tokens: 0,
+  }
+
+  test('keeps unfinished task final values empty', () => {
+    assert.deepEqual(
+      getTaskBillingDisplay(log, {
+        is_task: true,
+        task_billing_stage: 'pre_consume',
+      }),
+      {
+        tokens: null,
+        preConsumedQuota: 3000,
+        adjustmentQuota: null,
+        actualQuota: null,
+        noRefund: false,
+      }
+    )
+  })
+
+  test('shows one settled task billing chain', () => {
+    assert.deepEqual(
+      getTaskBillingDisplay(log, {
+        is_task: true,
+        task_billing_stage: 'settle',
+        pre_consumed_quota: 3000,
+        actual_quota: 4200,
+        billed_usage: 40594,
+      }),
+      {
+        tokens: 40594,
+        preConsumedQuota: 3000,
+        adjustmentQuota: 1200,
+        actualQuota: 4200,
+        noRefund: false,
+      }
+    )
+  })
+
+  test('shows full refund and retained upstream charge distinctly', () => {
+    assert.equal(
+      getTaskBillingDisplay(log, {
+        is_task: true,
+        task_billing_stage: 'refund',
+        actual_quota: 0,
+      })?.adjustmentQuota,
+      -3000
+    )
+    assert.deepEqual(
+      getTaskBillingDisplay(log, {
+        is_task: true,
+        task_billing_stage: 'settle',
+        actual_quota: 3000,
+        no_refund: true,
+      }),
+      {
+        tokens: null,
+        preConsumedQuota: 3000,
+        adjustmentQuota: 0,
+        actualQuota: 3000,
+        noRefund: true,
+      }
+    )
   })
 })

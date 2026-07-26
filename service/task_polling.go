@@ -31,6 +31,9 @@ type TaskPollingAdaptor interface {
 	// AdjustBillingOnComplete 在任务到达终态（成功/失败）时由轮询循环调用。
 	// 返回正数触发差额结算（补扣/退还），返回 0 保持预扣费金额不变。
 	AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int
+	// KeepChargeOnFailure 报告失败任务是否已被上游计费（例如生成完成但输出触审）。
+	// 返回 true 时保留预扣额度作为最终扣费，不退款；返回 false 走正常全额退款。
+	KeepChargeOnFailure(task *model.Task, taskResult *relaycommon.TaskInfo) bool
 }
 
 // GetTaskAdaptorFunc 由 main 包注入，用于获取指定平台的任务适配器。
@@ -606,7 +609,11 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
 	}
 	if shouldRefund {
-		RefundTaskQuota(ctx, task, task.FailReason)
+		if adaptor.KeepChargeOnFailure(task, taskResult) {
+			KeepTaskChargeOnFailure(ctx, task, taskResult.TotalTokens, task.FailReason)
+		} else {
+			RefundTaskQuota(ctx, task, task.FailReason)
+		}
 	}
 	if transitionedToDone && task.Status == model.TaskStatusSuccess {
 		cleanupPlaygroundAssetsAfterVideoSuccess(ctx, task)
@@ -686,5 +693,6 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 		RecalculateTaskQuotaByTokens(ctx, task, taskResult.TotalTokens)
 		return
 	}
-	// 3. 无调整，保持预扣额度
+	// 3. 无调整，保持预扣额度；将汇总日志行终结为已结算状态
+	finalizeTaskSummaryLog(task, taskSummaryPatch(task.Quota, task.Quota, 0, ""), 0)
 }

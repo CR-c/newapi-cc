@@ -254,18 +254,67 @@ func uniqueProfitSourceLogKeys(logs []*Log) []string {
 	return keys
 }
 
-func profitCostModelName(log *Log) string {
-	if log == nil || log.Other == "" {
-		if log == nil {
-			return ""
+// profitCostModelCandidates returns cost-rule lookup names in priority order.
+// The billed/origin model name comes first so product-specific costs
+// (e.g. gpt-image-2-ic at ¥0.01) are not collapsed into the channel-mapped
+// upstream name (gpt-image-2). Upstream is kept as a fallback for aliases
+// that only have a cost rule on the real upstream model.
+func profitCostModelCandidates(log *Log) []string {
+	if log == nil {
+		return nil
+	}
+	origin := strings.TrimSpace(log.ModelName)
+	names := make([]string, 0, 2)
+	seen := make(map[string]struct{}, 2)
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
 		}
-		return log.ModelName
+		if _, ok := seen[name]; ok {
+			return
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
 	}
-	var snapshot profitBillingSnapshot
-	if common.UnmarshalJsonStr(log.Other, &snapshot) == nil && strings.TrimSpace(snapshot.UpstreamModelName) != "" {
-		return strings.TrimSpace(snapshot.UpstreamModelName)
+	add(origin)
+	if log.Other != "" {
+		var snapshot profitBillingSnapshot
+		if common.UnmarshalJsonStr(log.Other, &snapshot) == nil {
+			add(snapshot.UpstreamModelName)
+		}
 	}
-	return log.ModelName
+	return names
+}
+
+func profitCostModelName(log *Log) string {
+	candidates := profitCostModelCandidates(log)
+	if len(candidates) == 0 {
+		return ""
+	}
+	return candidates[0]
+}
+
+func resolveProfitCostRule(log *Log, lookup func(modelName string) (*ModelCostRule, error)) (*ModelCostRule, string, error) {
+	candidates := profitCostModelCandidates(log)
+	if len(candidates) == 0 {
+		return nil, "", nil
+	}
+	var lastName string
+	for _, name := range candidates {
+		lastName = name
+		rule, err := lookup(name)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, name, err
+		}
+		if rule != nil {
+			return rule, rule.ModelName, nil
+		}
+	}
+	return nil, lastName, nil
 }
 
 func validateModelCostRule(rule *ModelCostRule) error {
@@ -373,13 +422,17 @@ func calculateProfitRecord(log *Log, rule *ModelCostRule, estimated bool) (*Prof
 	if revenueMicros != 0 {
 		revenueMicros = scaleRevenueByGroupRealSalesRatio(revenueMicros, log.Group, snapshot.GroupRatio)
 	}
+	costModelName := profitCostModelName(log)
+	if rule != nil && strings.TrimSpace(rule.ModelName) != "" {
+		costModelName = strings.TrimSpace(rule.ModelName)
+	}
 	record := &ProfitRecord{
 		SourceLogKey:            profitSourceLogKey(log),
 		SourceRequestId:         log.RequestId,
 		OccurredAt:              log.CreatedAt,
 		UserId:                  log.UserId,
 		ModelName:               log.ModelName,
-		CostModelName:           profitCostModelName(log),
+		CostModelName:           costModelName,
 		ChannelId:               log.ChannelId,
 		Group:                   log.Group,
 		GrossConsumptionMicros:  grossConsumptionMicros,
@@ -686,15 +739,18 @@ func recordProfitForLog(log *Log, estimated bool, generation int64) error {
 	if DB == nil || log == nil || (log.Type != LogTypeConsume && log.Type != LogTypeRefund) {
 		return nil
 	}
-	rule, err := GetActiveModelCostRule(profitCostModelName(log), log.CreatedAt)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		rule = nil
-	} else if err != nil {
+	rule, costModelName, err := resolveProfitCostRule(log, func(modelName string) (*ModelCostRule, error) {
+		return GetActiveModelCostRule(modelName, log.CreatedAt)
+	})
+	if err != nil {
 		return err
 	}
 	record, err := calculateProfitRecord(log, rule, estimated)
 	if err != nil {
 		return err
+	}
+	if costModelName != "" {
+		record.CostModelName = costModelName
 	}
 	record.Generation = generation
 	return DB.Clauses(clause.OnConflict{
@@ -786,23 +842,33 @@ func BackfillProfitRecords() error {
 			if exists && existing.CostKnown && existing.AttributionVersion >= currentProfitAttributionVersion {
 				continue
 			}
-			costModelName := profitCostModelName(log)
-			rule := ruleCache[costModelName]
-			if rule == nil && !missingRules[costModelName] {
-				var ruleErr error
-				rule, ruleErr = getCurrentModelCostRule(costModelName)
-				if errors.Is(ruleErr, gorm.ErrRecordNotFound) {
-					missingRules[costModelName] = true
-					rule = nil
-				} else if ruleErr != nil {
-					return ruleErr
-				} else {
-					ruleCache[costModelName] = rule
+			rule, costModelName, ruleErr := resolveProfitCostRule(log, func(modelName string) (*ModelCostRule, error) {
+				if cached, ok := ruleCache[modelName]; ok {
+					return cached, nil
 				}
+				if missingRules[modelName] {
+					return nil, gorm.ErrRecordNotFound
+				}
+				found, err := getCurrentModelCostRule(modelName)
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					missingRules[modelName] = true
+					return nil, err
+				}
+				if err != nil {
+					return nil, err
+				}
+				ruleCache[modelName] = found
+				return found, nil
+			})
+			if ruleErr != nil {
+				return ruleErr
 			}
 			record, calcErr := calculateProfitRecord(log, rule, true)
 			if calcErr != nil {
 				return calcErr
+			}
+			if costModelName != "" {
+				record.CostModelName = costModelName
 			}
 			record.Generation = state.Generation
 			if exists {

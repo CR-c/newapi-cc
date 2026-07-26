@@ -14,7 +14,7 @@ New API 提供 OpenAI 兼容的图片与视频接口。选择模型、提交统�
 | 分组 | **只绑定在 token 上**；请求体不要传 `group` |
 | 价格与能力 | 以控制台定价页、同一 token 的 `/v1/models` 为准 |
 
-当前公开分组：`64生图`、`生图`、`dddd-sd-图`、`grok按次`、`grok按次-x`、`video-dddd`、`sd-token`、`sd-video`（可能调整）。
+当前公开分组：`64生图`、`ic生图`、`生图`、`dddd-sd-图`、`grok按次`、`grok按次-x`、`video-dddd`、`sd-token`、`sd-video`（可能调整）。
 
 ### 分组一览
 
@@ -22,6 +22,7 @@ New API 提供 OpenAI 兼容的图片与视频接口。选择模型、提交统�
 | ---- | ---- | ---- | ---- | ------------ |
 | `dddd-sd-图` | 图片 | `POST /v1/images/generations` | 按次 | HTTPS / Base64（`image`） |
 | `64生图` | 图片 | `POST /v1/images/generations` | 按次 | HTTPS / Base64（`image`） |
+| `ic生图` | 图片 | `POST /v1/images/generations` | 按次 | HTTPS / Base64（`image`） |
 | `video-dddd` | 视频 | `POST /v1/videos` 等 | 按次 | 仅 `asset://`（先素材库） |
 | `sd-token` | 视频 | `POST /v1/videos` 等 | Token | **无素材库**；创建时直接传公网 HTTPS（最多 9 图 + 3 视频 + 3 音频） |
 | `sd-video` | 视频 | `POST /v1/videos` 等 | 按次 | 公网 HTTPS URL |
@@ -78,16 +79,16 @@ POST /v1/images/generations
 
 ### 图片分组：参数能力对照
 
-| 参数 | `dddd-sd-图` | `64生图` · Gemini | `64生图` · gpt-image-2 |
-| ---- | ------------ | ----------------- | ---------------------- |
-| `model` / `prompt` | ✓ | ✓ | ✓ |
-| `size` | ✓ 分辨率档位或 `宽x高` | ✓ 映射比例（固定 2K 输出） | ✓ 1K/2K/4K/精确/`auto` |
-| `n` | ✓（见模型表） | ✓ | ✓ |
-| `image` 参考图 | ✓ 最多 10 或 14 张（见模型） | ✓ 最多 14 张 | ✓ 最多 14 张 |
-| `watermark` | ✓ | — | — |
-| `quality` | — | — | ✓ `low`/`medium`/`high` |
-| `background` | — | — | ✓ `opaque`/`transparent` |
-| `response_format` | `url` / `b64_json` | `url` / `b64_json` | `url` / `b64_json` |
+| 参数 | `dddd-sd-图` | `64生图` · Gemini | `64生图` · gpt-image-2 | `ic生图` · gpt-image-2-ic |
+| ---- | ------------ | ----------------- | ---------------------- | -------------------------- |
+| `model` / `prompt` | ✓ | ✓ | ✓ | ✓ |
+| `size` | ✓ 分辨率档位或 `宽x高` | ✓ 映射比例（固定 2K 输出） | ✓ 1K/2K/4K/精确/`auto` | ✓ 建议 1K；支持超分 4K |
+| `n` | ✓（见模型表） | ✓ | ✓ | ✓（接口每次返回 1 张） |
+| `image` 参考图 | ✓ 最多 10 或 14 张（见模型） | ✓ 最多 14 张 | ✓ 最多 14 张 | ✓ HTTPS / Base64 / data URL |
+| `watermark` | ✓ | — | — | — |
+| `quality` | — | — | ✓ `low`/`medium`/`high` | 兼容字段，可不传 |
+| `background` | — | — | ✓ `opaque`/`transparent` | — |
+| `response_format` | `url` / `b64_json` | `url` / `b64_json` | `url` / `b64_json` | `url` / `b64_json` |
 
 > 表中「—」表示该分组/模型不使用该参数；填了也可能无效。
 
@@ -200,7 +201,7 @@ curl "$NEWAPI_BASE_URL/v1/images/generations" \
 | ---- | ---- | ------ | ---- | -------- |
 | `gemini-3-pro-image-preview` | `$0.15/次` | 固定 2K | 标准 10 比例 | `n`、参考图、`response_format` |
 | `gemini-3.1-flash-image-preview` | `$0.10/次` | 固定 2K | 14 比例（含超长图） | 同上 |
-| `gpt-image-2` | `$0.10/次` | 1K / 2K / 4K / 自动 / 精确 | 标准 10 比例 | `quality`、`background`、`n`、参考图、`response_format` |
+| `gpt-image-2` | `$0.10/次` | **支持 4K**（亦支持 1K / 2K / 自动 / 精确） | 标准 10 比例 | `quality`、`background`、`n`、参考图、`response_format` |
 
 **标准比例（10）**
 
@@ -244,6 +245,80 @@ curl "$NEWAPI_BASE_URL/v1/images/generations" \
     "response_format": "url"
   }'
 ```
+
+---
+
+### `ic生图`
+
+IC 生图分组。统一端点 `POST /v1/images/generations`。token 绑定本分组，请求体不要传 `group`。
+
+> **模型名说明**：本分组对外模型名为 `gpt-image-2-ic`，与 `64生图` / `生图` 的 `gpt-image-2` **区分**，避免定价页与模型介绍冲突。上游实际模型仍为 `gpt-image-2`（渠道侧自动映射）。
+
+| 模型 | 价格 | 能力概要 | 其他参数 |
+| ---- | ---- | -------- | -------- |
+| `gpt-image-2-ic` | `¥0.03/次` | **1k，超分 4k**；文生图 / 参考图 | `n`、`image` / `images` / `image_url`、`response_format`、`size` |
+
+#### 支持的参数
+
+| 参数 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| `model` | string | 必填，固定传 `gpt-image-2-ic` |
+| `prompt` | string | 必填，提示词；为空返回 400 |
+| `size` | string | 可选，如 `1024x1024`、`1024x1536` |
+| `n` | integer | 兼容字段；接口每次返回 1 张 |
+| `quality` | string | 兼容字段，可不传 |
+| `image` / `images` / `image_url` | string / object / array | 可选参考图：HTTPS URL、Base64 或 data URL |
+| `input_reference` | string / string[] | `image` 的兼容别名 |
+| `response_format` | string | `url`（默认）或 `b64_json` |
+
+#### 示例：文生图
+
+```bash
+curl "$NEWAPI_BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $NEWAPI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-image-2-ic",
+    "prompt": "画一张极简风格的绿色机器人头像",
+    "size": "1024x1024",
+    "response_format": "url"
+  }'
+```
+
+#### 示例：带参考图
+
+```bash
+curl "$NEWAPI_BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $NEWAPI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-image-2-ic",
+    "prompt": "把参考图改成黄色贴纸风格",
+    "response_format": "b64_json",
+    "image": [
+      "https://example.com/a.png",
+      "https://example.com/b.png"
+    ]
+  }'
+```
+
+#### 示例：图片编辑
+
+```bash
+curl "$NEWAPI_BASE_URL/v1/images/edits" \
+  -H "Authorization: Bearer $NEWAPI_API_KEY" \
+  -F "model=gpt-image-2-ic" \
+  -F "prompt=把这张图改成红色海报风格" \
+  -F "response_format=b64_json" \
+  -F "image=@./input.png"
+```
+
+注意事项：
+
+- token 绑定 `ic生图`，请求体不要传 `group`。
+- 模型名必须使用 `gpt-image-2-ic`（不要与 `64生图` 的 `gpt-image-2` 混用）。
+- 按次计费：`¥0.03/次`；价格以控制台定价页与调用日志为准。
+- `response_format: "url"` 时尽快下载并自行持久化结果。
 
 ---
 

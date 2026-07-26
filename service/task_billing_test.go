@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -922,7 +923,7 @@ func TestRecalculate_Subscription_NegativeDelta(t *testing.T) {
 // simulatePollBilling reproduces the CAS + billing logic from updateVideoSingleTask.
 // It takes a persisted task (already in DB), applies the new status, and performs
 // the conditional update + billing exactly as the polling loop does.
-func simulatePollBilling(ctx context.Context, task *model.Task, newStatus model.TaskStatus, actualQuota int) {
+func simulatePollBilling(ctx context.Context, task *model.Task, newStatus model.TaskStatus, actualQuota int, adaptor ...TaskPollingAdaptor) {
 	snap := task.Snapshot()
 
 	shouldRefund := false
@@ -963,8 +964,16 @@ func simulatePollBilling(ctx context.Context, task *model.Task, newStatus model.
 	if shouldSettle && actualQuota > 0 {
 		RecalculateTaskQuota(ctx, task, actualQuota, 0, "test settle")
 	}
+	var pollAdaptor TaskPollingAdaptor
+	if len(adaptor) > 0 {
+		pollAdaptor = adaptor[0]
+	}
 	if shouldRefund {
-		RefundTaskQuota(ctx, task, task.FailReason)
+		if pollAdaptor != nil && pollAdaptor.KeepChargeOnFailure(task, nil) {
+			KeepTaskChargeOnFailure(ctx, task, 0, task.FailReason)
+		} else {
+			RefundTaskQuota(ctx, task, task.FailReason)
+		}
 	}
 }
 
@@ -1100,6 +1109,7 @@ func TestNonTerminalUpdate_NoBilling(t *testing.T) {
 
 type mockAdaptor struct {
 	adjustReturn int
+	keepCharge   bool
 }
 
 func (m *mockAdaptor) Init(_ *relaycommon.RelayInfo) {}
@@ -1109,6 +1119,9 @@ func (m *mockAdaptor) FetchTask(string, string, map[string]any, string) (*http.R
 func (m *mockAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) { return nil, nil }
 func (m *mockAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) int {
 	return m.adjustReturn
+}
+func (m *mockAdaptor) KeepChargeOnFailure(_ *model.Task, _ *relaycommon.TaskInfo) bool {
+	return m.keepCharge
 }
 
 // ===========================================================================
@@ -1198,4 +1211,261 @@ func TestSettle_NonPerCallBilling_AppliesAdaptorAdjustment(t *testing.T) {
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
+}
+
+// ===========================================================================
+// Task summary log (single evolving row) tests
+// ===========================================================================
+
+// seedSummaryLog 模拟提交时写入的消费日志行，返回其 id。
+func seedSummaryLog(t *testing.T, userID, quota int, taskID string) int {
+	t.Helper()
+	log := &model.Log{
+		UserId:    userID,
+		Type:      model.LogTypeConsume,
+		ModelName: "test-model",
+		Quota:     quota,
+		Group:     "default",
+		RequestId: "req-summary-" + taskID,
+		Other:     `{"is_task":true,"media_type":"video","task_id":"` + taskID + `","task_billing_stage":"pre_consume"}`,
+	}
+	require.NoError(t, model.LOG_DB.Create(log).Error)
+	require.Positive(t, log.Id)
+	return log.Id
+}
+
+func summaryLogOther(t *testing.T, logId int) map[string]any {
+	t.Helper()
+	var log model.Log
+	require.NoError(t, model.LOG_DB.First(&log, logId).Error)
+	var other map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
+	return other
+}
+
+func TestRecalculate_FinalizesSummaryAndHidesAdjustRow(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 40, 40, 40
+	const initQuota, preConsumed, actualQuota = 10000, 2000, 3000
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-summary-pos", 5000)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	logId := seedSummaryLog(t, userID, preConsumed, task.TaskID)
+	task.PrivateData.ConsumeLogId = logId
+
+	RecalculateTaskQuota(ctx, task, actualQuota, 4321, "token重算")
+
+	// 汇总行被终结为已结算状态
+	other := summaryLogOther(t, logId)
+	assert.Equal(t, true, other["task_summary"])
+	assert.Equal(t, "settle", other["task_billing_stage"])
+	assert.Equal(t, float64(preConsumed), other["pre_consumed_quota"])
+	assert.Equal(t, float64(actualQuota), other["actual_quota"])
+	assert.Equal(t, float64(4321), other["billed_usage"])
+	// 汇总行的统计列不被触碰
+	var summary model.Log
+	require.NoError(t, model.LOG_DB.First(&summary, logId).Error)
+	assert.Equal(t, preConsumed, summary.Quota)
+	assert.Equal(t, 4321, summary.CompletionTokens)
+
+	// 差额明细行带隐藏标记，且被列表查询排除
+	delta := getLastLog(t)
+	require.NotNil(t, delta)
+	require.NotEqual(t, logId, delta.Id)
+	assert.Equal(t, model.LogTypeConsume, delta.Type)
+	assert.Equal(t, actualQuota-preConsumed, delta.Quota)
+	var deltaOther map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(delta.Other, &deltaOther))
+	assert.Equal(t, true, deltaOther["task_adjust"])
+
+	listed, total, err := model.GetUserLogs(userID, model.LogTypeUnknown, 0, 0, "", "", 0, 100, "", "", "", "")
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, total)
+	require.Len(t, listed, 1)
+	assert.Equal(t, preConsumed, listed[0].Quota)
+}
+
+func TestRecalculate_ZeroDeltaFinalizesSummaryWithoutExtraRow(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID = 41
+	const initQuota, preConsumed = 10000, 3000
+	seedUser(t, userID, initQuota)
+
+	task := makeTask(userID, 0, preConsumed, 0, BillingSourceWallet, 0)
+	logId := seedSummaryLog(t, userID, preConsumed, task.TaskID)
+	task.PrivateData.ConsumeLogId = logId
+
+	RecalculateTaskQuota(ctx, task, preConsumed, 4321, "exact match with usage")
+
+	assert.Equal(t, initQuota, getUserQuota(t, userID))
+	// 只有汇总行，没有零额结算行
+	assert.Equal(t, int64(1), countLogs(t))
+	other := summaryLogOther(t, logId)
+	assert.Equal(t, "settle", other["task_billing_stage"])
+	assert.Equal(t, float64(4321), other["billed_usage"])
+	assert.Equal(t, float64(preConsumed), other["actual_quota"])
+	stat, err := model.SumUsedQuota(model.LogTypeUnknown, 0, 0, "", "", "", 0, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, 4321, stat.Tpm)
+}
+
+func TestRefundTaskQuota_FinalizesSummaryAsRefund(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, channelID = 42, 42
+	const initQuota, preConsumed = 10000, 3000
+	seedUser(t, userID, initQuota)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, 0, BillingSourceWallet, 0)
+	logId := seedSummaryLog(t, userID, preConsumed, task.TaskID)
+	task.PrivateData.ConsumeLogId = logId
+
+	RefundTaskQuota(ctx, task, "task failed: upstream error")
+
+	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
+	other := summaryLogOther(t, logId)
+	assert.Equal(t, "refund", other["task_billing_stage"])
+	assert.Equal(t, float64(preConsumed), other["pre_consumed_quota"])
+	assert.Equal(t, float64(0), other["actual_quota"])
+	assert.Equal(t, "task failed: upstream error", other["reason"])
+
+	// 退款明细行仍写入（供看板/利润统计），但带隐藏标记，被列表排除
+	refund := getLastLog(t)
+	require.NotNil(t, refund)
+	assert.Equal(t, model.LogTypeRefund, refund.Type)
+	var refundOther map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(refund.Other, &refundOther))
+	assert.Equal(t, true, refundOther["task_adjust"])
+
+	listed, total, err := model.GetUserLogs(userID, model.LogTypeUnknown, 0, 0, "", "", 0, 100, "", "", "", "")
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, total)
+	require.Len(t, listed, 1)
+}
+
+func TestKeepTaskChargeOnFailure_NoMoneyMovedAndSummaryMarked(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 43, 43, 43
+	const initQuota, preConsumed = 10000, 3000
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-keep-charge", 5000)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	logId := seedSummaryLog(t, userID, preConsumed, task.TaskID)
+	task.PrivateData.ConsumeLogId = logId
+
+	KeepTaskChargeOnFailure(ctx, task, 4321, "OutputVideoSensitiveContentDetected: blocked")
+
+	// 无任何资金变动
+	assert.Equal(t, initQuota, getUserQuota(t, userID))
+	assert.Equal(t, 5000, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, preConsumed, task.Quota)
+	// 只有汇总行，没有新增日志行
+	assert.Equal(t, int64(1), countLogs(t))
+
+	other := summaryLogOther(t, logId)
+	assert.Equal(t, "settle", other["task_billing_stage"])
+	assert.Equal(t, true, other["no_refund"])
+	assert.Equal(t, float64(preConsumed), other["actual_quota"])
+	assert.Equal(t, float64(4321), other["billed_usage"])
+	assert.Contains(t, other["reason"], "SensitiveContentDetected")
+}
+
+func TestKeepTaskChargeOnFailure_SettlesActualBilledTokens(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	originalRatios := ratio_setting.ModelRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"test-model":1}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(originalRatios))
+	})
+
+	const userID, tokenID, channelID = 46, 46, 46
+	const initQuota, preConsumed, billedUsage = 10000, 3000, 4321
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-keep-actual", 5000)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	logId := seedSummaryLog(t, userID, preConsumed, task.TaskID)
+	task.PrivateData.ConsumeLogId = logId
+
+	KeepTaskChargeOnFailure(ctx, task, billedUsage, "OutputVideoSensitiveContentDetected: blocked")
+
+	assert.Equal(t, billedUsage, task.Quota)
+	assert.Equal(t, initQuota-(billedUsage-preConsumed), getUserQuota(t, userID))
+	assert.Equal(t, 5000-(billedUsage-preConsumed), getTokenRemainQuota(t, tokenID))
+
+	other := summaryLogOther(t, logId)
+	assert.Equal(t, float64(preConsumed), other["pre_consumed_quota"])
+	assert.Equal(t, float64(billedUsage), other["actual_quota"])
+	assert.Equal(t, float64(billedUsage), other["billed_usage"])
+	assert.Equal(t, true, other["no_refund"])
+
+	stat, err := model.SumUsedQuota(model.LogTypeUnknown, 0, 0, "", "", "", 0, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, billedUsage, stat.Tpm)
+}
+
+func TestKeepTaskChargeOnFailure_LegacyTaskWritesZeroQuotaAudit(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, channelID = 44, 44
+	const initQuota, preConsumed = 10000, 3000
+	seedUser(t, userID, initQuota)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, 0, BillingSourceWallet, 0)
+	// 无 ConsumeLogId（旧任务）
+
+	KeepTaskChargeOnFailure(ctx, task, 4321, "OutputAudioSensitiveContentDetected: blocked")
+
+	assert.Equal(t, initQuota, getUserQuota(t, userID))
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	assert.Equal(t, model.LogTypeConsume, log.Type)
+	assert.Zero(t, log.Quota)
+	var other map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
+	assert.Equal(t, true, other["no_refund"])
+}
+
+func TestPollBilling_KeepChargeOnFailureSkipsRefund(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 45, 45, 45
+	const initQuota, preConsumed = 10000, 4000
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-keep-poll", 6000)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.Status = model.TaskStatus(model.TaskStatusInProgress)
+	require.NoError(t, model.DB.Create(task).Error)
+
+	simulatePollBilling(ctx, task, model.TaskStatus(model.TaskStatusFailure), 0, &mockAdaptor{keepCharge: true})
+
+	// 不退款：用户与令牌额度均不变
+	assert.Equal(t, initQuota, getUserQuota(t, userID))
+	assert.Equal(t, 6000, getTokenRemainQuota(t, tokenID))
+	// 旧任务无汇总行，落一条零额审计行；绝不能出现退款行
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	assert.Equal(t, model.LogTypeConsume, log.Type)
+	assert.Zero(t, log.Quota)
+	assert.Equal(t, int64(1), countLogs(t))
 }

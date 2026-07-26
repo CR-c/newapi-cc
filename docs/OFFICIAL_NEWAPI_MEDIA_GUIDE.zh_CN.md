@@ -146,9 +146,24 @@ print(resp.data[0].url)
 | 分组（绑在 token） | 典型模型 | 参考图传法 |
 | ------------------ | -------- | ---------- |
 | `dddd-sd-图` | Seedream 系列 | HTTPS / Base64 |
-| `64生图` | Gemini 图像、`gpt-image-2` 等 | HTTPS / Base64 |
+| `64生图` | Gemini 图像、`gpt-image-2`（支持 4K）等 | HTTPS / Base64 |
+| `ic生图` | `gpt-image-2-ic`（1k，超分 4k，¥0.03/次） | HTTPS / Base64 |
 
 完整 `size` 档位、参考图上限与价格见 [UNIFIED_MEDIA_API.zh_CN.md](./UNIFIED_MEDIA_API.zh_CN.md)。
+
+> `ic生图` 对外模型名为 **`gpt-image-2-ic`**，与 `64生图` 的 `gpt-image-2` 区分；token 绑定 `ic生图` 后调用示例：
+
+```bash
+curl "$NEWAPI_BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $NEWAPI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-image-2-ic",
+    "prompt": "画一张极简风格的绿色机器人头像",
+    "size": "1024x1024",
+    "response_format": "url"
+  }'
+```
 
 ---
 

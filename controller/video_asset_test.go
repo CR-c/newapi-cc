@@ -208,7 +208,7 @@ func TestCreateVideoAssetAcceptsSDAndCornGroups(t *testing.T) {
 		Id: 59, Type: constant.ChannelTypeServiceInference, Status: common.ChannelStatusEnabled, BaseURL: &server.URL, Key: "upstream-secret",
 	}).Error)
 
-	for _, group := range []string{constant.VideoAssetGroupSD, constant.VideoAssetGroupCorn} {
+	for _, group := range []string{constant.VideoAssetGroupSD, constant.VideoAssetGroupCorn, constant.VideoAssetGroupCornVP00001} {
 		require.NoError(t, db.Create(&model.Ability{
 			Group: group, Model: "dreamina-seedance-2-0-mini-hc", ChannelId: 59, Enabled: true,
 		}).Error)

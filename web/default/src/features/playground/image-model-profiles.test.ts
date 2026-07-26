@@ -58,6 +58,27 @@ describe('image model profiles', () => {
     assert.equal(getImagePresetSize(profile, '4K', '9:16'), '1872x3328')
   })
 
+  test('ic生图 gpt-image-2-ic exposes 1k and super-res 4k controls', () => {
+    const byModel = getImageModelProfile('ic生图', 'gpt-image-2-ic')
+    assert.equal(byModel.provider, 'gpt-image')
+    assert.deepEqual(byModel.resolutions, ['1K', '4K'])
+    assert.deepEqual(byModel.qualities, [])
+    assert.deepEqual(byModel.backgrounds, [])
+    assert.equal(byModel.maxImages, 1)
+    assert.equal(byModel.maxReferences, 14)
+    assert.equal(byModel.supportsAutoSize, false)
+    assert.equal(byModel.supportsExactSize, true)
+    assert.equal(getImagePresetSize(byModel, '1K', '1:1'), '1024x1024')
+    assert.equal(getImagePresetSize(byModel, '4K', '16:9'), '3328x1872')
+    // 无 2K 档，避免与 64 的 gpt-image-2 能力混淆
+    assert.equal(byModel.resolutions.includes('2K'), false)
+
+    // 分组兜底：ic生图 下任意模型名也走 IC profile
+    const byGroup = getImageModelProfile('ic生图', 'some-alias')
+    assert.deepEqual(byGroup.resolutions, ['1K', '4K'])
+    assert.equal(byGroup.maxImages, 1)
+  })
+
   test('gpt-image-1 family supports multi-image references', () => {
     const profile = getImageModelProfile('default', 'gpt-image-1')
     assert.equal(profile.provider, 'gpt-image')

@@ -110,6 +110,7 @@ type TaskPrivateData struct {
 	SubscriptionId          int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
 	TokenId                 int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
 	NodeName                string              `json:"node_name,omitempty"`       // 发起任务的节点名，轮询结算阶段据此归属日志而非最后查询节点
+	ConsumeLogId            int                 `json:"consume_log_id,omitempty"`  // 提交时消费日志行 id，结算/退款阶段原地补写汇总展示信息
 	BillingContext          *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
 	// PlaygroundAssetIDs are local /pg/assets ids used by this task; deleted after SUCCESS.
 	PlaygroundAssetIDs []string `json:"playground_asset_ids,omitempty"`

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -233,6 +234,76 @@ func TestCalculateProfitRecordUsesMappedUpstreamModel(t *testing.T) {
 	assert.Equal(t, "public-alias", record.ModelName)
 	assert.Equal(t, "dreamina-seedance-2-0-hc", record.CostModelName)
 	assert.True(t, record.CostKnown)
+}
+
+func TestResolveProfitCostRulePrefersOriginModelOverUpstream(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&ModelCostRule{}))
+	DB = db
+	t.Cleanup(func() { DB = originalDB })
+
+	now := time.Now().Unix()
+	require.NoError(t, db.Create([]*ModelCostRule{
+		{ModelName: "gpt-image-2", PurchasePriceCNY: 0.06, Version: 1, Enabled: true, EffectiveFrom: now - 10},
+		{ModelName: "gpt-image-2-ic", PurchasePriceCNY: 0.01, Version: 1, Enabled: true, EffectiveFrom: now - 10},
+	}).Error)
+
+	log := &Log{
+		RequestId: "ic-mapped",
+		Type:      LogTypeConsume,
+		ModelName: "gpt-image-2-ic",
+		CreatedAt: now,
+		Quota:     10000,
+		Other:     `{"model_price":0.02,"group_ratio":1,"upstream_model_name":"gpt-image-2"}`,
+	}
+	rule, costModelName, err := resolveProfitCostRule(log, func(modelName string) (*ModelCostRule, error) {
+		return GetActiveModelCostRule(modelName, log.CreatedAt)
+	})
+	require.NoError(t, err)
+	require.NotNil(t, rule)
+	assert.Equal(t, "gpt-image-2-ic", costModelName)
+	assert.Equal(t, 0.01, rule.PurchasePriceCNY)
+
+	record, err := calculateProfitRecord(log, rule, false)
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-image-2-ic", record.CostModelName)
+	assert.True(t, record.CostKnown)
+	// Quota 10000 with QuotaPerUnit 500000 → gross 0.02 units.
+	// sale 0.02, cost 0.01 → cost micros = gross * 0.01/0.02
+	assert.Equal(t, int64(20000), record.GrossConsumptionMicros)
+	assert.Equal(t, int64(10000), record.CostMicros)
+}
+
+func TestResolveProfitCostRuleFallsBackToUpstreamWhenOriginMissing(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&ModelCostRule{}))
+	DB = db
+	t.Cleanup(func() { DB = originalDB })
+
+	now := time.Now().Unix()
+	require.NoError(t, db.Create(&ModelCostRule{
+		ModelName: "dreamina-seedance-2-0-hc", PurchasePriceCNY: 0.06, Version: 1, Enabled: true, EffectiveFrom: now - 10,
+	}).Error)
+
+	log := &Log{
+		RequestId: "alias-only-upstream-cost",
+		Type:      LogTypeConsume,
+		ModelName: "public-alias",
+		CreatedAt: now,
+		Quota:     50000,
+		Other:     `{"model_price":0.1,"group_ratio":1,"upstream_model_name":"dreamina-seedance-2-0-hc"}`,
+	}
+	rule, costModelName, err := resolveProfitCostRule(log, func(modelName string) (*ModelCostRule, error) {
+		return GetActiveModelCostRule(modelName, log.CreatedAt)
+	})
+	require.NoError(t, err)
+	require.NotNil(t, rule)
+	assert.Equal(t, "dreamina-seedance-2-0-hc", costModelName)
+	assert.Equal(t, 0.06, rule.PurchasePriceCNY)
 }
 
 func TestCreateBillingLogRecordsProfitWhenConsumeLogsAreDisabled(t *testing.T) {
